@@ -1,0 +1,25 @@
+[package]
+name = "ticca-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "SQLite persistence layer for Ticca Desktop"
+
+[lib]
+name = "ticca_db"
+path = "src/lib.rs"
+
+[dependencies]
+sqlx.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
