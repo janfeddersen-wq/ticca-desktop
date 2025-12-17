@@ -1,0 +1,75 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ticca-app",
+    "crates/ticca-core",
+    "crates/ticca-oauth",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Jan"]
+license = "MIT"
+repository = "https://github.com/jan/ticca-desktop"
+description = "A sleek, Iced-based desktop application for AI-assisted coding"
+keywords = ["ai", "coding", "assistant", "iced", "desktop"]
+categories = ["development-tools", "gui"]
+readme = "README.md"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking", "stream"] }
+bytes = "1.7"
+
+# GUI
+iced = { version = "0.13", features = ["tokio", "advanced", "svg"] }
+iced_fonts = { version = "0.1", features = ["bootstrap"] }
+
+# LLM Framework (rig with OAuth support)
+rig-core = { path = "../../rig-fork/rig/rig-core" }
+
+# Markdown & syntax highlighting
+pulldown-cmark = "0.11"
+syntect = "5.2"
+
+# ripgrep libraries
+grep-regex = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
+
+# Async utilities
+futures = "0.3"
+
+# Utilities
+directories = "5.0"
+open = "5.3"
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.11", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+url = "2.5"
+
+# Internal crates
+ticca-core = { path = "crates/ticca-core" }
+ticca-oauth = { path = "crates/ticca-oauth" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

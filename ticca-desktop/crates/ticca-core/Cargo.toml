@@ -1,0 +1,33 @@
+[package]
+name = "ticca-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+ticca-oauth.workspace = true
+
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+directories.workspace = true
+dirs = "5.0"
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+futures = "0.3"
+bytes.workspace = true
+
+# ripgrep
+grep-regex.workspace = true
+grep-searcher.workspace = true
+ignore.workspace = true
+regex = "1.10"
+
+[dev-dependencies]
+tempfile = "3.12"

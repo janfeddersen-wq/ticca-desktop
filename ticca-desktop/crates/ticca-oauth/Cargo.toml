@@ -1,0 +1,22 @@
+[package]
+name = "ticca-oauth"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+base64.workspace = true
+sha2.workspace = true
+rand.workspace = true
+url.workspace = true
+open.workspace = true
+urlencoding = "2.1"
+chrono.workspace = true
