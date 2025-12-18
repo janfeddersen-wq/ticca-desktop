@@ -439,6 +439,103 @@ pub fn reasoning_container(theme: &Theme, is_dark: bool) -> container::Style {
     }
 }
 
+/// Attachment bar container style (shows attached images)
+pub fn attachment_bar_container(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+
+    container::Style {
+        background: Some(palette.background.weak.color.into()),
+        text_color: Some(palette.background.weak.text),
+        border: Border {
+            color: palette.background.strong.color,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Image thumbnail container style
+pub fn image_thumbnail_container(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+
+    container::Style {
+        background: Some(palette.background.strong.color.into()),
+        text_color: Some(palette.background.base.text),
+        border: Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Remove attachment button style (small X button on thumbnail)
+pub fn remove_attachment_button(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+
+    let base = button::Style {
+        background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
+        text_color: Color::WHITE,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 10.0.into(),
+        },
+        ..button::Style::default()
+    };
+
+    match status {
+        button::Status::Active => base,
+        button::Status::Hovered => button::Style {
+            background: Some(palette.danger.base.color.into()),
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(palette.danger.strong.color.into()),
+            ..base
+        },
+        button::Status::Disabled => base,
+    }
+}
+
+/// Send button style (circular, prominent action button)
+pub fn send_button(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+
+    let base = button::Style {
+        background: Some(palette.primary.base.color.into()),
+        text_color: palette.primary.base.text,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 20.0.into(), // Circular button
+        },
+        ..button::Style::default()
+    };
+
+    match status {
+        button::Status::Active => base,
+        button::Status::Hovered => button::Style {
+            background: Some(palette.primary.strong.color.into()),
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(palette.primary.weak.color.into()),
+            ..base
+        },
+        button::Status::Disabled => button::Style {
+            background: Some(palette.background.strong.color.into()),
+            text_color: Color {
+                a: 0.4,
+                ..palette.background.base.text
+            },
+            ..base
+        },
+    }
+}
+
 /// Raw text editor style (for selectable plain text view)
 pub fn raw_text_editor(theme: &Theme, is_dark: bool) -> text_editor::Style {
     let palette = theme.extended_palette();

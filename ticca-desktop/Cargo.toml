@@ -33,11 +33,17 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking", "str
 bytes = "1.7"
 
 # GUI
-iced = { version = "0.13", features = ["tokio", "advanced", "svg"] }
+iced = { version = "0.13", features = ["tokio", "advanced", "svg", "image"] }
 iced_fonts = { version = "0.1", features = ["bootstrap"] }
 
+# Material Icons
+material-icons = "0.7"
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
 # LLM Framework (rig with OAuth support)
-rig-core = { path = "../../rig-fork/rig/rig/rig-core" }
+rig-core = { path = "../../rig-fork/rig/rig-core" }
 
 # Markdown & syntax highlighting
 pulldown-cmark = "0.11"

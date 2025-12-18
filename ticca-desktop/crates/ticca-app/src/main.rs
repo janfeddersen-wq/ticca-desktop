@@ -4,6 +4,9 @@
 
 mod app;
 mod icons;
+mod image_handler;
+mod llm_stream;
+mod material_icons;
 mod messages;
 mod theme;
 mod views;

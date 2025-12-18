@@ -36,5 +36,14 @@ rfd.workspace = true
 twemoji-assets = { version = "1.5", features = ["svg"] }
 unicode-segmentation = "1.12"
 
-# Clipboard support
-arboard = "3"
+# Clipboard support (with image feature for screenshots)
+arboard = { version = "3", features = ["image"] }
+
+# Material Icons font and codepoints
+material-icons.workspace = true
+
+# Image processing
+image.workspace = true
+
+# Base64 encoding for image data
+base64.workspace = true

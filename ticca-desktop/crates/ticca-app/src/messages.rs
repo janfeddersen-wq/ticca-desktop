@@ -2,6 +2,21 @@
 
 use crate::theme::AppTheme;
 use ticca_core::agents::AgentType;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Image attachment data for sending to the LLM
+#[derive(Debug, Clone)]
+pub struct ImageAttachment {
+    /// Raw image bytes (PNG format)
+    pub data: Arc<Vec<u8>>,
+    /// Original width
+    pub width: u32,
+    /// Original height
+    pub height: u32,
+    /// Optional filename (for dropped files)
+    pub filename: Option<String>,
+}
 
 /// Main application message type
 #[derive(Debug, Clone)]
@@ -50,7 +65,7 @@ pub enum Message {
 
     // Working directory
     SelectWorkingDirectory,
-    WorkingDirectoryChanged(std::path::PathBuf),
+    WorkingDirectoryChanged(PathBuf),
 
     // OAuth
     StartOAuth(OAuthProvider),
@@ -65,6 +80,18 @@ pub enum Message {
     ModelsLoaded(Result<Vec<String>, String>),
     SetDefaultModel(String),
     SetAgentModel(AgentType, Option<String>),
+
+    // Image attachments
+    /// File dropped into window (drag & drop)
+    FileDropped(PathBuf),
+    /// Image loaded from dropped file
+    ImageLoaded(Result<ImageAttachment, String>),
+    /// Paste image from clipboard (Ctrl+V)
+    PasteImage,
+    /// Image pasted from clipboard
+    ImagePasted(Result<ImageAttachment, String>),
+    /// Remove attached image
+    RemoveAttachment(usize),
 
     // Errors
     DismissError,

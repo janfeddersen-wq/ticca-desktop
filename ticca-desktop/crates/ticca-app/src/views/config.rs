@@ -4,7 +4,7 @@ use iced::widget::{button, column, container, pick_list, row, scrollable, text, 
 use iced::{Element, Length};
 use std::collections::HashMap;
 
-use crate::icons::{self, icon};
+use crate::material_icons::{icon, icons};
 use crate::messages::{Message, OAuthProvider};
 use crate::theme::{styles, AppTheme};
 
@@ -26,7 +26,7 @@ pub fn view<'a>(
     let header = row![
         button(
             row![
-                icon(icons::ARROW_LEFT).size(14),
+                icon(icons::ARROW_BACK).size(16),
                 text(" Back").size(14),
             ]
             .spacing(4)
@@ -47,7 +47,7 @@ pub fn view<'a>(
                 text("Theme:").size(14),
                 button(
                     row![
-                        icon(icons::MOON_FILL).size(14),
+                        icon(icons::DARK_MODE).size(16),
                         text(" Dark").size(14),
                     ]
                     .spacing(4)
@@ -57,7 +57,7 @@ pub fn view<'a>(
                 .padding([8, 12]),
                 button(
                     row![
-                        icon(icons::SUN_FILL).size(14),
+                        icon(icons::LIGHT_MODE).size(16),
                         text(" Light").size(14),
                     ]
                     .spacing(4)
@@ -67,7 +67,7 @@ pub fn view<'a>(
                 .padding([8, 12]),
                 button(
                     row![
-                        icon(icons::CIRCLE_HALF).size(14),
+                        icon(icons::CONTRAST).size(16),
                         text(" Zinc").size(14),
                     ]
                     .spacing(4)
@@ -90,7 +90,7 @@ pub fn view<'a>(
             row![
                 button(
                     row![
-                        icon(icons::KEY_FILL).size(14),
+                        icon(icons::VPN_KEY).size(16),
                         text(" Claude").size(14),
                     ]
                     .spacing(4)
@@ -100,7 +100,7 @@ pub fn view<'a>(
                 .padding([8, 12]),
                 button(
                     row![
-                        icon(icons::KEY_FILL).size(14),
+                        icon(icons::VPN_KEY).size(16),
                         text(" Gemini").size(14),
                     ]
                     .spacing(4)
@@ -110,7 +110,7 @@ pub fn view<'a>(
                 .padding([8, 12]),
                 button(
                     row![
-                        icon(icons::KEY_FILL).size(14),
+                        icon(icons::VPN_KEY).size(16),
                         text(" ChatGPT").size(14),
                     ]
                     .spacing(4)
@@ -167,7 +167,7 @@ fn build_model_settings_section<'a>(
         iced::widget::horizontal_space(),
         button(
             row![
-                icon(if is_loading_models { icons::HOURGLASS_SPLIT } else { icons::ARROW_CLOCKWISE }).size(14),
+                icon(if is_loading_models { icons::HOURGLASS_EMPTY } else { icons::REFRESH }).size(16),
                 text(if is_loading_models { " Loading..." } else { " Refresh" }).size(14),
             ]
             .spacing(4)
@@ -218,7 +218,7 @@ fn build_model_settings_section<'a>(
 
     let coding_row = if available_models.is_empty() {
         row![
-            icon(icons::CODE_SLASH).size(14),
+            icon(icons::CODE).size(16),
             text("Coding Agent:").size(14).width(Length::Fixed(120.0)),
             text("No models available").size(14),
         ]
@@ -227,7 +227,7 @@ fn build_model_settings_section<'a>(
     } else {
         let selected = coding_pinned.map(ModelOption::Model).unwrap_or(ModelOption::UseDefault);
         row![
-            icon(icons::CODE_SLASH).size(14),
+            icon(icons::CODE).size(16),
             text("Coding Agent:").size(14).width(Length::Fixed(120.0)),
             pick_list(
                 agent_model_options.clone(),
@@ -247,7 +247,7 @@ fn build_model_settings_section<'a>(
 
     let planning_row = if available_models.is_empty() {
         row![
-            icon(icons::LIST_CHECK).size(14),
+            icon(icons::CHECKLIST).size(16),
             text("Planning Agent:").size(14).width(Length::Fixed(120.0)),
             text("No models available").size(14),
         ]
@@ -256,7 +256,7 @@ fn build_model_settings_section<'a>(
     } else {
         let selected = planning_pinned.map(ModelOption::Model).unwrap_or(ModelOption::UseDefault);
         row![
-            icon(icons::LIST_CHECK).size(14),
+            icon(icons::CHECKLIST).size(16),
             text("Planning Agent:").size(14).width(Length::Fixed(120.0)),
             pick_list(
                 agent_model_options.clone(),
@@ -323,22 +323,22 @@ fn build_sessions_section<'a>() -> Element<'a, Message> {
                 let session_id = session.id.clone();
                 let session_name = session.name.clone();
                 let agent_icon = if session.agent_type == "coding" {
-                    icons::CODE_SLASH
+                    icons::CODE
                 } else {
-                    icons::LIST_CHECK
+                    icons::CHECKLIST
                 };
-                
+
                 let updated = session.updated_at
                     .as_ref()
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                     .map(|dt| dt.format("%m/%d %H:%M").to_string())
                     .unwrap_or_else(|| "Unknown".to_string());
-                
+
                 let info_text = format!("{} messages • {}", session.message_count, updated);
-                
+
                 container(
                     row![
-                        icon(agent_icon).size(14),
+                        icon(agent_icon).size(16),
                         column![
                             text(session_name).size(14),
                             text(info_text).size(11),
@@ -347,7 +347,7 @@ fn build_sessions_section<'a>() -> Element<'a, Message> {
                         .width(Length::Fill),
                         button(
                             row![
-                                icon(icons::FOLDER_OPEN).size(12),
+                                icon(icons::FOLDER_OPEN).size(14),
                                 text(" Load").size(12),
                             ]
                             .spacing(4)

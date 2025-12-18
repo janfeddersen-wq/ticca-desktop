@@ -3,29 +3,23 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input, Column};
 use iced::{Element, Length, Subscription, Task, Theme};
 
-use crate::icons::{self, icon};
-use crate::messages::Message;
+use crate::image_handler;
+use crate::llm_stream;
+use crate::material_icons::{self as mi, icon, icons};
+use crate::messages::{Message, ImageAttachment};
 use crate::theme::{styles, AppTheme};
 
 use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType, get_agent};
-use ticca_core::config::{ConfigDatabase, OAuthToken, setting_keys};
-use ticca_core::config::models::providers;
+use ticca_core::config::{ConfigDatabase, setting_keys};
 use ticca_core::llm;
 use ticca_core::session::{Session, SessionDatabase, SessionMessage, MessageRole};
 use ticca_oauth::{ClaudeOAuth, ChatGptOAuth};
-
-// Rig LLM Framework
-use rig::prelude::*;
-use rig::providers::anthropic;
 
 use uuid::Uuid;
 use chrono::{Local, Utc};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
-use futures::StreamExt;
-
-use ticca_core::tools::ToolContext;
+use base64::Engine as _;
 
 /// Main application state
 pub struct TiccaApp {
@@ -37,6 +31,9 @@ pub struct TiccaApp {
     input_value: String,
     messages: Vec<ChatMessage>,
     is_streaming: bool,
+
+    // Image attachments pending to be sent
+    pending_attachments: Vec<ImageAttachment>,
 
     // Agent state
     current_agent: AgentType,
@@ -130,6 +127,7 @@ impl TiccaApp {
                 ChatMessage::assistant("Welcome to Ticca. How can I assist you?"),
             ],
             is_streaming: false,
+            pending_attachments: Vec::new(),
             current_agent: AgentType::Coding,
             agent_config: CoreAgentConfig::coding(),
             available_models: Vec::new(),
@@ -168,15 +166,39 @@ impl TiccaApp {
             }
             
             Message::SendMessage => {
-                if self.input_value.trim().is_empty() || self.is_streaming {
+                // Check if we have something to send (text or images)
+                let has_text = !self.input_value.trim().is_empty();
+                let has_images = !self.pending_attachments.is_empty();
+
+                if (!has_text && !has_images) || self.is_streaming {
                     return Task::none();
                 }
 
                 let user_message = self.input_value.clone();
                 self.input_value.clear();
 
+                // Take the pending attachments
+                let attachments = std::mem::take(&mut self.pending_attachments);
+
+                // Build display message with image indicators
+                let display_message = if attachments.is_empty() {
+                    user_message.clone()
+                } else {
+                    let img_count = attachments.len();
+                    let img_text = if img_count == 1 {
+                        "[1 image attached]".to_string()
+                    } else {
+                        format!("[{} images attached]", img_count)
+                    };
+                    if user_message.is_empty() {
+                        img_text
+                    } else {
+                        format!("{}\n\n{}", img_text, user_message)
+                    }
+                };
+
                 // Add user message
-                self.messages.push(ChatMessage::user(&user_message));
+                self.messages.push(ChatMessage::user(&display_message));
 
                 // Check if we have credentials
                 if !llm::has_claude_credentials() {
@@ -200,7 +222,7 @@ impl TiccaApp {
                 let system_prompt = agent.system_prompt();
 
                 // Get the auth token for Claude Code
-                let auth_token = match get_claude_auth_token() {
+                let auth_token = match llm_stream::get_claude_auth_token() {
                     Some(token) => token,
                     None => {
                         self.messages.push(ChatMessage::assistant(
@@ -221,8 +243,17 @@ impl TiccaApp {
                     .filter(|m| !m.is_streaming) // Exclude streaming messages
                     .cloned()
                     .collect();
+
+                // Convert attachments to base64 for the API
+                let image_data: Vec<(String, String)> = attachments.iter()
+                    .map(|att| {
+                        let base64_data = base64::engine::general_purpose::STANDARD.encode(&*att.data);
+                        ("image/png".to_string(), base64_data)
+                    })
+                    .collect();
+
                 Task::run(
-                    run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir, max_tool_rounds, history),
+                    llm_stream::run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir, max_tool_rounds, history, image_data),
                     |event| event,
                 )
             }
@@ -608,6 +639,60 @@ impl TiccaApp {
                 Task::none()
             }
 
+            Message::FileDropped(path) => {
+                // Load image from dropped file
+                Task::perform(
+                    async move {
+                        image_handler::load_image_from_path(&path).await
+                    },
+                    Message::ImageLoaded
+                )
+            }
+
+            Message::ImageLoaded(result) => {
+                match result {
+                    Ok(attachment) => {
+                        self.pending_attachments.push(attachment);
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("Failed to load image: {}", e));
+                    }
+                }
+                Task::none()
+            }
+
+            Message::PasteImage => {
+                // Try to paste image from clipboard
+                Task::perform(
+                    async {
+                        image_handler::paste_image_from_clipboard().await
+                    },
+                    Message::ImagePasted
+                )
+            }
+
+            Message::ImagePasted(result) => {
+                match result {
+                    Ok(attachment) => {
+                        self.pending_attachments.push(attachment);
+                    }
+                    Err(e) => {
+                        // Silently ignore if no image in clipboard (user might have pressed Ctrl+V for text)
+                        if !e.contains("No image") {
+                            self.error_message = Some(format!("Failed to paste image: {}", e));
+                        }
+                    }
+                }
+                Task::none()
+            }
+
+            Message::RemoveAttachment(index) => {
+                if index < self.pending_attachments.len() {
+                    self.pending_attachments.remove(index);
+                }
+                Task::none()
+            }
+
             Message::DismissError => {
                 self.error_message = None;
                 Task::none()
@@ -657,16 +742,35 @@ impl TiccaApp {
         self.theme.to_iced_theme()
     }
     
-    /// Get subscriptions (keyboard shortcuts)
+    /// Get subscriptions (keyboard shortcuts and file drop events)
     pub fn subscription(&self) -> Subscription<Message> {
         use iced::event::{self, Event};
         use iced::keyboard;
-        
+        use iced::window;
+
         event::listen_with(|event, _status, _id| {
             match event {
+                // Handle file drops for drag & drop images
+                Event::Window(window::Event::FileDropped(path)) => {
+                    // Check if it's an image file
+                    if image_handler::is_image_file(&path) {
+                        Some(Message::FileDropped(path))
+                    } else {
+                        None
+                    }
+                }
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     let bindings = crate::keybindings::keybindings();
-                    
+
+                    // Ctrl+V to paste image from clipboard
+                    if modifiers.command() {
+                        if let iced::keyboard::Key::Character(c) = &key {
+                            if c.as_str() == "v" {
+                                return Some(Message::PasteImage);
+                            }
+                        }
+                    }
+
                     if bindings.send_message.matches(&key, modifiers) {
                         return Some(Message::SendMessage);
                     }
@@ -688,7 +792,7 @@ impl TiccaApp {
                     if bindings.switch_to_planning.matches(&key, modifiers) {
                         return Some(Message::SwitchAgent(AgentType::Planning));
                     }
-                    
+
                     None
                 }
                 _ => None,
@@ -708,7 +812,7 @@ impl TiccaApp {
                 row![
                     button(
                         row![
-                            icon(icons::CODE_SLASH).size(14),
+                            icon(icons::CODE).size(14),
                             text(" Coding").size(14),
                         ]
                         .spacing(4)
@@ -718,7 +822,7 @@ impl TiccaApp {
                     .padding([8, 12]),
                     button(
                         row![
-                            icon(icons::LIST_CHECK).size(14),
+                            icon(icons::CHECKLIST).size(14),
                             text(" Planning").size(14),
                         ]
                         .spacing(4)
@@ -734,15 +838,15 @@ impl TiccaApp {
 
                 // Actions
                 row![
-                    button(icon(icons::CIRCLE_HALF).size(16))
+                    button(icon(icons::CONTRAST).size(18))
                         .on_press(Message::ThemeToggle)
                         .style(styles::icon_button)
                         .padding(8),
-                    button(icon(icons::GEAR).size(16))
+                    button(icon(icons::SETTINGS).size(18))
                         .on_press(Message::OpenSettings)
                         .style(styles::icon_button)
                         .padding(8),
-                    button(icon(icons::PLUS_LG).size(16))
+                    button(icon(icons::ADD).size(18))
                         .on_press(Message::NewSession)
                         .style(styles::icon_button)
                         .padding(8),
@@ -759,7 +863,7 @@ impl TiccaApp {
         let dir_display = self.working_directory.to_string_lossy();
         let dir_bar = container(
             row![
-                icon(icons::FOLDER).size(14),
+                icon(icons::FOLDER).size(16),
                 text(format!(" {}", dir_display)).size(12),
                 iced::widget::horizontal_space(),
                 button(text("Change").size(12))
@@ -788,35 +892,100 @@ impl TiccaApp {
         .height(Length::Fill)
         .into();
 
+        // Build attachment previews if any
+        let attachment_preview: Option<Element<Message>> = if self.pending_attachments.is_empty() {
+            None
+        } else {
+            let previews: Vec<Element<Message>> = self.pending_attachments
+                .iter()
+                .enumerate()
+                .map(|(idx, attachment)| {
+                    // Create thumbnail from PNG data
+                    let handle = iced::widget::image::Handle::from_bytes((*attachment.data).clone());
+                    let thumbnail = iced::widget::image(handle)
+                        .width(Length::Fixed(60.0))
+                        .height(Length::Fixed(60.0));
+
+                    let filename = attachment.filename.as_deref().unwrap_or("image");
+                    let size_kb = attachment.data.len() / 1024;
+
+                    container(
+                        column![
+                            // Thumbnail with remove button overlay
+                            iced::widget::stack![
+                                container(thumbnail)
+                                    .style(styles::image_thumbnail_container),
+                                container(
+                                    button(icon(icons::CLOSE).size(12))
+                                        .on_press(Message::RemoveAttachment(idx))
+                                        .style(styles::remove_attachment_button)
+                                        .padding(2)
+                                )
+                                .align_x(iced::alignment::Horizontal::Right)
+                                .width(Length::Fill),
+                            ]
+                            .width(Length::Fixed(60.0))
+                            .height(Length::Fixed(60.0)),
+                            // Filename and size
+                            text(format!("{}KB", size_kb)).size(10),
+                        ]
+                        .spacing(2)
+                        .align_x(iced::Alignment::Center)
+                    )
+                    .padding(4)
+                    .into()
+                })
+                .collect();
+
+            Some(
+                container(
+                    row![
+                        icon(icons::ATTACH_FILE).size(14),
+                        iced::widget::Row::with_children(previews).spacing(8),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center)
+                )
+                .padding([8, 12])
+                .width(Length::Fill)
+                .style(styles::attachment_bar_container)
+                .into()
+            )
+        };
+
+        // Check if we can send (has text or attachments)
+        let can_send = !self.is_streaming &&
+            (!self.input_value.trim().is_empty() || !self.pending_attachments.is_empty());
+
         // Input area
+        let input_row = row![
+            text_input("Type a message...", &self.input_value)
+                .on_input(Message::InputChanged)
+                .on_submit(Message::SendMessage)
+                .style(styles::text_input_style)
+                .padding(12)
+                .size(14)
+                .width(Length::Fill),
+            button(
+                if self.is_streaming {
+                    icon(icons::HOURGLASS_EMPTY).size(20)
+                } else {
+                    icon(icons::ARROW_UPWARD).size(20)
+                }
+            )
+            .on_press_maybe(if can_send { Some(Message::SendMessage) } else { None })
+            .style(styles::send_button)
+            .padding([8, 8]),
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center);
+
         let input = container(
-            row![
-                text_input("Type a message...", &self.input_value)
-                    .on_input(Message::InputChanged)
-                    .on_submit(Message::SendMessage)
-                    .style(styles::text_input_style)
-                    .padding(12)
-                    .size(14)
-                    .width(Length::Fill),
-                button(
-                    if self.is_streaming {
-                        row![icon(icons::HOURGLASS_SPLIT).size(14)]
-                    } else {
-                        row![icon(icons::SEND_FILL).size(14)]
-                    }
-                )
-                .on_press_maybe(
-                    if self.is_streaming || self.input_value.trim().is_empty() {
-                        None
-                    } else {
-                        Some(Message::SendMessage)
-                    }
-                )
-                .style(styles::primary_button)
-                .padding([10, 16]),
-            ]
-            .spacing(10)
-            .align_y(iced::Alignment::Center)
+            if let Some(preview) = attachment_preview {
+                column![preview, input_row].spacing(0).into()
+            } else {
+                input_row.into()
+            }
         )
         .padding(12)
         .style(styles::input_area_container);
@@ -918,7 +1087,7 @@ impl TiccaApp {
 
         let content: Element<Message> = if msg.is_streaming && msg.content.is_empty() {
             row![
-                icon(icons::CHAT_DOTS).size(14),
+                icon(icons::PENDING).size(16),
                 text(" Thinking...").size(14),
             ]
             .spacing(6)
@@ -944,20 +1113,20 @@ impl TiccaApp {
             crate::views::components::markdown::render(&msg.content, is_dark)
         };
 
-        // Toggle icon: CODE for raw view, FILE_CODE for markdown view
-        let toggle_icon = if is_raw_view { icons::FILE_CODE } else { icons::CODE };
+        // Toggle icon: CODE for raw view, DESCRIPTION for markdown view
+        let toggle_icon = if is_raw_view { icons::DESCRIPTION } else { icons::CODE };
 
         // Header row with label, toggle button, and copy button
         let header = row![
             text(label).size(12),
             iced::widget::horizontal_space(),
             // Raw/Markdown toggle button
-            button(icon(toggle_icon).size(14))
+            button(icon(toggle_icon).size(16))
                 .on_press(Message::ToggleRawView(index))
                 .style(styles::icon_button)
                 .padding([4, 6]),
             // Copy button
-            button(icon(icons::CLIPBOARD).size(14))
+            button(icon(icons::CONTENT_COPY).size(16))
                 .on_press(Message::CopyMessage(index))
                 .style(styles::icon_button)
                 .padding([4, 6]),
@@ -973,7 +1142,7 @@ impl TiccaApp {
             let reasoning_content = container(
                 column![
                     row![
-                        icon(icons::LIGHTBULB).size(12),
+                        icon(icons::PSYCHOLOGY).size(14),
                         text(" Thinking").size(12),
                     ]
                     .spacing(4),
@@ -1078,185 +1247,6 @@ fn load_config() -> AppConfig {
     }
 }
 
-/// Get the Claude OAuth token if available and valid
-fn get_claude_auth_token() -> Option<String> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(providers::CLAUDE).ok()??;
-
-    if token.is_expired() {
-        tracing::warn!("Claude OAuth token is expired");
-        return None;
-    }
-
-    Some(token.access_token)
-}
-
-/// Run the Rig agent with streaming response and tools (ReAct loop)
-///
-/// Returns a Stream that yields Message events for each chunk
-fn run_rig_agent_stream(
-    auth_token: String,
-    system_prompt: String,
-    user_message: String,
-    model_name: Option<String>,
-    working_directory: PathBuf,
-    max_tool_rounds: u32,
-    chat_history: Vec<ChatMessage>,
-) -> impl futures::Stream<Item = Message> {
-    async_stream::stream! {
-        // Use provided model or fetch from API
-        let model_name = match model_name {
-            Some(name) => {
-                tracing::info!("Using configured model: {}", name);
-                name
-            }
-            None => {
-                match fetch_best_model(&auth_token).await {
-                    Ok(name) => {
-                        tracing::info!("Using auto-detected model: {}", name);
-                        name
-                    }
-                    Err(e) => {
-                        yield Message::StreamError(e);
-                        return;
-                    }
-                }
-            }
-        };
-
-        // Create OAuth client with the token
-        let client: anthropic::OAuthClient = match anthropic::OAuthClient::builder()
-            .api_key(auth_token)
-            .build()
-        {
-            Ok(client) => client,
-            Err(e) => {
-                yield Message::StreamError(format!("Failed to create OAuth client: {}", e));
-                return;
-            }
-        };
-
-        // Create tool context with working directory
-        let tool_context = Arc::new(ToolContext {
-            working_directory: working_directory.clone(),
-        });
-
-        // Create tools with the context
-        let (shell, read_file, list_files, edit_file, grep, write_file) =
-            ticca_core::tools::create_tools(tool_context);
-
-        // Create agent with system prompt, tools, and model
-        let agent = client
-            .agent(&model_name)
-            .preamble(&system_prompt)
-            .tool(shell)
-            .tool(read_file)
-            .tool(list_files)
-            .tool(edit_file)
-            .tool(grep)
-            .tool(write_file)
-            .temperature(0.7)
-            .max_tokens(8192)
-            .build();
-
-        // Use streaming prompt with multi-turn enabled for ReAct loop
-        use rig::streaming::StreamingPrompt;
-        use rig::agent::MultiTurnStreamItem;
-        use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
-        use rig::message::Message as RigMessage;
-
-        // Convert chat history to rig messages
-        let history: Vec<RigMessage> = chat_history
-            .into_iter()
-            .filter_map(|msg| {
-                match msg.role {
-                    MessageRole::User => Some(RigMessage::user(&msg.content)),
-                    MessageRole::Assistant => Some(RigMessage::assistant(&msg.content)),
-                    _ => None, // Skip system and tool messages
-                }
-            })
-            .collect();
-
-        // Enable multi-turn for ReAct loop (configurable, default 500)
-        let mut stream = agent.stream_prompt(&user_message)
-            .with_history(history)
-            .multi_turn(max_tool_rounds as usize)
-            .await;
-
-        while let Some(chunk_result) = stream.next().await {
-            match chunk_result {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(text_chunk))) => {
-                    if !text_chunk.text.is_empty() {
-                        yield Message::StreamChunk(text_chunk.text);
-                    }
-                }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(reasoning))) => {
-                    // Stream reasoning/thinking content separately
-                    let text = reasoning.reasoning.join("");
-                    if !text.is_empty() {
-                        yield Message::Reasoning(text);
-                    }
-                }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ToolCall(tool_call))) => {
-                    // Tool call initiated - yield a message so UI can show it
-                    let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
-                        .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
-                    yield Message::ToolCall {
-                        name: tool_call.function.name.clone(),
-                        args: args_str,
-                    };
-                }
-                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(tool_result))) => {
-                    // Tool result received - yield a message so UI can show it
-                    let result_text = tool_result.content.iter()
-                        .map(|c| match c {
-                            rig::message::ToolResultContent::Text(t) => t.text.clone(),
-                            _ => "[non-text content]".to_string(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    yield Message::ToolResult {
-                        name: tool_result.id.clone(),
-                        result: result_text,
-                    };
-                }
-                Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                    // Stream complete, we'll yield StreamComplete at the end
-                }
-                Ok(_) => {
-                    // Other stream items (deltas, etc)
-                }
-                Err(e) => {
-                    yield Message::StreamError(format!("Stream error: {}", e));
-                    return;
-                }
-            }
-        }
-        yield Message::StreamComplete;
-    }
-}
-
-/// Fetch the best available model from the Claude API
-async fn fetch_best_model(auth_token: &str) -> Result<String, String> {
-    // Use the ClaudeClient to fetch models
-    let client = llm::ClaudeClient::new(auth_token.to_string());
-    let models = client.fetch_latest_models().await
-        .map_err(|e| format!("Failed to fetch models: {}", e))?;
-
-    // Prefer sonnet, then opus, then haiku
-    let preferred_order = ["sonnet", "opus", "haiku"];
-
-    for family in preferred_order {
-        if let Some(model) = models.iter().find(|m| m.contains(family)) {
-            return Ok(model.clone());
-        }
-    }
-
-    // If no match, return the first available model or error
-    models.into_iter().next()
-        .ok_or_else(|| "No models available from Claude API".to_string())
-}
-
 /// Bundled Noto Sans font for consistent text rendering
 const NOTO_SANS_REGULAR: &[u8] = include_bytes!("../assets/fonts/NotoSans-Regular.ttf");
 
@@ -1292,7 +1282,8 @@ pub fn run() -> anyhow::Result<()> {
         .font(NOTO_SANS_MONO)
         .font(NOTO_SANS_SYMBOLS)
         .font(NOTO_SANS_SYMBOLS2)
-        .font(iced_fonts::BOOTSTRAP_FONT_BYTES)
+        // Material Icons font (replaces Bootstrap Icons)
+        .font(mi::FONT_BYTES)
         // Set Noto Sans as the default font for consistent rendering
         .default_font(iced::Font::with_name("Noto Sans"))
         .window_size(iced::Size::new(900.0, 700.0))
