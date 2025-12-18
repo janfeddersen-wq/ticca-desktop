@@ -27,13 +27,30 @@ pub mod colors {
     pub const ZINC_100: Color = Color::from_rgb(0.957, 0.957, 0.961); // #f4f4f5
     pub const ZINC_50: Color = Color::from_rgb(0.980, 0.980, 0.980); // #fafafa
 
-    // Neutral accent - using zinc itself
+    // Background layers
+    pub const BG_BASE: Color = ZINC_800;
+    pub const BG_SURFACE: Color = ZINC_700;
+    pub const BG_ELEVATED: Color = ZINC_600;
+    pub const BG_HOVER: Color = ZINC_500;
+
+    // Text colors
+    pub const TEXT_PRIMARY: Color = ZINC_100;
+    pub const TEXT_SECONDARY: Color = ZINC_300;
+    pub const TEXT_MUTED: Color = ZINC_400;
+
+    // Border colors
+    pub const BORDER_SUBTLE: Color = ZINC_600;
+    pub const BORDER_DEFAULT: Color = ZINC_500;
+
+    // Accent colors
     pub const ACCENT: Color = ZINC_400;
+    pub const ACCENT_HOVER: Color = ZINC_300;
+    pub const ACCENT_MUTED: Color = ZINC_500;
 
     // Status colors (muted versions)
-    pub const GREEN_400: Color = Color::from_rgb(0.290, 0.824, 0.498); // #4ade80
-    pub const YELLOW_400: Color = Color::from_rgb(0.980, 0.761, 0.141); // #facc15
-    pub const RED_400: Color = Color::from_rgb(0.969, 0.447, 0.447); // #f87171
+    pub const SUCCESS: Color = Color::from_rgb(0.290, 0.824, 0.498); // #4ade80
+    pub const WARNING: Color = Color::from_rgb(0.980, 0.761, 0.141); // #facc15
+    pub const DANGER: Color = Color::from_rgb(0.969, 0.447, 0.447); // #f87171
 }
 
 /// Create the zinc (neutral) theme
@@ -41,12 +58,12 @@ pub fn theme() -> Theme {
     Theme::custom(
         "Ticca Zinc".to_string(),
         Palette {
-            background: colors::ZINC_800,
-            text: colors::ZINC_100,
+            background: colors::BG_BASE,
+            text: colors::TEXT_PRIMARY,
             primary: colors::ACCENT,
-            success: colors::GREEN_400,
-            warning: colors::YELLOW_400,
-            danger: colors::RED_400,
+            success: colors::SUCCESS,
+            warning: colors::WARNING,
+            danger: colors::DANGER,
         },
     )
 }

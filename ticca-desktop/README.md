@@ -46,6 +46,7 @@ All tools are implemented in pure Rust with no external dependencies:
 | `read_file` | Read file contents with optional line ranges for large files |
 | `edit_file` | Precise text replacement in existing files (requires exact match) |
 | `write_file` | Create new files or overwrite existing ones |
+| `delete_file` | Remove files with diff generation for review |
 | `grep` | Fast regex search powered by [ripgrep](https://github.com/BurntSushi/ripgrep) libraries |
 | `shell` | Execute shell commands with configurable timeout protection |
 
@@ -82,13 +83,21 @@ Native OAuth flows for major LLM providers—no API keys to manage:
 
 ### 🎨 Themes
 
-Three built-in themes using Tailwind CSS color palettes:
+Eleven built-in themes to match your style:
 
 | Theme | Description |
 |-------|-------------|
 | **Dark** | Easy on the eyes for long coding sessions (default) |
 | **Light** | Clean and bright for well-lit environments |
 | **Zinc** | Neutral gray tones for a minimal aesthetic |
+| **Dracula** | Popular dark theme with vibrant colors |
+| **Nord** | Arctic, north-bluish color palette |
+| **Catppuccin Mocha** | Soothing pastel theme (dark) |
+| **Catppuccin Latte** | Soothing pastel theme (light) |
+| **Tokyo Night** | Dark theme inspired by Tokyo city lights |
+| **One Dark** | Atom's iconic dark theme |
+| **Gruvbox Dark** | Retro groove color scheme (dark) |
+| **Gruvbox Light** | Retro groove color scheme (light) |
 
 ### ⌨️ Keyboard Shortcuts
 
@@ -170,10 +179,18 @@ ticca-desktop/
 │   │   │   ├── icons.rs             # Icon definitions
 │   │   │   ├── material_icons.rs    # Material Icons integration
 │   │   │   ├── image_handler.rs     # Image attachment processing
-│   │   │   ├── theme/               # Dark, Light, Zinc themes
-│   │   │   │   ├── dark.rs
-│   │   │   │   ├── light.rs
-│   │   │   │   ├── zinc.rs
+│   │   │   ├── theme/               # 11 color themes
+│   │   │   │   ├── dark.rs          # Default dark theme
+│   │   │   │   ├── light.rs         # Light theme
+│   │   │   │   ├── zinc.rs          # Zinc neutral theme
+│   │   │   │   ├── dracula.rs       # Dracula theme
+│   │   │   │   ├── nord.rs          # Nord theme
+│   │   │   │   ├── catppuccin_mocha.rs
+│   │   │   │   ├── catppuccin_latte.rs
+│   │   │   │   ├── tokyo_night.rs
+│   │   │   │   ├── one_dark.rs
+│   │   │   │   ├── gruvbox_dark.rs
+│   │   │   │   ├── gruvbox_light.rs
 │   │   │   │   └── styles.rs        # Widget styling
 │   │   │   └── views/
 │   │   │       ├── config.rs        # Settings panel
@@ -192,7 +209,7 @@ ticca-desktop/
 │   │       ├── tools/               # Native Rust tools
 │   │       │   ├── registry.rs      # Tool registration system
 │   │       │   ├── file_ops.rs      # list_files, read_file
-│   │       │   ├── file_mods.rs     # edit_file, write_file
+│   │       │   ├── file_mods.rs     # edit_file, write_file, delete_file
 │   │       │   ├── grep.rs          # Regex search (ripgrep)
 │   │       │   ├── shell.rs         # Command execution
 │   │       │   └── rig_tools.rs     # Rig framework integration
@@ -314,6 +331,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Noto Fonts](https://fonts.google.com/noto) — For the beautiful font family
 - [Twemoji](https://github.com/twitter/twemoji) — For emoji assets
 - [Material Design Icons](https://fonts.google.com/icons) — For the icon set
+- Theme inspirations: [Dracula](https://draculatheme.com/), [Nord](https://www.nordtheme.com/), [Catppuccin](https://github.com/catppuccin), [Tokyo Night](https://github.com/enkia/tokyo-night-vscode-theme), [One Dark](https://github.com/atom/atom/tree/master/packages/one-dark-ui), [Gruvbox](https://github.com/morhetz/gruvbox)
 
 ---
 

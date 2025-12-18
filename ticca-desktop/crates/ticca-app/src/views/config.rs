@@ -3,10 +3,6 @@
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, Column, Space};
 use iced::{Border, Color, Element, Length};
 
-/// Create horizontal space that fills available width (iced 0.14 helper)
-fn horizontal_space() -> Space {
-    Space::new().width(Length::Fill)
-}
 use std::collections::HashMap;
 
 use crate::material_icons::{icon, icons};
@@ -16,6 +12,11 @@ use crate::theme::{styles, AppTheme};
 use ticca_core::agents::AgentType;
 use ticca_core::session::SessionDatabase;
 
+/// Create horizontal space that fills available width (iced 0.14 helper)
+fn horizontal_space() -> Space {
+    Space::new().width(Length::Fill)
+}
+
 /// Render the settings view
 pub fn view<'a>(
     theme: AppTheme,
@@ -24,10 +25,6 @@ pub fn view<'a>(
     agent_pinned_models: &'a HashMap<AgentType, String>,
     is_loading_models: bool,
 ) -> Element<'a, Message> {
-    let is_dark = matches!(theme, AppTheme::Dark);
-    let is_light = matches!(theme, AppTheme::Light);
-    let is_zinc = matches!(theme, AppTheme::Zinc);
-
     let header = row![
         button(
             row![
@@ -45,43 +42,37 @@ pub fn view<'a>(
     .padding(10)
     .align_y(iced::Alignment::Center);
 
+    // Theme selector with all available themes
+    let theme_options: Vec<AppTheme> = vec![
+        AppTheme::Dark,
+        AppTheme::Light,
+        AppTheme::Zinc,
+        AppTheme::Dracula,
+        AppTheme::Nord,
+        AppTheme::CatppuccinMocha,
+        AppTheme::CatppuccinLatte,
+        AppTheme::TokyoNight,
+        AppTheme::OneDark,
+        AppTheme::GruvboxDark,
+        AppTheme::GruvboxLight,
+    ];
+
+    let theme_icon = if theme.is_dark() { icons::DARK_MODE } else { icons::LIGHT_MODE };
+
     let appearance = container(
         column![
             text("Appearance").size(18),
             row![
-                text("Theme:").size(14),
-                button(
-                    row![
-                        icon(icons::DARK_MODE).size(16),
-                        text(" Dark").size(14),
-                    ]
-                    .spacing(4)
+                icon(theme_icon).size(16),
+                text("Theme:").size(14).width(Length::Fixed(80.0)),
+                pick_list(
+                    theme_options,
+                    Some(theme),
+                    Message::SetTheme
                 )
-                .on_press(Message::SetTheme(AppTheme::Dark))
-                .style(move |t, status| styles::tab_button(t, status, is_dark))
-                .padding([8, 12]),
-                button(
-                    row![
-                        icon(icons::LIGHT_MODE).size(16),
-                        text(" Light").size(14),
-                    ]
-                    .spacing(4)
-                )
-                .on_press(Message::SetTheme(AppTheme::Light))
-                .style(move |t, status| styles::tab_button(t, status, is_light))
-                .padding([8, 12]),
-                button(
-                    row![
-                        icon(icons::CONTRAST).size(16),
-                        text(" Zinc").size(14),
-                    ]
-                    .spacing(4)
-                )
-                .on_press(Message::SetTheme(AppTheme::Zinc))
-                .style(move |t, status| styles::tab_button(t, status, is_zinc))
-                .padding([8, 12]),
+                .width(Length::Fixed(200.0)),
             ]
-            .spacing(8)
+            .spacing(10)
             .align_y(iced::Alignment::Center),
         ]
         .spacing(15)

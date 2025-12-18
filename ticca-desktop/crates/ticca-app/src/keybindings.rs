@@ -5,6 +5,14 @@
 #![allow(dead_code)]
 
 use iced::keyboard::{Key, Modifiers, key::Named};
+use iced::Subscription;
+use iced::event::{self, Event};
+use iced::keyboard;
+use iced::window;
+
+use ticca_core::agents::AgentType;
+use crate::image_handler;
+use crate::messages::Message;
 
 /// A keyboard shortcut definition
 #[derive(Debug, Clone)]
@@ -97,6 +105,59 @@ impl Keybindings {
 pub fn keybindings() -> &'static Keybindings {
     static KEYBINDINGS: std::sync::OnceLock<Keybindings> = std::sync::OnceLock::new();
     KEYBINDINGS.get_or_init(Keybindings::default)
+}
+
+/// Create the application subscription for keyboard shortcuts and file drops
+pub fn subscription() -> Subscription<Message> {
+    event::listen_with(|event, _status, _id| {
+        match event {
+            // Handle file drops for drag & drop images (X11 only - not implemented on Wayland)
+            Event::Window(window::Event::FileDropped(path)) => {
+                if image_handler::is_image_file(&path) {
+                    Some(Message::FileDropped(path))
+                } else {
+                    None
+                }
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                let bindings = keybindings();
+
+                // Ctrl+V to paste image from clipboard
+                if modifiers.command() {
+                    if let iced::keyboard::Key::Character(c) = &key {
+                        if c.as_str() == "v" {
+                            return Some(Message::PasteImage);
+                        }
+                    }
+                }
+
+                if bindings.send_message.matches(&key, modifiers) {
+                    return Some(Message::SendMessage);
+                }
+                if bindings.new_session.matches(&key, modifiers) {
+                    return Some(Message::NewSession);
+                }
+                if bindings.open_settings.matches(&key, modifiers) {
+                    return Some(Message::OpenSettings);
+                }
+                if bindings.toggle_theme.matches(&key, modifiers) {
+                    return Some(Message::ThemeToggle);
+                }
+                if bindings.close_panel.matches(&key, modifiers) {
+                    return Some(Message::CloseSettings);
+                }
+                if bindings.switch_to_coding.matches(&key, modifiers) {
+                    return Some(Message::SwitchAgent(AgentType::Coding));
+                }
+                if bindings.switch_to_planning.matches(&key, modifiers) {
+                    return Some(Message::SwitchAgent(AgentType::Planning));
+                }
+
+                None
+            }
+            _ => None,
+        }
+    })
 }
 
 #[cfg(test)]

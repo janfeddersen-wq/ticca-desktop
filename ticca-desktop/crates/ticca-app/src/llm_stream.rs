@@ -3,7 +3,7 @@
 //! Handles communication with the Claude API via the Rig framework,
 //! including streaming responses and tool execution.
 
-use crate::app::ChatMessage;
+use crate::chat_message::ChatMessage;
 use crate::messages::Message;
 
 use ticca_core::config::ConfigDatabase;

@@ -3,14 +3,20 @@
 //! A sleek, Iced-based desktop application for AI-assisted coding.
 
 mod app;
+mod app_config;
+mod chat_message;
+mod helpers;
 mod icons;
 mod image_handler;
+mod keybindings;
 mod llm_stream;
 mod material_icons;
 mod messages;
+mod oauth_handler;
+mod runner;
+mod session_manager;
 mod theme;
 mod views;
-mod keybindings;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -25,7 +31,7 @@ fn main() -> anyhow::Result<()> {
         .init();
     
     tracing::info!("Starting Ticca Desktop");
-    
+
     // Run the Iced application
-    app::run()
+    runner::run()
 }
