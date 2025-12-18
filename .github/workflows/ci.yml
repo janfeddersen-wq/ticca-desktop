@@ -1,271 +1,113 @@
-# Continuous Integration workflow for Ticca Desktop
-#
-# This workflow runs on every push and pull request to main, performing:
-# - Code quality checks (clippy, fmt)
-# - Cross-platform testing (Linux, macOS, Windows)
-# - Python linting and type checking
-# - Build verification
-
 name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
     branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+
+defaults:
+  run:
+    working-directory: ticca-desktop
 
 jobs:
-  # ============================================================================
-  # Quick Checks (run first, fail fast)
-  # ============================================================================
-  
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-check-
-      
-      - name: Run cargo check
-        run: cargo check --workspace --all-targets
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-clippy-
-      
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-  # ============================================================================
-  # Rust Tests (cross-platform)
-  # ============================================================================
-  
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: [check]
+  build:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
+            name: linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-    
+            name: windows-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-aarch64
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      
-      - name: Install Python dependencies
-        run: pip install -e ./python[dev]
-      
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            pkg-config
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+            ticca-desktop/target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('ticca-desktop/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-test-
-      
+            ${{ matrix.target }}-cargo-
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
       - name: Run tests
-        run: cargo test --workspace --target ${{ matrix.target }}
-        env:
-          RUST_BACKTRACE: 1
+        if: matrix.target != 'aarch64-apple-darwin'
+        run: cargo test --release --target ${{ matrix.target }}
 
-  # ============================================================================
-  # Python Quality Checks
-  # ============================================================================
-  
-  python-lint:
-    name: Python Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      
-      - name: Install linting tools
-        run: pip install ruff mypy
-      
-      - name: Install package for type checking
-        run: pip install -e ./python[dev]
-      
-      - name: Run ruff linter
-        run: ruff check python/
-      
-      - name: Run ruff formatter check
-        run: ruff format --check python/
-      
-      - name: Run mypy
-        run: mypy python/ticca_agent/ --ignore-missing-imports
-
-  python-test:
-    name: Python Tests
-    runs-on: ubuntu-latest
-    needs: [python-lint]
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      
-      - name: Install package with test dependencies
-        run: pip install -e ./python[dev]
-      
-      - name: Run pytest
-        run: pytest python/tests/ -v --tb=short
-        env:
-          PYTHONPATH: python
-
-  # ============================================================================
-  # Build Verification
-  # ============================================================================
-  
-  build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: [test, python-test]
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-
-      
-      - name: Build release
-        run: cargo build --workspace --release
-      
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ticca-desktop-${{ matrix.os }}
+          name: ticca-${{ matrix.name }}
           path: |
-            target/release/ticca-ui*
-            !target/release/ticca-ui.d
+            ticca-desktop/target/${{ matrix.target }}/release/ticca
+            ticca-desktop/target/${{ matrix.target }}/release/ticca.exe
           if-no-files-found: ignore
 
-  # ============================================================================
-  # Security Audit
-  # ============================================================================
-  
-  security:
-    name: Security Audit
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-      
-      - name: Run security audit
-        run: cargo audit
-        continue-on-error: true  # Don't fail CI on audit issues, just report
 
-  # ============================================================================
-  # Documentation
-  # ============================================================================
-  
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      
-      - name: Build documentation
-        run: cargo doc --workspace --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        working-directory: ticca-desktop
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: ticca-desktop
