@@ -68,6 +68,19 @@ pub struct TiccaApp {
 
     // Auto-scroll tracking: true if user is at/near bottom of chat
     user_at_bottom: bool,
+
+    // Streaming stats for TPS indicator
+    stream_start_time: Option<std::time::Instant>,
+    stream_chars_received: usize,
+    current_tps: f64,
+    /// Toggles on each chunk for pulse effect
+    stream_pulse: bool,
+    /// Rolling window of TPS samples for 1-minute average (one sample per second)
+    tps_samples: std::collections::VecDeque<f64>,
+    /// Time when we last received bytes (for detecting "waiting" state)
+    last_bytes_time: Option<std::time::Instant>,
+    /// Counter for spinner animation frames
+    spinner_frame: usize,
 }
 
 /// Views in the application
@@ -109,6 +122,13 @@ impl TiccaApp {
             raw_view_editors: HashMap::new(),
             error_message: None,
             user_at_bottom: true, // Start at bottom
+            stream_start_time: None,
+            stream_chars_received: 0,
+            current_tps: 0.0,
+            stream_pulse: false,
+            tps_samples: std::collections::VecDeque::with_capacity(60),
+            last_bytes_time: None,
+            spinner_frame: 0,
         };
 
         // Automatically fetch models on startup if we have credentials
@@ -200,6 +220,12 @@ impl TiccaApp {
                 // Add streaming placeholder
                 self.messages.push(ChatMessage::assistant_streaming());
                 self.is_streaming = true;
+
+                // Initialize streaming stats
+                self.stream_start_time = Some(std::time::Instant::now());
+                self.stream_chars_received = 0;
+                self.current_tps = 0.0;
+                self.stream_pulse = false;
 
                 // Get the system prompt based on current agent
                 let agent = get_agent(self.current_agent);
@@ -328,8 +354,80 @@ impl TiccaApp {
                 self.scroll_to_bottom_if_needed()
             }
 
+            Message::StreamStats { chars_in_window, window_ms } => {
+                // Update stats from the stream - this is emitted ~every second
+                self.stream_chars_received = chars_in_window;
+                self.stream_pulse = !self.stream_pulse;
+
+                // Calculate tokens for this window: chars / 4
+                if window_ms > 0 {
+                    let seconds = window_ms as f64 / 1000.0;
+                    let sample_tps = (chars_in_window as f64) / seconds / 4.0;
+
+                    // Add to rolling window (keep last 60 samples = ~1 minute)
+                    self.tps_samples.push_back(sample_tps);
+                    while self.tps_samples.len() > 60 {
+                        self.tps_samples.pop_front();
+                    }
+
+                    // Calculate rolling average
+                    if !self.tps_samples.is_empty() {
+                        let sum: f64 = self.tps_samples.iter().sum();
+                        self.current_tps = sum / self.tps_samples.len() as f64;
+                    }
+                }
+                Task::none()
+            }
+
+            Message::AnimationTick => {
+                // Fast animation tick (~60 FPS) for smooth spinner
+                self.spinner_frame = self.spinner_frame.wrapping_add(1);
+                Task::none()
+            }
+
+            Message::PollStreamStats => {
+                // Poll the global byte counter from rig (set in llm_stream)
+                // This runs every second via iced subscription while streaming
+
+                if let Some(counter) = rig::get_active_counter() {
+                    // Get bytes received since last poll and reset counter
+                    let bytes_in_window = counter.reset();
+                    self.stream_chars_received = bytes_in_window;
+                    self.stream_pulse = !self.stream_pulse;
+
+                    // Track when we last received actual bytes
+                    if bytes_in_window > 0 {
+                        self.last_bytes_time = Some(std::time::Instant::now());
+
+                        // Calculate chars per second for this 1-second window
+                        let sample_cps = bytes_in_window as f64;
+
+                        // Add to rolling window (keep last 60 samples = ~1 minute)
+                        self.tps_samples.push_back(sample_cps);
+                        while self.tps_samples.len() > 60 {
+                            self.tps_samples.pop_front();
+                        }
+
+                        // Calculate rolling average
+                        if !self.tps_samples.is_empty() {
+                            let sum: f64 = self.tps_samples.iter().sum();
+                            self.current_tps = sum / self.tps_samples.len() as f64;
+                        }
+                    }
+                }
+                Task::none()
+            }
+
             Message::StreamComplete => {
                 self.is_streaming = false;
+                // Reset streaming stats
+                self.stream_start_time = None;
+                self.stream_chars_received = 0;
+                self.current_tps = 0.0;
+                self.tps_samples.clear();
+                self.last_bytes_time = None;
+                self.spinner_frame = 0;
+
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
                         last.is_streaming = false;
@@ -344,6 +442,14 @@ impl TiccaApp {
 
             Message::StreamError(error) => {
                 self.is_streaming = false;
+                // Reset streaming stats
+                self.stream_start_time = None;
+                self.stream_chars_received = 0;
+                self.current_tps = 0.0;
+                self.tps_samples.clear();
+                self.last_bytes_time = None;
+                self.spinner_frame = 0;
+
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
                         last.content = format!("❌ Error: {}", error);
@@ -527,6 +633,7 @@ impl TiccaApp {
             }
 
             Message::ToolResult { name: _, result: _ } => {
+                // Don't count tool results - they're local execution, not LLM output
                 // Don't display tool results - keep the UI clean
                 Task::none()
             }
@@ -692,13 +799,42 @@ impl TiccaApp {
         self.theme.to_iced_theme()
     }
     
-    /// Get subscriptions (keyboard shortcuts and file drop events)
+    /// Get subscriptions (keyboard shortcuts, file drop events, and streaming stats timer)
     pub fn subscription(&self) -> Subscription<Message> {
-        crate::keybindings::subscription()
+        use iced::time;
+
+        let keybindings = crate::keybindings::subscription();
+
+        // Add timer subscriptions while streaming
+        if self.is_streaming {
+            // Stats polling every 1 second
+            let stats_timer = time::every(std::time::Duration::from_secs(1))
+                .map(|_| Message::PollStreamStats);
+
+            // Fast animation timer (~60 FPS) for smooth spinner when waiting
+            let is_waiting = self.last_bytes_time
+                .map(|t| t.elapsed().as_secs() >= 2)
+                .unwrap_or(false);
+
+            if is_waiting {
+                let animation_timer = time::every(std::time::Duration::from_millis(16))
+                    .map(|_| Message::AnimationTick);
+                Subscription::batch([keybindings, stats_timer, animation_timer])
+            } else {
+                Subscription::batch([keybindings, stats_timer])
+            }
+        } else {
+            keybindings
+        }
     }
     
     /// Render the chat view
     fn view_chat(&self) -> Element<'_, Message> {
+        // Calculate seconds since last bytes received (for "waiting" indicator)
+        let secs_since_bytes = self.last_bytes_time
+            .map(|t| t.elapsed().as_secs())
+            .unwrap_or(0);
+
         crate::views::chat::view(
             self.current_agent,
             &self.working_directory,
@@ -709,6 +845,11 @@ impl TiccaApp {
             self.theme,
             &self.raw_view_messages,
             &self.raw_view_editors,
+            self.stream_chars_received,
+            self.current_tps,
+            self.stream_pulse,
+            secs_since_bytes,
+            self.spinner_frame,
         )
     }
 

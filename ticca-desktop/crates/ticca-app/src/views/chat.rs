@@ -15,6 +15,7 @@ use crate::chat_message::ChatMessage;
 use crate::material_icons::{icon, icons};
 use crate::messages::{Message, ImageAttachment};
 use crate::theme::{styles, AppTheme};
+use crate::widgets::spinner;
 
 /// ID for the chat messages scrollable
 pub const CHAT_SCROLLABLE_ID: &str = "chat_messages";
@@ -35,6 +36,11 @@ pub fn view<'a>(
     theme: AppTheme,
     raw_view_messages: &'a HashSet<usize>,
     raw_view_editors: &'a HashMap<usize, text_editor::Content>,
+    stream_chars: usize,
+    current_tps: f64,
+    stream_pulse: bool,
+    secs_since_bytes: u64,
+    spinner_frame: usize,
 ) -> Element<'a, Message> {
     let is_coding = current_agent == AgentType::Coding;
     let is_planning = current_agent == AgentType::Planning;
@@ -135,33 +141,101 @@ pub fn view<'a>(
     let can_send = !is_streaming &&
         (!input_value.trim().is_empty() || !pending_attachments.is_empty());
 
+    // Streaming indicator - shows LLM output rate or waiting animation
+    let streaming_indicator: Option<Element<'_, Message>> = if is_streaming {
+        // Determine if we're "waiting" (no bytes for > 2 seconds)
+        let is_waiting = secs_since_bytes >= 2;
+
+        if is_waiting {
+            // Show GPU-rendered animated spinner with elapsed time
+            Some(
+                container(
+                    row![
+                        spinner(spinner_frame),
+                        text(format!("{}s", secs_since_bytes)).size(12),
+                    ]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center)
+                )
+                .padding([4, 8])
+                .style(styles::streaming_indicator_container)
+                .into()
+            )
+        } else {
+            // Show chars/s rate when data is flowing
+            let pulse_icon = if stream_pulse {
+                icons::RADIO_BUTTON_CHECKED
+            } else {
+                icons::RADIO_BUTTON_UNCHECKED
+            };
+
+            // Show chars/s rate (current_tps is now chars per second, not tokens)
+            let display_text = if current_tps > 0.0 {
+                format!("{:.0} #/s", current_tps)
+            } else if stream_chars > 0 {
+                // Have chars but no rate yet
+                format!("~{} #", stream_chars)
+            } else {
+                "...".to_string()
+            };
+
+            Some(
+                container(
+                    row![
+                        icon(pulse_icon).size(12),
+                        text(display_text).size(12),
+                    ]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center)
+                )
+                .padding([4, 8])
+                .style(styles::streaming_indicator_container)
+                .into()
+            )
+        }
+    } else {
+        None
+    };
+
     // Input area
-    let input_row = row![
+    let mut input_row = row![
         // Add image button (works on Wayland via xdg-portal)
         button(icon(icons::ATTACH_FILE).size(20))
             .on_press(Message::SelectImageFile)
             .style(styles::icon_button)
             .padding([8, 8]),
-        text_input("Type a message...", input_value)
-            .on_input(Message::InputChanged)
-            .on_submit(Message::SendMessage)
-            .style(styles::text_input_style)
-            .padding(12)
-            .size(14)
-            .width(Length::Fill),
-        button(
-            if is_streaming {
-                icon(icons::HOURGLASS_EMPTY).size(20)
-            } else {
-                icon(icons::ARROW_UPWARD).size(20)
-            }
-        )
-        .on_press_maybe(if can_send { Some(Message::SendMessage) } else { None })
-        .style(styles::send_button)
-        .padding([8, 8]),
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);
+
+    // Add streaming indicator if active
+    if let Some(indicator) = streaming_indicator {
+        input_row = input_row.push(indicator);
+    }
+
+    // Add the text input and send button
+    input_row = input_row
+        .push(
+            text_input("Type a message...", input_value)
+                .on_input(Message::InputChanged)
+                .on_submit(Message::SendMessage)
+                .style(styles::text_input_style)
+                .padding(12)
+                .size(14)
+                .width(Length::Fill)
+        )
+        .push(
+            button(
+                if is_streaming {
+                    icon(icons::HOURGLASS_EMPTY).size(20)
+                } else {
+                    icon(icons::ARROW_UPWARD).size(20)
+                }
+            )
+            .on_press_maybe(if can_send { Some(Message::SendMessage) } else { None })
+            .style(styles::send_button)
+            .padding([8, 8])
+        );
 
     let input_content: Element<'_, Message> = if let Some(preview) = attachment_preview {
         column![preview, input_row].spacing(0).into()

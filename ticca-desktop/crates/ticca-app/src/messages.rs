@@ -55,6 +55,16 @@ pub enum Message {
     /// Reasoning/thinking content from the model
     Reasoning(String),
 
+    /// Stream statistics - emitted periodically during streaming
+    /// Contains chars received in the last interval
+    StreamStats { chars_in_window: usize, window_ms: u64 },
+
+    /// Poll the byte counter for streaming stats (from iced subscription timer)
+    PollStreamStats,
+
+    /// Animation tick for smooth 60 FPS spinner animation
+    AnimationTick,
+
     // Navigation
     OpenSettings,
     CloseSettings,

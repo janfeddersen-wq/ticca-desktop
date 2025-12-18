@@ -127,4 +127,9 @@ pub mod icons {
     pub const ARCHIVE: Icon = Icon::Archive;
     pub const BUILD: Icon = Icon::Build;
     pub const CONSTRUCTION: Icon = Icon::Build;
+
+    // Streaming / Activity indicators
+    pub const RADIO_BUTTON_CHECKED: Icon = Icon::RadioButtonChecked;
+    pub const RADIO_BUTTON_UNCHECKED: Icon = Icon::RadioButtonUnchecked;
+    pub const FIBER_MANUAL_RECORD: Icon = Icon::FiberManualRecord;
 }

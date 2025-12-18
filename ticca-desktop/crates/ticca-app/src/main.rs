@@ -17,6 +17,7 @@ mod runner;
 mod session_manager;
 mod theme;
 mod views;
+mod widgets;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 

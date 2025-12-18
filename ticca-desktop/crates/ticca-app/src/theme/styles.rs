@@ -682,3 +682,17 @@ pub fn raw_text_editor(theme: &Theme, _is_dark: bool) -> text_editor::Style {
         selection: accent_muted(theme),
     }
 }
+
+/// Streaming indicator container - shows TPS and pulse
+pub fn streaming_indicator_container(theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(bg_elevated(theme).into()),
+        text_color: Some(accent(theme)),
+        border: Border {
+            color: accent(theme),
+            width: 1.0,
+            radius: RADIUS_FULL.into(),
+        },
+        ..container::Style::default()
+    }
+}

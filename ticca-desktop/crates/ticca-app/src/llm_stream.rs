@@ -14,6 +14,7 @@ use ticca_core::session::MessageRole;
 
 use rig::prelude::*;
 use rig::providers::anthropic;
+use rig::{StreamBytesCounter, set_active_counter, clear_active_counter};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -178,6 +179,12 @@ pub fn run_rig_agent_stream(
         let mut full_history = history;
         full_history.push(user_msg);
 
+        // Set up HTTP-level byte counter for accurate streaming stats
+        // The app will poll this via an iced subscription for real-time updates
+        let byte_counter = StreamBytesCounter::new();
+        tracing::info!("llm_stream: setting active byte counter");
+        set_active_counter(byte_counter.clone());
+
         // Enable multi-turn for ReAct loop (configurable, default 500)
         // Use empty prompt since we already have the user message in history
         let mut stream = agent.stream_prompt("")
@@ -185,6 +192,7 @@ pub fn run_rig_agent_stream(
             .multi_turn(max_tool_rounds as usize)
             .await;
 
+        // Process stream items - stats are handled by a separate iced subscription
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(text_chunk))) => {
@@ -193,14 +201,12 @@ pub fn run_rig_agent_stream(
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(reasoning))) => {
-                    // Stream reasoning/thinking content separately
                     let text = reasoning.reasoning.join("");
                     if !text.is_empty() {
                         yield Message::Reasoning(text);
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ToolCall(tool_call))) => {
-                    // Tool call initiated - yield a message so UI can show it
                     let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
                         .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
                     yield Message::ToolCall {
@@ -209,7 +215,6 @@ pub fn run_rig_agent_stream(
                     };
                 }
                 Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(tool_result))) => {
-                    // Tool result received - yield a message so UI can show it
                     let result_text = tool_result.content.iter()
                         .map(|c| match c {
                             rig::message::ToolResultContent::Text(t) => t.text.clone(),
@@ -223,17 +228,22 @@ pub fn run_rig_agent_stream(
                     };
                 }
                 Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                    // Stream complete, we'll yield StreamComplete at the end
+                    // Stream complete
                 }
                 Ok(_) => {
-                    // Other stream items (deltas, etc)
+                    // Other stream items (deltas, etc) - bytes already counted at HTTP level
                 }
                 Err(e) => {
+                    clear_active_counter();
                     yield Message::StreamError(format!("Stream error: {}", e));
                     return;
                 }
             }
         }
+
+        // Clean up the active counter
+        clear_active_counter();
+
         yield Message::StreamComplete;
     }
 }
