@@ -129,7 +129,7 @@ Full read/write access to your codebase for code generation and modification.
 - Follow best practices (DRY, YAGNI, SOLID, Zen of Python)
 - Keep files under 600 lines, refactoring when needed
 
-**Available tools:** `list_files`, `read_file`, `edit_file`, `delete_file`, `grep`, `run_shell_command`, `agent_share_your_reasoning`
+**Available tools:** `list_files`, `read_file`, `write_file`, `edit_file`, `grep`, `shell`
 
 ### Planning Agent
 
@@ -141,7 +141,7 @@ Strategic planner for complex tasks - read-only access for safe exploration.
 - Identify dependencies and risks
 - Suggest alternative approaches
 
-**Available tools:** `list_files`, `read_file`, `grep`, `agent_share_your_reasoning`
+**Available tools:** `list_files`, `read_file`, `grep`
 
 ---
 
@@ -153,23 +153,22 @@ All tools are implemented in pure Rust for maximum performance:
 |------|-------------|
 | `list_files` | Directory listing with smart ignore patterns (.git, node_modules, target, etc.) |
 | `read_file` | Read files with optional line range support |
-| `edit_file` | Swiss-army file editor: create, overwrite, targeted replacements, or snippet deletion |
-| `delete_file` | Remove files with diff generation |
+| `write_file` | Create new files or overwrite existing ones |
+| `edit_file` | Modify files by replacing exact text matches |
 | `grep` | Regex search using ripgrep libraries (grep-regex, grep-searcher, ignore) |
-| `run_shell_command` | Execute shell commands with configurable timeout and working directory |
-| `agent_share_your_reasoning` | Explicit reasoning/planning tool for agent transparency |
+| `shell` | Execute shell commands with configurable timeout and working directory |
 
-### `edit_file` Payload Types
+### Tool Parameters
 
-```rust
-// Create or overwrite a file
-ContentPayload { file_path, content, overwrite: bool }
+```
+edit_file:
+  path: "path/to/file"
+  old_text: "exact text to replace"
+  new_text: "replacement text"
 
-// Targeted text replacements (surgical edits)
-ReplacementsPayload { file_path, replacements: [{ old_str, new_str }] }
-
-// Remove specific text
-DeleteSnippetPayload { file_path, delete_snippet }
+write_file:
+  path: "path/to/file"
+  content: "file contents"
 ```
 
 ---

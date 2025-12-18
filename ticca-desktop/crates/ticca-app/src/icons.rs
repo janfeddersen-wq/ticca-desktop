@@ -130,6 +130,8 @@ pub const CLIPBOARD_PLUS: char = '\u{F2A0}';
 // Misc
 pub const LIGHTNING: char = '\u{F465}';
 pub const LIGHTNING_FILL: char = '\u{F466}';
+pub const LIGHTBULB: char = '\u{F46C}';
+pub const LIGHTBULB_FILL: char = '\u{F46D}';
 pub const MAGIC: char = '\u{F487}';
 pub const STARS: char = '\u{F599}';
 pub const SPARKLES: char = '\u{F6AE}';

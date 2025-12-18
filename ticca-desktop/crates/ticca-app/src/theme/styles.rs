@@ -407,3 +407,34 @@ pub fn dir_bar_container(theme: &Theme) -> container::Style {
         ..container::Style::default()
     }
 }
+
+/// Reasoning/thinking container style (collapsible thinking section)
+pub fn reasoning_container(theme: &Theme, is_dark: bool) -> container::Style {
+    let palette = theme.extended_palette();
+
+    let bg_color = if is_dark {
+        Color::from_rgba(0.3, 0.3, 0.4, 0.3)
+    } else {
+        Color::from_rgba(0.9, 0.9, 0.95, 0.8)
+    };
+
+    let border_color = if is_dark {
+        Color::from_rgba(0.5, 0.5, 0.6, 0.4)
+    } else {
+        Color::from_rgba(0.7, 0.7, 0.8, 0.5)
+    };
+
+    container::Style {
+        background: Some(bg_color.into()),
+        text_color: Some(Color {
+            a: 0.8,
+            ..palette.background.base.text
+        }),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..container::Style::default()
+    }
+}

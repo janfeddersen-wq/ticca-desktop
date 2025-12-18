@@ -25,6 +25,9 @@ pub enum Message {
     /// Tool result received
     ToolResult { name: String, result: String },
 
+    /// Reasoning/thinking content from the model
+    Reasoning(String),
+
     // Navigation
     OpenSettings,
     CloseSettings,

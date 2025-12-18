@@ -54,6 +54,9 @@ pub struct TiccaApp {
     // Working directory for tools
     working_directory: PathBuf,
 
+    // Agent configuration
+    max_tool_rounds: u32,
+
     // Error display
     error_message: Option<String>,
 }
@@ -72,6 +75,8 @@ pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
     pub is_streaming: bool,
+    /// Reasoning/thinking content (collapsible)
+    pub reasoning: Option<String>,
 }
 
 impl ChatMessage {
@@ -80,22 +85,25 @@ impl ChatMessage {
             role: MessageRole::User,
             content: content.into(),
             is_streaming: false,
+            reasoning: None,
         }
     }
-    
+
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::Assistant,
             content: content.into(),
             is_streaming: false,
+            reasoning: None,
         }
     }
-    
+
     pub fn assistant_streaming() -> Self {
         Self {
             role: MessageRole::Assistant,
             content: String::new(),
             is_streaming: true,
+            reasoning: None,
         }
     }
 }
@@ -104,14 +112,14 @@ impl TiccaApp {
     /// Create a new application instance
     pub fn new() -> (Self, Task<Message>) {
         // Load configuration
-        let (theme, default_model, agent_pinned_models) = load_config();
+        let config = load_config();
 
         // Load working directory from config or use current directory
         let working_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         let app = Self {
             current_view: View::Chat,
-            theme,
+            theme: config.theme,
             input_value: String::new(),
             messages: vec![
                 ChatMessage::assistant(
@@ -122,11 +130,12 @@ impl TiccaApp {
             current_agent: AgentType::Coding,
             agent_config: CoreAgentConfig::coding(),
             available_models: Vec::new(),
-            default_model,
-            agent_pinned_models,
+            default_model: config.default_model,
+            agent_pinned_models: config.agent_pinned_models,
             is_loading_models: false,
             current_session: None,
             working_directory,
+            max_tool_rounds: config.max_tool_rounds,
             error_message: None,
         };
 
@@ -200,8 +209,9 @@ impl TiccaApp {
 
                 // Send to Claude via Rig OAuthClient with streaming (ReAct loop enabled)
                 let working_dir = self.working_directory.clone();
+                let max_tool_rounds = self.max_tool_rounds;
                 Task::run(
-                    run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir),
+                    run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir, max_tool_rounds),
                     |event| event,
                 )
             }
@@ -210,6 +220,20 @@ impl TiccaApp {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
                         last.content.push_str(&chunk);
+                    }
+                }
+                Task::none()
+            }
+
+            Message::Reasoning(reasoning) => {
+                if let Some(last) = self.messages.last_mut() {
+                    if last.is_streaming {
+                        // Append to existing reasoning or create new
+                        if let Some(ref mut existing) = last.reasoning {
+                            existing.push_str(&reasoning);
+                        } else {
+                            last.reasoning = Some(reasoning);
+                        }
                     }
                 }
                 Task::none()
@@ -368,6 +392,7 @@ impl TiccaApp {
                                     role: m.role,
                                     content: m.content,
                                     is_streaming: false,
+                                    reasoning: None,
                                 })
                                 .collect();
                             
@@ -845,17 +870,39 @@ impl TiccaApp {
             text(&msg.content).size(14).into()
         };
 
-        container(
-            column![
-                text(label).size(12),
-                content,
-            ]
-            .spacing(6)
-        )
-        .padding(12)
-        .width(Length::FillPortion(4))
-        .style(move |theme| styles::message_bubble(theme, is_user))
-        .into()
+        // Build the message column
+        let mut msg_column = column![text(label).size(12)].spacing(6);
+
+        // Add reasoning section if present
+        if let Some(ref reasoning) = msg.reasoning {
+            let reasoning_content = container(
+                column![
+                    row![
+                        icon(icons::LIGHTBULB).size(12),
+                        text(" Thinking").size(12),
+                    ]
+                    .spacing(4),
+                    container(
+                        text(reasoning).size(12)
+                    )
+                    .padding([4, 8])
+                ]
+                .spacing(4)
+            )
+            .padding(8)
+            .width(Length::Fill)
+            .style(move |theme| styles::reasoning_container(theme, is_dark));
+
+            msg_column = msg_column.push(reasoning_content);
+        }
+
+        msg_column = msg_column.push(content);
+
+        container(msg_column)
+            .padding(12)
+            .width(Length::FillPortion(4))
+            .style(move |theme| styles::message_bubble(theme, is_user))
+            .into()
     }
     
     /// Render the settings view
@@ -876,11 +923,26 @@ impl Default for TiccaApp {
     }
 }
 
+/// Configuration loaded from database
+struct AppConfig {
+    theme: AppTheme,
+    default_model: Option<String>,
+    agent_pinned_models: HashMap<AgentType, String>,
+    max_tool_rounds: u32,
+}
+
 /// Load configuration from database
-fn load_config() -> (AppTheme, Option<String>, HashMap<AgentType, String>) {
+fn load_config() -> AppConfig {
+    use ticca_core::config::defaults;
+
     let db = match ConfigDatabase::open() {
         Ok(db) => db,
-        Err(_) => return (AppTheme::Dark, None, HashMap::new()),
+        Err(_) => return AppConfig {
+            theme: AppTheme::Dark,
+            default_model: None,
+            agent_pinned_models: HashMap::new(),
+            max_tool_rounds: defaults::MAX_TOOL_ROUNDS,
+        },
     };
 
     let theme = db.get_setting(setting_keys::THEME)
@@ -895,6 +957,12 @@ fn load_config() -> (AppTheme, Option<String>, HashMap<AgentType, String>) {
         .map(|s| s.value)
         .filter(|s| !s.is_empty());
 
+    let max_tool_rounds = db.get_setting(setting_keys::MAX_TOOL_ROUNDS)
+        .ok()
+        .flatten()
+        .and_then(|s| s.value.parse().ok())
+        .unwrap_or(defaults::MAX_TOOL_ROUNDS);
+
     // Load agent pinned models
     let pinned_map = db.get_all_agent_pinned_models()
         .ok()
@@ -907,7 +975,12 @@ fn load_config() -> (AppTheme, Option<String>, HashMap<AgentType, String>) {
         }
     }
 
-    (theme, default_model, agent_pinned_models)
+    AppConfig {
+        theme,
+        default_model,
+        agent_pinned_models,
+        max_tool_rounds,
+    }
 }
 
 /// Get the Claude OAuth token if available and valid
@@ -932,6 +1005,7 @@ fn run_rig_agent_stream(
     user_message: String,
     model_name: Option<String>,
     working_directory: PathBuf,
+    max_tool_rounds: u32,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
         // Use provided model or fetch from API
@@ -994,9 +1068,9 @@ fn run_rig_agent_stream(
         use rig::agent::MultiTurnStreamItem;
         use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-        // Enable multi-turn for up to 20 tool call rounds (ReAct loop)
+        // Enable multi-turn for ReAct loop (configurable, default 500)
         let mut stream = agent.stream_prompt(&user_message)
-            .multi_turn(20)
+            .multi_turn(max_tool_rounds as usize)
             .await;
 
         while let Some(chunk_result) = stream.next().await {
@@ -1007,10 +1081,10 @@ fn run_rig_agent_stream(
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(reasoning))) => {
-                    // Also stream reasoning/thinking content
+                    // Stream reasoning/thinking content separately
                     let text = reasoning.reasoning.join("");
                     if !text.is_empty() {
-                        yield Message::StreamChunk(format!("\n💭 *{}*\n", text));
+                        yield Message::Reasoning(text);
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ToolCall(tool_call))) => {
