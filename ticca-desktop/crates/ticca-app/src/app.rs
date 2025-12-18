@@ -210,8 +210,14 @@ impl TiccaApp {
                 // Send to Claude via Rig OAuthClient with streaming (ReAct loop enabled)
                 let working_dir = self.working_directory.clone();
                 let max_tool_rounds = self.max_tool_rounds;
+                // Build conversation history (exclude the last user message we just added)
+                let history: Vec<_> = self.messages.iter()
+                    .take(self.messages.len().saturating_sub(1)) // Exclude the message we just added
+                    .filter(|m| !m.is_streaming) // Exclude streaming messages
+                    .cloned()
+                    .collect();
                 Task::run(
-                    run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir, max_tool_rounds),
+                    run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir, max_tool_rounds, history),
                     |event| event,
                 )
             }
@@ -1006,6 +1012,7 @@ fn run_rig_agent_stream(
     model_name: Option<String>,
     working_directory: PathBuf,
     max_tool_rounds: u32,
+    chat_history: Vec<ChatMessage>,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
         // Use provided model or fetch from API
@@ -1067,9 +1074,23 @@ fn run_rig_agent_stream(
         use rig::streaming::StreamingPrompt;
         use rig::agent::MultiTurnStreamItem;
         use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+        use rig::message::Message as RigMessage;
+
+        // Convert chat history to rig messages
+        let history: Vec<RigMessage> = chat_history
+            .into_iter()
+            .filter_map(|msg| {
+                match msg.role {
+                    MessageRole::User => Some(RigMessage::user(&msg.content)),
+                    MessageRole::Assistant => Some(RigMessage::assistant(&msg.content)),
+                    _ => None, // Skip system and tool messages
+                }
+            })
+            .collect();
 
         // Enable multi-turn for ReAct loop (configurable, default 500)
         let mut stream = agent.stream_prompt(&user_message)
+            .with_history(history)
             .multi_turn(max_tool_rounds as usize)
             .await;
 
