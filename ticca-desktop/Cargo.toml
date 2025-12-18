@@ -43,7 +43,8 @@ material-icons = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 # LLM Framework (rig fork with OAuth support and streaming stats)
-rig-core = { git = "https://github.com/janfeddersen-wq/rig.git", branch = "main", package = "rig-core" }
+# Aliased as "rig" so code can use `use rig::...`
+rig = { git = "https://github.com/janfeddersen-wq/rig.git", branch = "main", package = "rig-core" }
 
 # Markdown & syntax highlighting
 pulldown-cmark = "0.11"

@@ -14,7 +14,7 @@ ticca-core.workspace = true
 ticca-oauth.workspace = true
 
 # LLM Framework
-rig-core.workspace = true
+rig.workspace = true
 
 iced.workspace = true
 iced_fonts.workspace = true
