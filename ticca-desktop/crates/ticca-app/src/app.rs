@@ -1,6 +1,6 @@
 //! Iced Application state and main loop
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
+use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input, Column};
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use crate::icons::{self, icon};
@@ -20,14 +20,12 @@ use rig::providers::anthropic;
 
 use uuid::Uuid;
 use chrono::{Local, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use futures::StreamExt;
 
 use ticca_core::tools::ToolContext;
-
-use iced::widget::text_editor;
 
 /// Main application state
 pub struct TiccaApp {
@@ -38,7 +36,6 @@ pub struct TiccaApp {
     // Chat state
     input_value: String,
     messages: Vec<ChatMessage>,
-    message_editors: Vec<text_editor::Content>,
     is_streaming: bool,
 
     // Agent state
@@ -59,6 +56,11 @@ pub struct TiccaApp {
 
     // Agent configuration
     max_tool_rounds: u32,
+
+    // Raw view toggle state (message indices showing raw text)
+    raw_view_messages: HashSet<usize>,
+    // Text editor content for raw view (created on demand)
+    raw_view_editors: HashMap<usize, text_editor::Content>,
 
     // Error display
     error_message: Option<String>,
@@ -120,16 +122,12 @@ impl TiccaApp {
         // Load working directory from config or use current directory
         let working_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-        let welcome_message = "Welcome to Ticca. How can I assist you?";
         let app = Self {
             current_view: View::Chat,
             theme: config.theme,
             input_value: String::new(),
             messages: vec![
-                ChatMessage::assistant(welcome_message),
-            ],
-            message_editors: vec![
-                text_editor::Content::with_text(welcome_message),
+                ChatMessage::assistant("Welcome to Ticca. How can I assist you?"),
             ],
             is_streaming: false,
             current_agent: AgentType::Coding,
@@ -141,6 +139,8 @@ impl TiccaApp {
             current_session: None,
             working_directory,
             max_tool_rounds: config.max_tool_rounds,
+            raw_view_messages: HashSet::new(),
+            raw_view_editors: HashMap::new(),
             error_message: None,
         };
 
@@ -177,13 +177,12 @@ impl TiccaApp {
 
                 // Add user message
                 self.messages.push(ChatMessage::user(&user_message));
-                self.message_editors.push(text_editor::Content::with_text(&user_message));
 
                 // Check if we have credentials
                 if !llm::has_claude_credentials() {
-                    let error_msg = "⚠️ No Claude credentials found. Please go to Settings and authenticate with Claude OAuth first.";
-                    self.messages.push(ChatMessage::assistant(error_msg));
-                    self.message_editors.push(text_editor::Content::with_text(error_msg));
+                    self.messages.push(ChatMessage::assistant(
+                        "⚠️ No Claude credentials found. Please go to Settings and authenticate with Claude OAuth first."
+                    ));
                     return Task::none();
                 }
 
@@ -194,7 +193,6 @@ impl TiccaApp {
 
                 // Add streaming placeholder
                 self.messages.push(ChatMessage::assistant_streaming());
-                self.message_editors.push(text_editor::Content::with_text(""));
                 self.is_streaming = true;
 
                 // Get the system prompt based on current agent
@@ -205,12 +203,11 @@ impl TiccaApp {
                 let auth_token = match get_claude_auth_token() {
                     Some(token) => token,
                     None => {
-                        let error_msg = "❌ Failed to get Claude OAuth token. Please re-authenticate in Settings.";
-                        self.messages.push(ChatMessage::assistant(error_msg));
-                        self.message_editors.push(text_editor::Content::with_text(error_msg));
+                        self.messages.push(ChatMessage::assistant(
+                            "❌ Failed to get Claude OAuth token. Please re-authenticate in Settings."
+                        ));
                         self.is_streaming = false;
                         self.messages.pop(); // Remove the streaming placeholder
-                        self.message_editors.pop();
                         return Task::none();
                     }
                 };
@@ -230,9 +227,49 @@ impl TiccaApp {
                 )
             }
             
-            Message::MessageEditorAction(index, action) => {
-                // Handle text selection/copy actions in message editors
-                if let Some(editor) = self.message_editors.get_mut(index) {
+            Message::CopyMessage(index) => {
+                // Copy message content to clipboard
+                if let Some(msg) = self.messages.get(index) {
+                    let content = msg.content.clone();
+                    return Task::perform(
+                        async move {
+                            use arboard::Clipboard;
+                            match Clipboard::new() {
+                                Ok(mut clipboard) => {
+                                    if let Err(e) = clipboard.set_text(&content) {
+                                        tracing::error!("Failed to copy to clipboard: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to access clipboard: {}", e);
+                                }
+                            }
+                        },
+                        |_| Message::DismissError, // No-op message after clipboard operation
+                    );
+                }
+                Task::none()
+            }
+
+            Message::ToggleRawView(index) => {
+                // Toggle between markdown and raw text view
+                if self.raw_view_messages.contains(&index) {
+                    self.raw_view_messages.remove(&index);
+                    self.raw_view_editors.remove(&index);
+                } else {
+                    // Create editor content from message
+                    if let Some(msg) = self.messages.get(index) {
+                        let content = text_editor::Content::with_text(&msg.content);
+                        self.raw_view_editors.insert(index, content);
+                    }
+                    self.raw_view_messages.insert(index);
+                }
+                Task::none()
+            }
+
+            Message::RawViewEditorAction(index, action) => {
+                // Handle text selection/copy in raw view editor
+                if let Some(editor) = self.raw_view_editors.get_mut(&index) {
                     editor.perform(action);
                 }
                 Task::none()
@@ -266,12 +303,6 @@ impl TiccaApp {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
                         last.is_streaming = false;
-                    }
-                }
-                // Sync the editor content with the final message
-                if let Some(last) = self.messages.last() {
-                    if let Some(editor) = self.message_editors.last_mut() {
-                        *editor = text_editor::Content::with_text(&last.content);
                     }
                 }
                 // Auto-save session after streaming completes
@@ -401,11 +432,10 @@ impl TiccaApp {
             }
             
             Message::NewSession => {
-                let welcome_msg = "Fresh start! What would you like to work on?";
                 self.messages.clear();
-                self.message_editors.clear();
-                self.messages.push(ChatMessage::assistant(welcome_msg));
-                self.message_editors.push(text_editor::Content::with_text(welcome_msg));
+                self.raw_view_messages.clear();
+                self.raw_view_editors.clear();
+                self.messages.push(ChatMessage::assistant("New session started. How can I help you?"));
                 self.current_session = None;
                 Task::none()
             }
@@ -425,10 +455,9 @@ impl TiccaApp {
                                 })
                                 .collect();
 
-                            // Create corresponding editors
-                            self.message_editors = messages.iter()
-                                .map(|m| text_editor::Content::with_text(&m.content))
-                                .collect();
+                            // Clear raw view state for new session
+                            self.raw_view_messages.clear();
+                            self.raw_view_editors.clear();
 
                             // Set current session
                             self.current_session = Some(session.clone());
@@ -438,7 +467,7 @@ impl TiccaApp {
                                 self.current_agent = agent_type;
                                 self.agent_config = CoreAgentConfig::new(agent_type);
                             }
-                            
+
                             tracing::info!("Loaded session with {} messages", self.messages.len());
                         }
                     }
@@ -878,6 +907,7 @@ impl TiccaApp {
     fn render_message<'a>(&'a self, index: usize, msg: &'a ChatMessage) -> Element<'a, Message> {
         let is_user = msg.role == MessageRole::User;
         let is_dark = matches!(self.theme, AppTheme::Dark);
+        let is_raw_view = self.raw_view_messages.contains(&index);
 
         let label = match msg.role {
             MessageRole::User => "You",
@@ -898,19 +928,45 @@ impl TiccaApp {
             // Append cursor to show streaming is active
             let content_with_cursor = format!("{}▌", msg.content);
             crate::views::components::markdown::render(&content_with_cursor, is_dark)
-        } else if let Some(editor_content) = self.message_editors.get(index) {
-            // Use text_editor for selectable/copyable text (completed messages)
-            text_editor(editor_content)
-                .on_action(move |action| Message::MessageEditorAction(index, action))
-                .style(move |theme, _status| styles::message_text_editor(theme, is_dark))
-                .into()
+        } else if is_raw_view {
+            // Raw view: show selectable plain text
+            if let Some(editor_content) = self.raw_view_editors.get(&index) {
+                text_editor(editor_content)
+                    .on_action(move |action| Message::RawViewEditorAction(index, action))
+                    .style(move |theme, _status| styles::raw_text_editor(theme, is_dark))
+                    .into()
+            } else {
+                // Fallback if editor not yet created
+                text(&msg.content).size(14).into()
+            }
         } else {
-            // Fallback to plain text
-            text(&msg.content).size(14).into()
+            // Render markdown for completed messages
+            crate::views::components::markdown::render(&msg.content, is_dark)
         };
 
+        // Toggle icon: CODE for raw view, FILE_CODE for markdown view
+        let toggle_icon = if is_raw_view { icons::FILE_CODE } else { icons::CODE };
+
+        // Header row with label, toggle button, and copy button
+        let header = row![
+            text(label).size(12),
+            iced::widget::horizontal_space(),
+            // Raw/Markdown toggle button
+            button(icon(toggle_icon).size(14))
+                .on_press(Message::ToggleRawView(index))
+                .style(styles::icon_button)
+                .padding([4, 6]),
+            // Copy button
+            button(icon(icons::CLIPBOARD).size(14))
+                .on_press(Message::CopyMessage(index))
+                .style(styles::icon_button)
+                .padding([4, 6]),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center);
+
         // Build the message column
-        let mut msg_column = column![text(label).size(12)].spacing(6);
+        let mut msg_column = column![header].spacing(6);
 
         // Add reasoning section if present
         if let Some(ref reasoning) = msg.reasoning {

@@ -1,7 +1,6 @@
 //! Iced Message types for the application
 
 use crate::theme::AppTheme;
-use iced::widget::text_editor;
 use ticca_core::agents::AgentType;
 
 /// Main application message type
@@ -11,8 +10,14 @@ pub enum Message {
     InputChanged(String),
     SendMessage,
 
-    /// Message content editor action (for text selection/copy)
-    MessageEditorAction(usize, text_editor::Action),
+    /// Copy message content to clipboard
+    CopyMessage(usize),
+
+    /// Toggle between markdown and raw text view for a message
+    ToggleRawView(usize),
+
+    /// Handle text editor actions in raw view (for selection/copy)
+    RawViewEditorAction(usize, iced::widget::text_editor::Action),
 
     /// Streaming chunk received from LLM
     StreamChunk(String),

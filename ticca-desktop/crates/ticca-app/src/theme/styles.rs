@@ -439,28 +439,34 @@ pub fn reasoning_container(theme: &Theme, is_dark: bool) -> container::Style {
     }
 }
 
-/// Text editor style for message content (transparent, no border, selectable text)
-pub fn message_text_editor(theme: &Theme, is_dark: bool) -> text_editor::Style {
+/// Raw text editor style (for selectable plain text view)
+pub fn raw_text_editor(theme: &Theme, is_dark: bool) -> text_editor::Style {
     let palette = theme.extended_palette();
 
-    let text_color = if is_dark {
-        Color::from_rgb(0.9, 0.9, 0.9)
+    let bg_color = if is_dark {
+        Color::from_rgb(0.10, 0.12, 0.14)
     } else {
-        Color::from_rgb(0.1, 0.1, 0.1)
+        Color::from_rgb(0.96, 0.97, 0.98)
+    };
+
+    let text_color = if is_dark {
+        Color::from_rgb(0.85, 0.85, 0.85)
+    } else {
+        Color::from_rgb(0.15, 0.15, 0.15)
     };
 
     let selection_color = if is_dark {
-        Color::from_rgba(0.3, 0.5, 0.8, 0.4)
+        Color::from_rgba(0.3, 0.5, 0.8, 0.5)
     } else {
-        Color::from_rgba(0.2, 0.4, 0.8, 0.3)
+        Color::from_rgba(0.2, 0.5, 0.8, 0.4)
     };
 
     text_editor::Style {
-        background: Color::TRANSPARENT.into(),
+        background: bg_color.into(),
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 0.0.into(),
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: 4.0.into(),
         },
         icon: palette.background.weak.text,
         placeholder: palette.background.weak.text,
