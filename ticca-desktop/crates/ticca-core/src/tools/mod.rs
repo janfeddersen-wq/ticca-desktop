@@ -13,6 +13,7 @@ pub mod file_ops;
 pub mod file_mods;
 pub mod grep;
 pub mod shell;
+pub mod rig_tools;
 
 // Re-export registry types
 pub use registry::{
@@ -29,6 +30,13 @@ pub use file_ops::{list_files_impl, read_file_impl};
 pub use file_mods::{edit_file_impl, delete_file_impl};
 pub use grep::grep_impl;
 pub use shell::shell_impl;
+
+// Re-export rig-compatible tools
+pub use rig_tools::{
+    ToolContext,
+    ShellTool, ReadFileTool, ListFilesTool, EditFileTool, GrepTool, WriteFileTool,
+    create_tools,
+};
 
 /// Create a tool registry with all available tools registered
 pub fn create_default_registry() -> ToolRegistry {

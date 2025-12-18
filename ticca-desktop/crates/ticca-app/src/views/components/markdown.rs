@@ -155,7 +155,7 @@ fn flush_formatted_text(
     }
 }
 
-/// Render a heading with emoji support
+/// Render a heading with emoji and inline formatting support
 fn render_heading(content: &str, level: u8) -> Element<'static, Message> {
     let size = match level {
         1 => 22,
@@ -164,45 +164,10 @@ fn render_heading(content: &str, level: u8) -> Element<'static, Message> {
         _ => 15,
     };
 
-    let mut elements: Vec<Element<'static, Message>> = Vec::new();
-    let mut current_text = String::new();
-
-    for grapheme in content.graphemes(true) {
-        if let Some(asset) = lookup_emoji(grapheme) {
-            if !current_text.is_empty() {
-                elements.push(
-                    text(std::mem::take(&mut current_text))
-                        .size(size)
-                        .font(Font::with_name("Noto Sans"))
-                        .into(),
-                );
-            }
-            let emoji_size = size + 2; // Slightly larger for headings
-            elements.push(render_emoji(&asset, emoji_size));
-        } else {
-            current_text.push_str(grapheme);
-        }
-    }
-
-    if !current_text.is_empty() {
-        elements.push(
-            text(current_text).size(size).font(Font::with_name("Noto Sans")).into(),
-        );
-    }
-
-    if elements.len() == 1 {
-        elements.pop().unwrap()
-    } else if elements.is_empty() {
-        text("").size(size).into()
-    } else {
-        Row::with_children(elements)
-            .spacing(0)
-            .align_y(iced::Alignment::Center)
-            .into()
-    }
+    render_text_with_emojis(content, size)
 }
 
-/// Render a list item with emoji support
+/// Render a list item with emoji and inline formatting support
 fn render_list_item(content: &str, depth: usize, task_checked: Option<bool>) -> Element<'static, Message> {
     let indent = "  ".repeat(depth.saturating_sub(1));
 
@@ -243,23 +208,8 @@ fn render_list_item(content: &str, depth: usize, task_checked: Option<bool>) -> 
         }
     }
 
-    // Add content with emoji support
-    let mut current_text = String::new();
-
-    for grapheme in content.trim().graphemes(true) {
-        if let Some(asset) = lookup_emoji(grapheme) {
-            if !current_text.is_empty() {
-                elements.push(text(std::mem::take(&mut current_text)).size(14).into());
-            }
-            elements.push(render_emoji(&asset, EMOJI_SIZE));
-        } else {
-            current_text.push_str(grapheme);
-        }
-    }
-
-    if !current_text.is_empty() {
-        elements.push(text(current_text).size(14).into());
-    }
+    // Add content with emoji and inline formatting support
+    elements.push(render_text_with_emojis(content.trim(), 14));
 
     Row::with_children(elements)
         .spacing(0)
@@ -323,6 +273,24 @@ fn render_table(
     container(Column::with_children(table_rows).spacing(1))
         .width(Length::Fill)
         .padding(4)
+        .into()
+}
+
+/// Render a horizontal rule
+fn render_horizontal_rule(theme_is_dark: bool) -> Element<'static, Message> {
+    let color = if theme_is_dark {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.2)
+    } else {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.2)
+    };
+
+    container(text(""))
+        .width(Length::Fill)
+        .height(1)
+        .style(move |_theme: &iced::Theme| container::Style {
+            background: Some(color.into()),
+            ..Default::default()
+        })
         .into()
 }
 
@@ -557,6 +525,10 @@ pub fn render(content: &str, theme_is_dark: bool) -> Element<'static, Message> {
             }
             Event::TaskListMarker(checked) => {
                 current_task_checked = Some(checked);
+            }
+            Event::Rule => {
+                flush_paragraph_with_emojis(&mut current_paragraph, &mut elements);
+                elements.push(render_horizontal_rule(theme_is_dark));
             }
             _ => {}
         }

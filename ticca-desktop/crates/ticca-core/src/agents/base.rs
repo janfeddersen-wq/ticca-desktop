@@ -28,15 +28,15 @@ impl AgentType {
     
     pub fn display_name(&self) -> &'static str {
         match self {
-            AgentType::Planning => "Planning Agent 📋",
-            AgentType::Coding => "Coding Agent 🐶",
+            AgentType::Planning => "Planning Agent",
+            AgentType::Coding => "Coding Agent",
         }
     }
-    
+
     pub fn description(&self) -> &'static str {
         match self {
             AgentType::Planning => "Breaks down complex tasks into actionable steps and creates execution roadmaps.",
-            AgentType::Coding => "Your loyal coding companion - writes, modifies, and executes code to get things done.",
+            AgentType::Coding => "Writes, modifies, and executes code to complete development tasks.",
         }
     }
 }

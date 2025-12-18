@@ -37,7 +37,7 @@ iced = { version = "0.13", features = ["tokio", "advanced", "svg"] }
 iced_fonts = { version = "0.1", features = ["bootstrap"] }
 
 # LLM Framework (rig with OAuth support)
-rig-core = { path = "../../rig-fork/rig/rig-core" }
+rig-core = { path = "../../rig-fork/rig/rig/rig-core" }
 
 # Markdown & syntax highlighting
 pulldown-cmark = "0.11"
@@ -50,6 +50,9 @@ ignore = "0.4"
 
 # Async utilities
 futures = "0.3"
+
+# File dialogs
+rfd = "0.15"
 
 # Utilities
 directories = "5.0"

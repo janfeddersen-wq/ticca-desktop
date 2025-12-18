@@ -21,7 +21,11 @@ use rig::providers::anthropic;
 use uuid::Uuid;
 use chrono::{Local, Utc};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use futures::StreamExt;
+
+use ticca_core::tools::ToolContext;
 
 /// Main application state
 pub struct TiccaApp {
@@ -46,6 +50,9 @@ pub struct TiccaApp {
 
     // Session state
     current_session: Option<Session>,
+
+    // Working directory for tools
+    working_directory: PathBuf,
 
     // Error display
     error_message: Option<String>,
@@ -99,13 +106,16 @@ impl TiccaApp {
         // Load configuration
         let (theme, default_model, agent_pinned_models) = load_config();
 
+        // Load working directory from config or use current directory
+        let working_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
         let app = Self {
             current_view: View::Chat,
             theme,
             input_value: String::new(),
             messages: vec![
                 ChatMessage::assistant(
-                    "Hey there! I'm Ticca, your coding companion. What can I help you build today?"
+                    "Welcome to Ticca. How can I assist you?"
                 ),
             ],
             is_streaming: false,
@@ -116,6 +126,7 @@ impl TiccaApp {
             agent_pinned_models,
             is_loading_models: false,
             current_session: None,
+            working_directory,
             error_message: None,
         };
 
@@ -187,9 +198,10 @@ impl TiccaApp {
                     }
                 };
 
-                // Send to Claude via Rig OAuthClient with streaming
+                // Send to Claude via Rig OAuthClient with streaming (ReAct loop enabled)
+                let working_dir = self.working_directory.clone();
                 Task::run(
-                    run_rig_agent_stream(auth_token, system_prompt, user_message, model_name),
+                    run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir),
                     |event| event,
                 )
             }
@@ -450,6 +462,64 @@ impl TiccaApp {
                 Task::none()
             }
 
+            Message::ToolCall { name, args } => {
+                // Add a visual indicator that a tool is being called
+                if let Some(last) = self.messages.last_mut() {
+                    if last.is_streaming {
+                        last.content.push_str(&format!("\n\n🔧 **Calling tool:** `{}`\n", name));
+                        // Truncate args for display
+                        let display_args = if args.len() > 200 {
+                            format!("{}...", &args[..200])
+                        } else {
+                            args.clone()
+                        };
+                        last.content.push_str(&format!("```json\n{}\n```\n", display_args));
+                    }
+                }
+                Task::none()
+            }
+
+            Message::ToolResult { name, result } => {
+                // Add the tool result to the message
+                if let Some(last) = self.messages.last_mut() {
+                    if last.is_streaming {
+                        // Truncate result for display
+                        let display_result = if result.len() > 500 {
+                            format!("{}...\n(truncated)", &result[..500])
+                        } else {
+                            result.clone()
+                        };
+                        last.content.push_str(&format!("\n✅ **Result from `{}`:**\n```\n{}\n```\n\n", name, display_result));
+                    }
+                }
+                Task::none()
+            }
+
+            Message::SelectWorkingDirectory => {
+                // Open native directory picker dialog
+                Task::perform(
+                    async {
+                        let dialog = rfd::AsyncFileDialog::new()
+                            .set_title("Select Working Directory")
+                            .pick_folder()
+                            .await;
+
+                        dialog.map(|handle| handle.path().to_path_buf())
+                    },
+                    |result| {
+                        match result {
+                            Some(path) => Message::WorkingDirectoryChanged(path),
+                            None => Message::DismissError, // User cancelled, do nothing
+                        }
+                    }
+                )
+            }
+
+            Message::WorkingDirectoryChanged(path) => {
+                self.working_directory = path;
+                Task::none()
+            }
+
             Message::DismissError => {
                 self.error_message = None;
                 Task::none()
@@ -597,6 +667,24 @@ impl TiccaApp {
         .padding(10)
         .style(styles::header_container);
 
+        // Working directory selector bar
+        let dir_display = self.working_directory.to_string_lossy();
+        let dir_bar = container(
+            row![
+                icon(icons::FOLDER).size(14),
+                text(format!(" {}", dir_display)).size(12),
+                iced::widget::horizontal_space(),
+                button(text("Change").size(12))
+                    .on_press(Message::SelectWorkingDirectory)
+                    .style(styles::secondary_button)
+                    .padding([4, 8]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+        )
+        .padding([6, 12])
+        .style(styles::dir_bar_container);
+
         // Message list
         let message_widgets: Vec<Element<Message>> = self.messages
             .iter()
@@ -646,6 +734,7 @@ impl TiccaApp {
 
         column![
             header,
+            dir_bar,
             messages,
             input,
         ]
@@ -732,7 +821,7 @@ impl TiccaApp {
 
         let label = match msg.role {
             MessageRole::User => "You",
-            MessageRole::Assistant => "Ticca",
+            MessageRole::Assistant => "Assistant",
             MessageRole::System => "System",
             MessageRole::Tool => "Tool",
         };
@@ -834,7 +923,7 @@ fn get_claude_auth_token() -> Option<String> {
     Some(token.access_token)
 }
 
-/// Run the Rig agent with streaming response
+/// Run the Rig agent with streaming response and tools (ReAct loop)
 ///
 /// Returns a Stream that yields Message events for each chunk
 fn run_rig_agent_stream(
@@ -842,6 +931,7 @@ fn run_rig_agent_stream(
     system_prompt: String,
     user_message: String,
     model_name: Option<String>,
+    working_directory: PathBuf,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
         // Use provided model or fetch from API
@@ -876,21 +966,38 @@ fn run_rig_agent_stream(
             }
         };
 
-        // Create agent with system prompt using the model
+        // Create tool context with working directory
+        let tool_context = Arc::new(ToolContext {
+            working_directory: working_directory.clone(),
+        });
+
+        // Create tools with the context
+        let (shell, read_file, list_files, edit_file, grep, write_file) =
+            ticca_core::tools::create_tools(tool_context);
+
+        // Create agent with system prompt, tools, and model
         let agent = client
             .agent(&model_name)
             .preamble(&system_prompt)
+            .tool(shell)
+            .tool(read_file)
+            .tool(list_files)
+            .tool(edit_file)
+            .tool(grep)
+            .tool(write_file)
             .temperature(0.7)
-            .max_tokens(4096)
+            .max_tokens(8192)
             .build();
 
-        // Use streaming prompt
+        // Use streaming prompt with multi-turn enabled for ReAct loop
         use rig::streaming::StreamingPrompt;
         use rig::agent::MultiTurnStreamItem;
-        use rig::streaming::StreamedAssistantContent;
+        use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-        // stream_prompt returns a StreamingPromptRequest, which we await to get the stream
-        let mut stream = agent.stream_prompt(&user_message).await;
+        // Enable multi-turn for up to 20 tool call rounds (ReAct loop)
+        let mut stream = agent.stream_prompt(&user_message)
+            .multi_turn(20)
+            .await;
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
@@ -903,14 +1010,37 @@ fn run_rig_agent_stream(
                     // Also stream reasoning/thinking content
                     let text = reasoning.reasoning.join("");
                     if !text.is_empty() {
-                        yield Message::StreamChunk(text);
+                        yield Message::StreamChunk(format!("\n💭 *{}*\n", text));
                     }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ToolCall(tool_call))) => {
+                    // Tool call initiated - yield a message so UI can show it
+                    let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
+                        .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
+                    yield Message::ToolCall {
+                        name: tool_call.function.name.clone(),
+                        args: args_str,
+                    };
+                }
+                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(tool_result))) => {
+                    // Tool result received - yield a message so UI can show it
+                    let result_text = tool_result.content.iter()
+                        .map(|c| match c {
+                            rig::message::ToolResultContent::Text(t) => t.text.clone(),
+                            _ => "[non-text content]".to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    yield Message::ToolResult {
+                        name: tool_result.id.clone(),
+                        result: result_text,
+                    };
                 }
                 Ok(MultiTurnStreamItem::FinalResponse(_)) => {
                     // Stream complete, we'll yield StreamComplete at the end
                 }
                 Ok(_) => {
-                    // Other stream items (tool calls etc)
+                    // Other stream items (deltas, etc)
                 }
                 Err(e) => {
                     yield Message::StreamError(format!("Stream error: {}", e));

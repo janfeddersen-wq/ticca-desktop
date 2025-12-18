@@ -19,7 +19,7 @@ const CLAUDE_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_SCOPE: &str = "org:create_api_key user:profile user:inference";
 const CLAUDE_REDIRECT_PATH: &str = "callback";
 const DEFAULT_PORT_RANGE: (u16, u16) = (8765, 8795);
-const DEFAULT_TIMEOUT_SECS: u64 = 180; // 3 minutes, matching code_puppy
+const DEFAULT_TIMEOUT_SECS: u64 = 180; // 3 minutes for OAuth flow
 
 /// Model information returned by Claude API
 #[derive(Debug, Clone, Serialize, Deserialize)]

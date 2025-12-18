@@ -388,3 +388,22 @@ pub fn table_row(theme: &Theme, is_dark: bool, is_alternate: bool) -> container:
         ..container::Style::default()
     }
 }
+
+/// Directory bar container style (working directory selector)
+pub fn dir_bar_container(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+
+    container::Style {
+        background: Some(palette.background.base.color.into()),
+        text_color: Some(Color {
+            a: 0.7,
+            ..palette.background.base.text
+        }),
+        border: Border {
+            color: palette.background.strong.color,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
+}

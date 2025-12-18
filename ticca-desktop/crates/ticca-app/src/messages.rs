@@ -19,6 +19,12 @@ pub enum Message {
     /// Streaming error
     StreamError(String),
 
+    /// Tool call started
+    ToolCall { name: String, args: String },
+
+    /// Tool result received
+    ToolResult { name: String, result: String },
+
     // Navigation
     OpenSettings,
     CloseSettings,
@@ -29,6 +35,10 @@ pub enum Message {
 
     // Agent selection
     SwitchAgent(AgentType),
+
+    // Working directory
+    SelectWorkingDirectory,
+    WorkingDirectoryChanged(std::path::PathBuf),
 
     // OAuth
     StartOAuth(OAuthProvider),

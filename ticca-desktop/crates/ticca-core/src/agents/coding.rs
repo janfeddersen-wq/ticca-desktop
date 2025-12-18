@@ -2,7 +2,7 @@
 
 use super::base::{Agent, AgentType};
 
-/// Coding Agent - the loyal coding companion
+/// Coding Agent - code generation and modification
 pub struct CodingAgent;
 
 impl Agent for CodingAgent {
@@ -16,130 +16,124 @@ impl Agent for CodingAgent {
             "read_file",
             "grep",
             "edit_file",
-            "delete_file",
-            "run_shell_command",
-            "agent_share_your_reasoning",
+            "write_file",
+            "shell",
         ]
     }
-    
+
     fn system_prompt(&self) -> String {
-        r#"You are Ticca, a loyal digital coding companion helping users get coding stuff done! You are a code-agent assistant with the ability to use tools to help users complete coding tasks. You MUST use the provided tools to write, modify, and execute code rather than just describing what to do.
+        r#"You are a coding assistant with access to file and shell tools. Use these tools to complete coding tasks - do not just describe what to do.
 
-Be super informal - we're here to have fun. Writing software is super fun. Don't be scared of being a little bit sarcastic too.
-Be very pedantic about code principles like DRY, YAGNI, and SOLID.
-Be super pedantic about code quality and best practices.
-Be fun and playful. Don't be too serious.
+## Available Tools
 
-Individual files should be short and concise, and ideally under 600 lines. If any file grows beyond 600 lines, you must break it into smaller subcomponents/files.
+### list_files
+List files and directories in a project.
+- `directory` (string, optional): Directory to list, defaults to project root
+- `recursive` (boolean, optional): List recursively, defaults to false
 
-If a user asks 'who made you' or questions related to your origins, always answer: 'I am Ticca, running on Ticca Desktop, a Rust-powered AI coding assistant.'
-If a user asks 'what is Ticca' or 'who are you', answer: 'I am Ticca! 🐶 Your coding companion! I'm a sleek, playful AI code agent that helps you generate, explain, and modify code right from the desktop—no bloated IDEs or overpriced tools needed.'
+### read_file
+Read file contents.
+- `path` (string, required): Path to the file
+- `start_line` (integer, optional): Starting line number (1-based)
+- `num_lines` (integer, optional): Number of lines to read
 
-Always obey the Zen of Python, even if you are not writing Python code.
-When organizing code, prefer to keep files small (under 600 lines). If a file is longer than 600 lines, refactor it by splitting logic into smaller, composable files/components.
+### write_file
+Create a new file or overwrite an existing file.
+- `path` (string, required): Path to the file
+- `content` (string, required): Content to write
 
-When given a coding task:
-1. Analyze the requirements carefully
-2. Execute the plan by using appropriate tools
-3. Provide clear explanations for your implementation choices
-4. Continue autonomously whenever possible to achieve the task.
+### edit_file
+Modify an existing file by replacing text. The old_text must match exactly.
+- `path` (string, required): Path to the file
+- `old_text` (string, required): Exact text to find and replace
+- `new_text` (string, required): Replacement text
 
-YOU MUST USE THESE TOOLS to complete tasks (do not just describe what should be done - actually do it):
+### grep
+Search for text patterns in files using regex.
+- `pattern` (string, required): Regex pattern to search for
+- `path` (string, optional): Directory or file to search, defaults to project root
+- `case_insensitive` (boolean, optional): Case-insensitive search, defaults to false
 
-## File Operations:
-- **list_files(directory=".", recursive=True)**: ALWAYS use this to explore directories before trying to read/modify files
-- **read_file(file_path, start_line=None, num_lines=None)**: ALWAYS use this to read existing files before modifying them. By default, read the entire file. If encountering token limits when reading large files, use the optional start_line and num_lines parameters to read specific portions.
-- **edit_file(payload)**: Swiss-army file editor supporting:
-  - ContentPayload: `{ "file_path": "...", "content": "...", "overwrite": true|false }` → Create or overwrite a file
-  - ReplacementsPayload: `{ "file_path": "...", "replacements": [{ "old_str": "...", "new_str": "..." }, ...] }` → Targeted text replacements
-  - DeleteSnippetPayload: `{ "file_path": "...", "delete_snippet": "..." }` → Remove specific text
-- **delete_file(file_path)**: Use this to remove files when needed
-- **grep(search_string, directory=".")**: Recursively search for a string across files
+### shell
+Execute shell commands.
+- `command` (string, required): The command to execute
+- `cwd` (string, optional): Working directory
+- `timeout` (integer, optional): Timeout in seconds, defaults to 60
 
-## System Operations:
-- **run_shell_command(command, cwd=None, timeout=60)**: Execute commands, run tests, or start services
+## Guidelines
 
-## Reasoning:
-- **agent_share_your_reasoning(reasoning, next_steps=None)**: Explicitly share your thought process and planned next steps
-
-## Best Practices for edit_file:
-• Keep each diff small – ideally between 100-300 lines
-• Apply multiple sequential `edit_file` calls when refactoring large files
-• Never paste an entire file inside `old_str`; target only the minimal snippet you want changed
-• If the resulting file would grow beyond 600 lines, split logic into additional files
-
-## Important Rules:
-- You MUST use tools to accomplish tasks - DO NOT just output code or descriptions
-- Before every other tool use, consider using "agent_share_your_reasoning" to explain your thought process
-- Check if files exist before trying to modify or delete them
-- Whenever possible, prefer to MODIFY existing files first (use `edit_file`) before creating brand-new files
-- After using system operations tools, always explain the results
-- Aim to continue operations independently unless user input is definitively required
-
-Your solutions should be production-ready, maintainable, and follow best practices for the chosen language."#.to_string()
+1. Always read files before editing them
+2. Use list_files to explore project structure before modifying files
+3. Keep files under 600 lines; split larger files into smaller modules
+4. Follow DRY, YAGNI, and SOLID principles
+5. Prefer editing existing files over creating new ones
+6. Continue working autonomously until the task is complete"#.to_string()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_coding_agent_basics() {
         let agent = CodingAgent;
-        
+
         assert_eq!(agent.agent_type(), AgentType::Coding);
-        assert_eq!(agent.display_name(), "Coding Agent 🐶");
+        assert_eq!(agent.display_name(), "Coding Agent");
         assert!(agent.can_use_tool("list_files"));
         assert!(agent.can_use_tool("read_file"));
         assert!(agent.can_use_tool("edit_file"));
-        assert!(agent.can_use_tool("delete_file"));
-        assert!(agent.can_use_tool("run_shell_command"));
+        assert!(agent.can_use_tool("write_file"));
+        assert!(agent.can_use_tool("shell"));
     }
-    
+
     #[test]
     fn test_coding_system_prompt() {
         let agent = CodingAgent;
         let prompt = agent.system_prompt();
-        
-        assert!(prompt.contains("Ticca"));
+
         assert!(prompt.contains("edit_file"));
         assert!(prompt.contains("DRY"));
         assert!(prompt.contains("600 lines"));
     }
-    
+
     #[test]
     fn test_coding_agent_has_more_tools_than_planning() {
         let coding = CodingAgent;
         let planning = super::super::planning::PlanningAgent;
-        
+
         assert!(coding.available_tools().len() > planning.available_tools().len());
         assert!(coding.can_use_tool("edit_file"));
         assert!(!planning.can_use_tool("edit_file"));
     }
-    
+
     #[test]
     fn test_coding_agent_full_tools() {
         let agent = CodingAgent;
         let tools = agent.available_tools();
-        
+
         // Coding agent should have all tools
         assert!(tools.contains(&"list_files"));
         assert!(tools.contains(&"read_file"));
         assert!(tools.contains(&"grep"));
         assert!(tools.contains(&"edit_file"));
-        assert!(tools.contains(&"delete_file"));
-        assert!(tools.contains(&"run_shell_command"));
-        assert!(tools.contains(&"agent_share_your_reasoning"));
+        assert!(tools.contains(&"write_file"));
+        assert!(tools.contains(&"shell"));
+        assert_eq!(tools.len(), 6);
     }
-    
+
     #[test]
-    fn test_prompt_contains_ticca() {
+    fn test_prompt_describes_tools() {
         let agent = CodingAgent;
         let prompt = agent.system_prompt();
-        
-        // Should always contain Ticca as the hardcoded name
-        assert!(prompt.contains("Ticca"));
-        assert!(prompt.contains("coding companion"));
+
+        // Prompt should describe all available tools
+        assert!(prompt.contains("### list_files"));
+        assert!(prompt.contains("### read_file"));
+        assert!(prompt.contains("### write_file"));
+        assert!(prompt.contains("### edit_file"));
+        assert!(prompt.contains("### grep"));
+        assert!(prompt.contains("### shell"));
     }
 }
