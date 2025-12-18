@@ -45,6 +45,7 @@ pub fn theme() -> Theme {
             text: colors::ZINC_100,
             primary: colors::ACCENT,
             success: colors::GREEN_400,
+            warning: colors::YELLOW_400,
             danger: colors::RED_400,
         },
     )

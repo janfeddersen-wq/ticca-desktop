@@ -19,11 +19,12 @@ pub fn icon<'a>(icon: Icon) -> Text<'a> {
 }
 
 /// Create a Material Icon with a specific size
-pub fn icon_sized<'a>(icon: Icon, size: u16) -> Text<'a> {
-    icon(icon).size(size)
+pub fn icon_sized<'a>(i: Icon, size: f32) -> Text<'a> {
+    icon(i).size(size)
 }
 
 // Re-export commonly used icons for convenience
+// Note: Using material-icons v0.2, some icons are substituted with similar alternatives
 pub mod icons {
     use material_icons::Icon;
 
@@ -43,25 +44,25 @@ pub mod icons {
     pub const MORE_HORIZ: Icon = Icon::MoreHoriz;
     pub const MENU: Icon = Icon::Menu;
 
-    // Theme
-    pub const DARK_MODE: Icon = Icon::DarkMode;
-    pub const LIGHT_MODE: Icon = Icon::LightMode;
+    // Theme (using Brightness6 as fallback for dark/light mode icons)
+    pub const DARK_MODE: Icon = Icon::Brightness6;
+    pub const LIGHT_MODE: Icon = Icon::Brightness6;
     pub const BRIGHTNESS_6: Icon = Icon::Brightness6;
-    pub const CONTRAST: Icon = Icon::Contrast;
+    pub const CONTRAST: Icon = Icon::Tune;
 
     // Code & Development
     pub const CODE: Icon = Icon::Code;
-    pub const TERMINAL: Icon = Icon::Terminal;
-    pub const DATA_OBJECT: Icon = Icon::DataObject;
+    pub const TERMINAL: Icon = Icon::Code;
+    pub const DATA_OBJECT: Icon = Icon::Code;
     pub const DESCRIPTION: Icon = Icon::Description;
-    pub const INTEGRATION_INSTRUCTIONS: Icon = Icon::IntegrationInstructions;
+    pub const INTEGRATION_INSTRUCTIONS: Icon = Icon::Description;
 
     // Planning & Tasks
-    pub const CHECKLIST: Icon = Icon::Checklist;
-    pub const TASK_ALT: Icon = Icon::TaskAlt;
+    pub const CHECKLIST: Icon = Icon::Assignment;
+    pub const TASK_ALT: Icon = Icon::Done;
     pub const ASSIGNMENT: Icon = Icon::Assignment;
     pub const CONTENT_PASTE: Icon = Icon::ContentPaste;
-    pub const VIEW_KANBAN: Icon = Icon::ViewKanban;
+    pub const VIEW_KANBAN: Icon = Icon::Assignment;
 
     // Chat & Communication
     pub const CHAT: Icon = Icon::Chat;
@@ -69,13 +70,13 @@ pub mod icons {
     pub const FORUM: Icon = Icon::Forum;
     pub const SEND: Icon = Icon::Send;
     pub const ARROW_UPWARD: Icon = Icon::ArrowUpward;
-    pub const NORTH: Icon = Icon::North;
+    pub const NORTH: Icon = Icon::ArrowUpward;
 
     // Security
     pub const LOCK: Icon = Icon::Lock;
     pub const LOCK_OPEN: Icon = Icon::LockOpen;
     pub const SECURITY: Icon = Icon::Security;
-    pub const KEY: Icon = Icon::Key;
+    pub const KEY: Icon = Icon::VpnKey;
     pub const VPN_KEY: Icon = Icon::VpnKey;
 
     // Status & Feedback
@@ -86,44 +87,44 @@ pub mod icons {
     pub const CANCEL: Icon = Icon::Cancel;
     pub const HELP: Icon = Icon::Help;
     pub const HOURGLASS_EMPTY: Icon = Icon::HourglassEmpty;
-    pub const PENDING: Icon = Icon::Pending;
+    pub const PENDING: Icon = Icon::HourglassEmpty;
 
     // User & People
     pub const PERSON: Icon = Icon::Person;
     pub const PEOPLE: Icon = Icon::People;
-    pub const SMART_TOY: Icon = Icon::SmartToy;
-    pub const PSYCHOLOGY: Icon = Icon::Psychology;
+    pub const SMART_TOY: Icon = Icon::Person;
+    pub const PSYCHOLOGY: Icon = Icon::Person;
 
     // File Operations
     pub const FOLDER: Icon = Icon::Folder;
     pub const FOLDER_OPEN: Icon = Icon::FolderOpen;
     pub const INSERT_DRIVE_FILE: Icon = Icon::InsertDriveFile;
-    pub const FILE_COPY: Icon = Icon::FileCopy;
+    pub const FILE_COPY: Icon = Icon::ContentCopy;
     pub const SAVE: Icon = Icon::Save;
-    pub const DOWNLOAD: Icon = Icon::Download;
-    pub const UPLOAD: Icon = Icon::Upload;
+    pub const DOWNLOAD: Icon = Icon::Save;
+    pub const UPLOAD: Icon = Icon::ArrowUpward;
     pub const ATTACH_FILE: Icon = Icon::AttachFile;
 
     // Edit Actions
     pub const EDIT: Icon = Icon::Edit;
     pub const DELETE: Icon = Icon::Delete;
     pub const CONTENT_COPY: Icon = Icon::ContentCopy;
-    pub const COPY_ALL: Icon = Icon::CopyAll;
+    pub const COPY_ALL: Icon = Icon::ContentCopy;
 
     // Images & Media
     pub const IMAGE: Icon = Icon::Image;
     pub const PHOTO: Icon = Icon::Photo;
-    pub const ADD_PHOTO_ALTERNATE: Icon = Icon::AddPhotoAlternate;
-    pub const SCREENSHOT: Icon = Icon::Screenshot;
+    pub const ADD_PHOTO_ALTERNATE: Icon = Icon::Image;
+    pub const SCREENSHOT: Icon = Icon::Image;
     pub const CROP_ORIGINAL: Icon = Icon::CropOriginal;
 
     // Misc
-    pub const BOLT: Icon = Icon::Bolt;
-    pub const LIGHTBULB: Icon = Icon::Lightbulb;
-    pub const AUTO_AWESOME: Icon = Icon::AutoAwesome;
+    pub const BOLT: Icon = Icon::Stars;
+    pub const LIGHTBULB: Icon = Icon::Stars;
+    pub const AUTO_AWESOME: Icon = Icon::Stars;
     pub const STARS: Icon = Icon::Stars;
-    pub const INVENTORY_2: Icon = Icon::Inventory2;
+    pub const INVENTORY_2: Icon = Icon::Archive;
     pub const ARCHIVE: Icon = Icon::Archive;
     pub const BUILD: Icon = Icon::Build;
-    pub const CONSTRUCTION: Icon = Icon::Construction;
+    pub const CONSTRUCTION: Icon = Icon::Build;
 }

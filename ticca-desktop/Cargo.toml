@@ -33,11 +33,11 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking", "str
 bytes = "1.7"
 
 # GUI
-iced = { version = "0.13", features = ["tokio", "advanced", "svg", "image"] }
+iced = { version = "0.14", features = ["tokio", "advanced", "svg", "image", "markdown", "highlighter"] }
 iced_fonts = { version = "0.1", features = ["bootstrap"] }
 
 # Material Icons
-material-icons = "0.7"
+material-icons = "0.2"
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }

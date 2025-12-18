@@ -25,6 +25,9 @@ pub enum Message {
     InputChanged(String),
     SendMessage,
 
+    /// Chat scroll position changed
+    ChatScrolled(iced::widget::scrollable::Viewport),
+
     /// Copy message content to clipboard
     CopyMessage(usize),
 
@@ -82,9 +85,11 @@ pub enum Message {
     SetAgentModel(AgentType, Option<String>),
 
     // Image attachments
-    /// File dropped into window (drag & drop)
+    /// Open file picker to select image (workaround for Wayland DnD)
+    SelectImageFile,
+    /// File dropped into window (drag & drop - X11 only)
     FileDropped(PathBuf),
-    /// Image loaded from dropped file
+    /// Image loaded from file (dropped or selected via dialog)
     ImageLoaded(Result<ImageAttachment, String>),
     /// Paste image from clipboard (Ctrl+V)
     PasteImage,
@@ -92,6 +97,10 @@ pub enum Message {
     ImagePasted(Result<ImageAttachment, String>),
     /// Remove attached image
     RemoveAttachment(usize),
+
+    // Markdown
+    /// Link clicked in markdown content
+    LinkClicked(iced::widget::markdown::Uri),
 
     // Errors
     DismissError,

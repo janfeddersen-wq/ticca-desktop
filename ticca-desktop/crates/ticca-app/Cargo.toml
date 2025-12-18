@@ -37,7 +37,8 @@ twemoji-assets = { version = "1.5", features = ["svg"] }
 unicode-segmentation = "1.12"
 
 # Clipboard support (with image feature for screenshots)
-arboard = { version = "3", features = ["image"] }
+# wayland-data-control enables native Wayland clipboard via wlr-data-control protocol
+arboard = { version = "3", features = ["image", "wayland-data-control"] }
 
 # Material Icons font and codepoints
 material-icons.workspace = true
@@ -47,3 +48,9 @@ image.workspace = true
 
 # Base64 encoding for image data
 base64.workspace = true
+
+# Regex for math preprocessing
+regex = "1"
+
+# Open URLs in browser
+open.workspace = true

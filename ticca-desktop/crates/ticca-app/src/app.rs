@@ -1,10 +1,137 @@
 //! Iced Application state and main loop
 
-use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input, Column};
-use iced::{Element, Length, Subscription, Task, Theme};
+use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input, markdown, Column, Space};
+use iced::widget::scrollable::AbsoluteOffset;
+use iced::{Element, Length, Subscription, Task, Theme, widget};
+
+/// Create horizontal space that fills available width (iced 0.14 helper)
+fn horizontal_space() -> Space {
+    Space::new().width(Length::Fill)
+}
+
+/// Format a tool call as a concise one-liner for display
+fn format_tool_call_oneliner(name: &str, args: &str) -> String {
+    // Try to parse the args as JSON to extract relevant fields
+    let parsed: serde_json::Value = serde_json::from_str(args).unwrap_or(serde_json::Value::Null);
+
+    let param_display = match name {
+        "list_files" => {
+            // Show directory, limited to 80 chars
+            if let Some(dir) = parsed.get("directory").or(parsed.get("path")).and_then(|v| v.as_str()) {
+                let display = if dir.len() > 80 {
+                    format!("...{}", &dir[dir.len()-77..])
+                } else {
+                    dir.to_string()
+                };
+                format!("Directory: {}", display)
+            } else {
+                String::new()
+            }
+        }
+        "read_file" => {
+            // Show just the path
+            if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
+                let display = if path.len() > 80 {
+                    format!("...{}", &path[path.len()-77..])
+                } else {
+                    path.to_string()
+                };
+                display
+            } else {
+                String::new()
+            }
+        }
+        "edit_file" => {
+            // Show just the filename
+            if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path)
+                    .to_string()
+            } else {
+                String::new()
+            }
+        }
+        "write_file" => {
+            // Show just the filename
+            if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path)
+                    .to_string()
+            } else {
+                String::new()
+            }
+        }
+        "shell" => {
+            // Show command, limited to 80 chars
+            if let Some(cmd) = parsed.get("command").and_then(|v| v.as_str()) {
+                let display = if cmd.len() > 80 {
+                    format!("{}...", &cmd[..77])
+                } else {
+                    cmd.to_string()
+                };
+                format!("`{}`", display)
+            } else {
+                String::new()
+            }
+        }
+        "grep" => {
+            // Show pattern and optionally path
+            let pattern = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+            let path = parsed.get("path").and_then(|v| v.as_str());
+            let mut display = format!("\"{}\"", pattern);
+            if let Some(p) = path {
+                let short_path = if p.len() > 40 {
+                    format!("...{}", &p[p.len()-37..])
+                } else {
+                    p.to_string()
+                };
+                display.push_str(&format!(" in {}", short_path));
+            }
+            if display.len() > 80 {
+                format!("{}...", &display[..77])
+            } else {
+                display
+            }
+        }
+        _ => {
+            // Generic: show first key-value pair, limited
+            if let Some(obj) = parsed.as_object() {
+                if let Some((key, val)) = obj.iter().next() {
+                    let val_str = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => val.to_string(),
+                    };
+                    let display = format!("{}: {}", key, val_str);
+                    if display.len() > 80 {
+                        format!("{}...", &display[..77])
+                    } else {
+                        display
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        }
+    };
+
+    if param_display.is_empty() {
+        format!("🔧 **{}**", name)
+    } else {
+        format!("🔧 **{}** {}", name, param_display)
+    }
+}
+
+/// ID for the chat messages scrollable
+const CHAT_SCROLLABLE_ID: &str = "chat_messages";
 
 use crate::image_handler;
-use crate::llm_stream;
+use crate::llm_stream::{self, get_claude_auth_token};
 use crate::material_icons::{self as mi, icon, icons};
 use crate::messages::{Message, ImageAttachment};
 use crate::theme::{styles, AppTheme};
@@ -13,6 +140,7 @@ use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType, get_agent};
 use ticca_core::config::{ConfigDatabase, setting_keys};
 use ticca_core::llm;
 use ticca_core::session::{Session, SessionDatabase, SessionMessage, MessageRole};
+use ticca_core::OAuthToken;
 use ticca_oauth::{ClaudeOAuth, ChatGptOAuth};
 
 use uuid::Uuid;
@@ -61,6 +189,9 @@ pub struct TiccaApp {
 
     // Error display
     error_message: Option<String>,
+
+    // Auto-scroll tracking: true if user is at/near bottom of chat
+    user_at_bottom: bool,
 }
 
 /// Views in the application
@@ -79,24 +210,36 @@ pub struct ChatMessage {
     pub is_streaming: bool,
     /// Reasoning/thinking content (collapsible)
     pub reasoning: Option<String>,
+    /// Parsed markdown items (cached for rendering)
+    pub parsed_items: Vec<markdown::Item>,
+    /// Track if last content added was a tool call (for formatting)
+    pub last_was_tool_call: bool,
 }
 
 impl ChatMessage {
     pub fn user(content: impl Into<String>) -> Self {
+        let content = content.into();
+        let parsed_items = markdown::parse(&content).collect();
         Self {
             role: MessageRole::User,
-            content: content.into(),
+            content,
             is_streaming: false,
             reasoning: None,
+            parsed_items,
+            last_was_tool_call: false,
         }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
+        let content = content.into();
+        let parsed_items = markdown::parse(&content).collect();
         Self {
             role: MessageRole::Assistant,
-            content: content.into(),
+            content,
             is_streaming: false,
             reasoning: None,
+            parsed_items,
+            last_was_tool_call: false,
         }
     }
 
@@ -106,7 +249,14 @@ impl ChatMessage {
             content: String::new(),
             is_streaming: true,
             reasoning: None,
+            parsed_items: Vec::new(),
+            last_was_tool_call: false,
         }
+    }
+
+    /// Update parsed items when content changes
+    pub fn update_parsed_items(&mut self) {
+        self.parsed_items = markdown::parse(&self.content).collect();
     }
 }
 
@@ -140,6 +290,7 @@ impl TiccaApp {
             raw_view_messages: HashSet::new(),
             raw_view_editors: HashMap::new(),
             error_message: None,
+            user_at_bottom: true, // Start at bottom
         };
 
         // Automatically fetch models on startup if we have credentials
@@ -164,7 +315,19 @@ impl TiccaApp {
                 self.input_value = value;
                 Task::none()
             }
-            
+
+            Message::ChatScrolled(viewport) => {
+                // Check if user is at or near the bottom of the chat
+                // We consider "at bottom" if within 50 pixels of the end
+                let content_height = viewport.content_bounds().height;
+                let viewport_height = viewport.bounds().height;
+                let scroll_offset = viewport.absolute_offset().y;
+                let max_scroll = (content_height - viewport_height).max(0.0);
+                let distance_from_bottom = max_scroll - scroll_offset;
+                self.user_at_bottom = distance_from_bottom < 50.0;
+                Task::none()
+            }
+
             Message::SendMessage => {
                 // Check if we have something to send (text or images)
                 let has_text = !self.input_value.trim().is_empty();
@@ -199,6 +362,9 @@ impl TiccaApp {
 
                 // Add user message
                 self.messages.push(ChatMessage::user(&display_message));
+
+                // User just sent a message, so scroll to bottom and track as at bottom
+                self.user_at_bottom = true;
 
                 // Check if we have credentials
                 if !llm::has_claude_credentials() {
@@ -252,10 +418,18 @@ impl TiccaApp {
                     })
                     .collect();
 
-                Task::run(
+                let stream_task = Task::run(
                     llm_stream::run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir, max_tool_rounds, history, image_data),
                     |event| event,
-                )
+                );
+
+                // Scroll to bottom immediately after sending
+                let scroll_task = widget::operation::scroll_to(
+                    widget::Id::new(CHAT_SCROLLABLE_ID),
+                    AbsoluteOffset { x: 0.0, y: f32::MAX },
+                );
+
+                Task::batch([scroll_task, stream_task])
             }
             
             Message::CopyMessage(index) => {
@@ -309,10 +483,17 @@ impl TiccaApp {
             Message::StreamChunk(chunk) => {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
+                        // If previous content was a tool call, prefix with lightbulb
+                        if last.last_was_tool_call && !chunk.trim().is_empty() {
+                            last.content.push_str("\n\n💡 ");
+                            last.last_was_tool_call = false;
+                        }
                         last.content.push_str(&chunk);
+                        // Update parsed markdown items for rendering
+                        last.update_parsed_items();
                     }
                 }
-                Task::none()
+                self.scroll_to_bottom_if_needed()
             }
 
             Message::Reasoning(reasoning) => {
@@ -326,7 +507,7 @@ impl TiccaApp {
                         }
                     }
                 }
-                Task::none()
+                self.scroll_to_bottom_if_needed()
             }
 
             Message::StreamComplete => {
@@ -334,6 +515,8 @@ impl TiccaApp {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
                         last.is_streaming = false;
+                        // Final parse of markdown after streaming completes
+                        last.update_parsed_items();
                     }
                 }
                 // Auto-save session after streaming completes
@@ -478,11 +661,16 @@ impl TiccaApp {
                         if let Ok(messages) = db.get_messages(&session_id) {
                             // Convert session messages to chat messages
                             self.messages = messages.iter()
-                                .map(|m| ChatMessage {
-                                    role: m.role.clone(),
-                                    content: m.content.clone(),
-                                    is_streaming: false,
-                                    reasoning: None,
+                                .map(|m| {
+                                    let parsed_items = markdown::parse(&m.content).collect();
+                                    ChatMessage {
+                                        role: m.role.clone(),
+                                        content: m.content.clone(),
+                                        is_streaming: false,
+                                        reasoning: None,
+                                        parsed_items,
+                                        last_was_tool_call: false,
+                                    }
                                 })
                                 .collect();
 
@@ -582,35 +770,21 @@ impl TiccaApp {
             }
 
             Message::ToolCall { name, args } => {
-                // Add a visual indicator that a tool is being called
+                // Add a one-liner visual indicator for the tool call
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
-                        last.content.push_str(&format!("\n\n🔧 **Calling tool:** `{}`\n", name));
-                        // Truncate args for display
-                        let display_args = if args.len() > 200 {
-                            format!("{}...", &args[..200])
-                        } else {
-                            args.clone()
-                        };
-                        last.content.push_str(&format!("```json\n{}\n```\n", display_args));
+                        let tool_line = format_tool_call_oneliner(&name, &args);
+                        // Use double newline for proper markdown paragraph break
+                        last.content.push_str(&format!("\n\n{}", tool_line));
+                        // Mark that we just added a tool call
+                        last.last_was_tool_call = true;
                     }
                 }
                 Task::none()
             }
 
-            Message::ToolResult { name, result } => {
-                // Add the tool result to the message
-                if let Some(last) = self.messages.last_mut() {
-                    if last.is_streaming {
-                        // Truncate result for display
-                        let display_result = if result.len() > 500 {
-                            format!("{}...\n(truncated)", &result[..500])
-                        } else {
-                            result.clone()
-                        };
-                        last.content.push_str(&format!("\n✅ **Result from `{}`:**\n```\n{}\n```\n\n", name, display_result));
-                    }
-                }
+            Message::ToolResult { name: _, result: _ } => {
+                // Don't display tool results - keep the UI clean
                 Task::none()
             }
 
@@ -639,8 +813,30 @@ impl TiccaApp {
                 Task::none()
             }
 
+            Message::SelectImageFile => {
+                // Open native file picker for images (Wayland-compatible via xdg-portal)
+                Task::perform(
+                    async {
+                        let dialog = rfd::AsyncFileDialog::new()
+                            .set_title("Select Image")
+                            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+                            .pick_file()
+                            .await;
+
+                        match dialog {
+                            Some(handle) => {
+                                let path = handle.path().to_path_buf();
+                                image_handler::load_image_from_path(&path).await
+                            }
+                            None => Err("No file selected".to_string()),
+                        }
+                    },
+                    Message::ImageLoaded
+                )
+            }
+
             Message::FileDropped(path) => {
-                // Load image from dropped file
+                // Load image from dropped file (X11 only - Wayland DnD not implemented in winit)
                 Task::perform(
                     async move {
                         image_handler::load_image_from_path(&path).await
@@ -655,7 +851,10 @@ impl TiccaApp {
                         self.pending_attachments.push(attachment);
                     }
                     Err(e) => {
-                        self.error_message = Some(format!("Failed to load image: {}", e));
+                        // Don't show error for cancelled file dialog
+                        if !e.contains("No file selected") {
+                            self.error_message = Some(format!("Failed to load image: {}", e));
+                        }
                     }
                 }
                 Task::none()
@@ -689,6 +888,14 @@ impl TiccaApp {
             Message::RemoveAttachment(index) => {
                 if index < self.pending_attachments.len() {
                     self.pending_attachments.remove(index);
+                }
+                Task::none()
+            }
+
+            Message::LinkClicked(url) => {
+                // Open the URL in the default browser
+                if let Err(e) = open::that(url.as_str()) {
+                    tracing::warn!("Failed to open URL {}: {}", url, e);
                 }
                 Task::none()
             }
@@ -750,9 +957,8 @@ impl TiccaApp {
 
         event::listen_with(|event, _status, _id| {
             match event {
-                // Handle file drops for drag & drop images
+                // Handle file drops for drag & drop images (X11 only - not implemented on Wayland)
                 Event::Window(window::Event::FileDropped(path)) => {
-                    // Check if it's an image file
                     if image_handler::is_image_file(&path) {
                         Some(Message::FileDropped(path))
                     } else {
@@ -834,7 +1040,7 @@ impl TiccaApp {
                 .spacing(8),
 
                 // Spacer
-                iced::widget::horizontal_space(),
+                horizontal_space(),
 
                 // Actions
                 row![
@@ -865,7 +1071,7 @@ impl TiccaApp {
             row![
                 icon(icons::FOLDER).size(16),
                 text(format!(" {}", dir_display)).size(12),
-                iced::widget::horizontal_space(),
+                horizontal_space(),
                 button(text("Change").size(12))
                     .on_press(Message::SelectWorkingDirectory)
                     .style(styles::secondary_button)
@@ -889,6 +1095,8 @@ impl TiccaApp {
                 .spacing(12)
                 .padding(20)
         )
+        .id(widget::Id::new(CHAT_SCROLLABLE_ID))
+        .on_scroll(Message::ChatScrolled)
         .height(Length::Fill)
         .into();
 
@@ -959,6 +1167,11 @@ impl TiccaApp {
 
         // Input area
         let input_row = row![
+            // Add image button (works on Wayland via xdg-portal)
+            button(icon(icons::ATTACH_FILE).size(20))
+                .on_press(Message::SelectImageFile)
+                .style(styles::icon_button)
+                .padding([8, 8]),
             text_input("Type a message...", &self.input_value)
                 .on_input(Message::InputChanged)
                 .on_submit(Message::SendMessage)
@@ -980,13 +1193,12 @@ impl TiccaApp {
         .spacing(10)
         .align_y(iced::Alignment::Center);
 
-        let input = container(
-            if let Some(preview) = attachment_preview {
-                column![preview, input_row].spacing(0).into()
-            } else {
-                input_row.into()
-            }
-        )
+        let input_content: Element<'_, Message> = if let Some(preview) = attachment_preview {
+            column![preview, input_row].spacing(0).into()
+        } else {
+            input_row.into()
+        };
+        let input = container(input_content)
         .padding(12)
         .style(styles::input_area_container);
 
@@ -998,7 +1210,19 @@ impl TiccaApp {
         ]
         .into()
     }
-    
+
+    /// Scroll to bottom of chat if user was at bottom
+    fn scroll_to_bottom_if_needed(&self) -> Task<Message> {
+        if self.user_at_bottom {
+            widget::operation::scroll_to(
+                widget::Id::new(CHAT_SCROLLABLE_ID),
+                AbsoluteOffset { x: 0.0, y: f32::MAX },
+            )
+        } else {
+            Task::none()
+        }
+    }
+
     /// Save the current session to the database
     fn save_current_session(&mut self) {
         if self.messages.is_empty() {
@@ -1093,10 +1317,11 @@ impl TiccaApp {
             .spacing(6)
             .into()
         } else if msg.is_streaming {
-            // Render markdown while streaming - shows content as it arrives
-            // Append cursor to show streaming is active
-            let content_with_cursor = format!("{}▌", msg.content);
-            crate::views::components::markdown::render(&content_with_cursor, is_dark)
+            // Render markdown while streaming - use parsed items with cursor
+            // Note: For streaming, we use the cached items since they're updated on each chunk
+            markdown::view(&msg.parsed_items, markdown::Settings::with_text_size(14, self.theme.to_iced_theme()))
+                .map(Message::LinkClicked)
+                .into()
         } else if is_raw_view {
             // Raw view: show selectable plain text
             if let Some(editor_content) = self.raw_view_editors.get(&index) {
@@ -1109,8 +1334,10 @@ impl TiccaApp {
                 text(&msg.content).size(14).into()
             }
         } else {
-            // Render markdown for completed messages
-            crate::views::components::markdown::render(&msg.content, is_dark)
+            // Render markdown for completed messages using built-in renderer
+            markdown::view(&msg.parsed_items, markdown::Settings::with_text_size(14, self.theme.to_iced_theme()))
+                .map(Message::LinkClicked)
+                .into()
         };
 
         // Toggle icon: CODE for raw view, DESCRIPTION for markdown view
@@ -1119,7 +1346,7 @@ impl TiccaApp {
         // Header row with label, toggle button, and copy button
         let header = row![
             text(label).size(12),
-            iced::widget::horizontal_space(),
+            horizontal_space(),
             // Raw/Markdown toggle button
             button(icon(toggle_icon).size(16))
                 .on_press(Message::ToggleRawView(index))
@@ -1271,7 +1498,8 @@ const NOTO_SANS_SYMBOLS2: &[u8] = include_bytes!("../assets/fonts/NotoSansSymbol
 
 /// Run the application with default settings
 pub fn run() -> anyhow::Result<()> {
-    iced::application(TiccaApp::title, TiccaApp::update, TiccaApp::view)
+    iced::application(TiccaApp::new, TiccaApp::update, TiccaApp::view)
+        .title(TiccaApp::title)
         .subscription(TiccaApp::subscription)
         .theme(TiccaApp::theme)
         // Load bundled fonts - order matters for fallback chain
@@ -1288,6 +1516,6 @@ pub fn run() -> anyhow::Result<()> {
         .default_font(iced::Font::with_name("Noto Sans"))
         .window_size(iced::Size::new(900.0, 700.0))
         .antialiasing(true)
-        .run_with(TiccaApp::new)?;
+        .run()?;
     Ok(())
 }

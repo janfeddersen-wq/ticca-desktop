@@ -7,7 +7,7 @@ use twemoji_assets::svg::SvgTwemojiAsset;
 use crate::messages::Message;
 
 /// Default emoji size in pixels
-pub const EMOJI_SIZE: u16 = 18;
+pub const EMOJI_SIZE: f32 = 18.0;
 
 /// Look up an emoji asset, handling variation selectors
 /// Returns a reference to the static twemoji asset
@@ -28,7 +28,7 @@ pub fn lookup_emoji(grapheme: &str) -> Option<&'static SvgTwemojiAsset> {
 }
 
 /// Render an emoji asset as an SVG element with specified size
-pub fn render_emoji(asset: &SvgTwemojiAsset, size: u16) -> Element<'static, Message> {
+pub fn render_emoji(asset: &SvgTwemojiAsset, size: f32) -> Element<'static, Message> {
     let svg_data: &str = asset;
     let svg_handle = svg::Handle::from_memory(svg_data.as_bytes().to_vec());
     svg(svg_handle).width(size).height(size).into()

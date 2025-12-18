@@ -51,7 +51,7 @@ fn render_text_with_emojis_colored(
                         .into(),
                 );
             }
-            elements.push(render_emoji(&asset, 14));
+            elements.push(render_emoji(&asset, 14.0));
         } else {
             current_text.push_str(grapheme);
         }

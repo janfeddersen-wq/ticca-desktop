@@ -19,7 +19,7 @@ pub fn icon<'a>(codepoint: char) -> Text<'a> {
 }
 
 /// Create an icon with a specific size
-pub fn icon_sized<'a>(codepoint: char, size: u16) -> Text<'a> {
+pub fn icon_sized<'a>(codepoint: char, size: f32) -> Text<'a> {
     icon(codepoint).size(size)
 }
 

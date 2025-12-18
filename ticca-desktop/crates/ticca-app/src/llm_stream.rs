@@ -128,7 +128,8 @@ pub fn run_rig_agent_stream(
         use rig::agent::MultiTurnStreamItem;
         use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
         use rig::message::Message as RigMessage;
-        use rig::message::{UserContent, Image, ImageMediaType};
+        use rig::message::{UserContent, ImageMediaType};
+        use rig::one_or_many::OneOrMany;
 
         // Convert chat history to rig messages
         let history: Vec<RigMessage> = chat_history
@@ -159,7 +160,7 @@ pub fn run_rig_agent_stream(
                     "image/webp" => ImageMediaType::WEBP,
                     _ => ImageMediaType::PNG, // Default to PNG
                 };
-                content_parts.push(UserContent::image(Image::base64(base64_data, media)));
+                content_parts.push(UserContent::image_base64(base64_data, Some(media), None));
             }
 
             // Add text if present
@@ -167,7 +168,10 @@ pub fn run_rig_agent_stream(
                 content_parts.push(UserContent::text(&user_message));
             }
 
-            RigMessage::User { content: content_parts }
+            match OneOrMany::many(content_parts) {
+                Ok(content) => RigMessage::User { content },
+                Err(_) => RigMessage::user(&user_message), // Fallback to text-only
+            }
         };
 
         // Add the new user message to history

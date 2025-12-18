@@ -1,7 +1,12 @@
 //! Settings/Configuration view
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, Column};
-use iced::{Element, Length};
+use iced::widget::{button, column, container, pick_list, row, scrollable, text, Column, Space};
+use iced::{Border, Color, Element, Length};
+
+/// Create horizontal space that fills available width (iced 0.14 helper)
+fn horizontal_space() -> Space {
+    Space::new().width(Length::Fill)
+}
 use std::collections::HashMap;
 
 use crate::material_icons::{icon, icons};
@@ -164,7 +169,7 @@ fn build_model_settings_section<'a>(
     // Header with refresh button
     let header_row = row![
         text("Model Settings").size(18),
-        iced::widget::horizontal_space(),
+        horizontal_space(),
         button(
             row![
                 icon(if is_loading_models { icons::HOURGLASS_EMPTY } else { icons::REFRESH }).size(16),
@@ -274,11 +279,21 @@ fn build_model_settings_section<'a>(
         .align_y(iced::Alignment::Center)
     };
 
+    // Custom horizontal rule using a styled container
+    let rule = container(text(""))
+        .width(Length::Fill)
+        .height(1)
+        .style(|_theme: &iced::Theme| container::Style {
+            background: Some(Color::from_rgba(0.5, 0.5, 0.5, 0.3).into()),
+            border: Border::default(),
+            ..Default::default()
+        });
+
     container(
         column![
             header_row,
             default_model_row,
-            iced::widget::horizontal_rule(1),
+            rule,
             agent_pinning_header,
             agent_pinning_desc,
             coding_row,

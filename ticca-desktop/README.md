@@ -1,59 +1,96 @@
 # Ticca Desktop
 
-A modern, cross-platform desktop application for AI-assisted coding built with [Iced](https://github.com/iced-rs/iced) and Rust.
+<p align="center">
+  <strong>A modern, cross-platform desktop application for AI-assisted coding</strong>
+</p>
 
-![Rust](https://img.shields.io/badge/Rust-2024_Edition-orange?logo=rust)
-![License](https://img.shields.io/badge/License-MIT-blue)
-![Tests](https://img.shields.io/badge/Tests-55_passing-green)
+<p align="center">
+  <img src="https://img.shields.io/badge/Rust-2024_Edition-orange?logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/GUI-Iced_0.14-blue?logo=rust" alt="Iced">
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/Tests-58_passing-brightgreen" alt="Tests">
+</p>
+
+---
+
+## Overview
+
+Ticca Desktop is a **100% Rust** native desktop application that brings AI-powered coding assistance directly to your desktop. No Electron, no JavaScript—just pure Rust performance with a beautiful, responsive GUI built on the [Iced](https://github.com/iced-rs/iced) framework.
+
+### Why Ticca?
+
+- **🚀 Native Performance** — Lightweight and fast, with minimal resource usage
+- **🔒 Privacy First** — Your code stays local; only what you explicitly share goes to the LLM
+- **⌨️ Keyboard-Centric** — Designed for developers who prefer keyboard navigation
+- **🔐 OAuth Authentication** — No API keys to manage; authenticate directly with providers
+- **📎 Image Support** — Attach images and screenshots for vision model analysis
 
 ---
 
 ## ✨ Features
 
-- **Coding Agent** - Writes, modifies, and executes code using best practices (DRY, YAGNI, SOLID)
-- **Planning Agent** - Strategic task breakdown and execution roadmaps for complex projects
-- 🔐 **OAuth Authentication** - Native support for Claude (Anthropic), Gemini (Google), and ChatGPT (OpenAI)
-- 🎨 **Multiple Themes** - Dark, Light, and Zinc color schemes (Tailwind CSS-inspired)
-- ⌨️ **Keyboard-First** - Full keyboard navigation and shortcuts
-- 💾 **Session Persistence** - SQLite-backed conversation history
-- 🔧 **Native Tools** - Blazing-fast file operations, ripgrep search, and shell command execution
-- 🦀 **100% Rust** - No Electron, no JavaScript, just pure Rust performance
+### 🤖 Intelligent Agents
 
----
+| Agent | Description | Tools |
+|-------|-------------|-------|
+| **Coding Agent** | Your hands-on coding partner. Reads, writes, and modifies files; executes shell commands; follows DRY, YAGNI, and SOLID principles. | `list_files`, `read_file`, `grep`, `edit_file`, `write_file`, `shell` |
+| **Planning Agent** | Strategic task breakdown. Analyzes project structure, creates execution roadmaps, and identifies dependencies. Read-only access for safe exploration. | `list_files`, `read_file`, `grep` |
 
-## 🚀 Quick Start
+### 🔧 Native Tools
 
-### Prerequisites
+All tools are implemented in pure Rust with no external dependencies:
 
-- **Rust 2024 Edition** (1.85+)
-- **Linux** with Wayland/X11 (primary target, macOS/Windows should work but untested)
+| Tool | Description |
+|------|-------------|
+| `list_files` | Explore project structure with intelligent `.gitignore` filtering |
+| `read_file` | Read file contents with optional line ranges for large files |
+| `edit_file` | Precise text replacement in existing files (requires exact match) |
+| `write_file` | Create new files or overwrite existing ones |
+| `grep` | Fast regex search powered by [ripgrep](https://github.com/BurntSushi/ripgrep) libraries |
+| `shell` | Execute shell commands with configurable timeout protection |
 
-### Installation
+### 🔐 OAuth Authentication
 
-```bash
-# Clone the repository
-git clone https://github.com/jan/ticca-desktop
-cd ticca-desktop
+Native OAuth flows for major LLM providers—no API keys to manage:
 
-# Build in release mode
-cargo build --release
+| Provider | Flow Type | Status |
+|----------|-----------|--------|
+| **Claude** (Anthropic) | Public PKCE | ✅ Implemented |
+| **Gemini** (Google) | OAuth with client credentials | ✅ Implemented |
+| **ChatGPT** (OpenAI) | Public PKCE | ✅ Implemented |
 
-# Run the application
-cargo run --release
-```
+### 💾 Session Persistence
 
-The binary will be available at `target/release/ticca`.
+- SQLite-backed conversation history
+- Automatic session management with timestamps
+- Token usage tracking per session
+- Full message history with role preservation (user, assistant, system, tool)
 
-### First Run
+### 🎨 Rich Markdown Rendering
 
-1. Launch Ticca Desktop
-2. Click the ⚙️ settings button
-3. Authenticate with your preferred LLM provider (Claude recommended)
-4. Start using Ticca for your development tasks
+- Full markdown support with syntax highlighting (powered by [syntect](https://github.com/trishume/syntect))
+- Emoji rendering via Twemoji SVG
+- Math notation support (superscripts, subscripts, Unicode math symbols)
+- Table rendering
+- Copy code blocks with one click
 
----
+### 🖼️ Image Attachments
 
-## ⌨️ Keyboard Shortcuts
+- Attach images to messages for vision model analysis
+- Paste images directly from clipboard
+- Support for PNG, JPEG, GIF, and WebP formats
+
+### 🎨 Themes
+
+Three built-in themes using Tailwind CSS color palettes:
+
+| Theme | Description |
+|-------|-------------|
+| **Dark** | Easy on the eyes for long coding sessions (default) |
+| **Light** | Clean and bright for well-lit environments |
+| **Zinc** | Neutral gray tones for a minimal aesthetic |
+
+### ⌨️ Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
@@ -61,270 +98,225 @@ The binary will be available at `target/release/ticca`.
 | `Ctrl+N` | New session |
 | `Ctrl+,` | Open settings |
 | `Ctrl+T` | Toggle theme |
-| `Escape` | Close panel |
 | `Ctrl+1` | Switch to Coding agent |
 | `Ctrl+2` | Switch to Planning agent |
+| `Escape` | Close panel |
 
 ---
 
-## 🏗️ Architecture
+## 📦 Installation
 
-Ticca Desktop is organized as a Cargo workspace with three main crates:
+### Prerequisites
 
-```
-ticca-desktop/
-├── crates/
-│   ├── ticca-app/      # 🖥️  Iced GUI application
-│   ├── ticca-core/     # 🧠 Business logic, agents, tools, LLM client
-│   └── ticca-oauth/    # 🔐 OAuth implementations for LLM providers
-├── Cargo.toml          # Workspace configuration
-└── LICENSE             # MIT License
-```
+- **Rust 2024 Edition** (1.85+)
+- **Linux**: Development libraries for your display server
+  ```bash
+  # Wayland
+  sudo apt install libwayland-dev libxkbcommon-dev
+  
+  # X11
+  sudo apt install libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev
+  ```
+- **macOS/Windows**: Should work out of the box
 
-### Crate Overview
-
-#### `ticca-app` - The GUI
-
-The desktop application built with [Iced](https://github.com/iced-rs/iced), a cross-platform GUI framework.
-
-**Key components:**
-- `app.rs` - Main application state and message handling
-- `theme/` - Dark, Light, and Zinc color schemes
-- `views/` - Chat and configuration views
-- `views/components/` - Reusable UI components (markdown renderer, syntax highlighting, emoji support)
-- `keybindings.rs` - Keyboard shortcut definitions
-
-#### `ticca-core` - The Brain
-
-Core business logic including agents, tools, and LLM integration.
-
-**Modules:**
-- `agents/` - Planning and Coding agent definitions with system prompts
-- `tools/` - Native Rust tools (file ops, grep, shell)
-- `config/` - SQLite-backed configuration storage
-- `session/` - Chat session persistence
-- `llm/` - Claude API client with streaming support
-
-#### `ticca-oauth` - Authentication
-
-OAuth 2.0 implementations with PKCE support for secure authentication.
-
-**Supported providers:**
-- `claude.rs` - Anthropic Claude (public PKCE flow)
-- `gemini.rs` - Google Gemini (requires OAuth credentials)
-- `chatgpt.rs` - OpenAI ChatGPT (public PKCE flow)
-
----
-
-## 🤖 Agents
-
-### Coding Agent
-
-Full read/write access to your codebase for code generation and modification.
-
-**Capabilities:**
-- Create, read, modify, and delete files
-- Execute shell commands
-- Search codebase with ripgrep
-- Follow best practices (DRY, YAGNI, SOLID, Zen of Python)
-- Keep files under 600 lines, refactoring when needed
-
-**Available tools:** `list_files`, `read_file`, `write_file`, `edit_file`, `grep`, `shell`
-
-### Planning Agent
-
-Strategic planner for complex tasks - read-only access for safe exploration.
-
-**Capabilities:**
-- Analyze project structure and requirements
-- Create detailed execution roadmaps
-- Identify dependencies and risks
-- Suggest alternative approaches
-
-**Available tools:** `list_files`, `read_file`, `grep`
-
----
-
-## 🔧 Native Tools
-
-All tools are implemented in pure Rust for maximum performance:
-
-| Tool | Description |
-|------|-------------|
-| `list_files` | Directory listing with smart ignore patterns (.git, node_modules, target, etc.) |
-| `read_file` | Read files with optional line range support |
-| `write_file` | Create new files or overwrite existing ones |
-| `edit_file` | Modify files by replacing exact text matches |
-| `grep` | Regex search using ripgrep libraries (grep-regex, grep-searcher, ignore) |
-| `shell` | Execute shell commands with configurable timeout and working directory |
-
-### Tool Parameters
-
-```
-edit_file:
-  path: "path/to/file"
-  old_text: "exact text to replace"
-  new_text: "replacement text"
-
-write_file:
-  path: "path/to/file"
-  content: "file contents"
-```
-
----
-
-## 💾 Data Storage
-
-Configuration and sessions are stored in `~/.local/share/ticca-desktop/`:
-
-| File | Contents |
-|------|----------|
-| `config.db` | Settings, model configs, OAuth tokens |
-| `sessions.db` | Chat session history and messages |
-
-Both databases use SQLite with automatic migrations.
-
----
-
-## 🔐 OAuth Setup
-
-### Claude (Anthropic) - Recommended
-
-1. Open Settings (`Ctrl+,`)
-2. Click "🔐 Claude OAuth"
-3. Authorize in your browser
-4. Tokens are stored securely in `config.db`
-
-### Gemini (Google)
-
-Requires a Google Cloud project with OAuth credentials configured:
-
-1. Create OAuth 2.0 credentials in Google Cloud Console
-2. Configure the credentials in Ticca settings
-3. Click "🔐 Gemini OAuth"
-4. Complete Google sign-in
-
-### ChatGPT (OpenAI)
-
-1. Open Settings (`Ctrl+,`)
-2. Click "🔐 ChatGPT OAuth"
-3. Authorize with your OpenAI account
-
----
-
-## 🧪 Development
-
-### Running Tests
+### Build from Source
 
 ```bash
-# Run all tests
+# Clone the repository
+git clone https://github.com/jan/ticca-desktop.git
+cd ticca-desktop
+
+# Build in release mode (recommended)
+cargo build --release
+
+# Run
+./target/release/ticca
+```
+
+### Development
+
+```bash
+# Run in debug mode with logging
+RUST_LOG=info cargo run
+
+# Run all tests (58 tests across 3 crates)
 cargo test
 
 # Run tests for a specific crate
 cargo test -p ticca-core
 cargo test -p ticca-oauth
+cargo test -p ticca-app
 
-# Run with debug logging
-RUST_LOG=debug cargo test
+# Run with verbose output
+cargo test -- --nocapture
 ```
 
-### Test Coverage
+---
 
-| Crate | Tests |
-|-------|-------|
-| ticca-core | 42 |
-| ticca-oauth | 13 |
-| **Total** | **55** |
+## 🏗️ Architecture
 
-### Building for Development
+Ticca is organized as a Cargo workspace with three crates:
+
+```
+ticca-desktop/
+├── crates/
+│   ├── ticca-app/           # 🖥️ Iced GUI application
+│   │   ├── src/
+│   │   │   ├── app.rs               # Main application state & update loop
+│   │   │   ├── main.rs              # Entry point
+│   │   │   ├── llm_stream.rs        # Streaming response handling
+│   │   │   ├── keybindings.rs       # Keyboard shortcuts
+│   │   │   ├── messages.rs          # Application messages/events
+│   │   │   ├── icons.rs             # Icon definitions
+│   │   │   ├── material_icons.rs    # Material Icons integration
+│   │   │   ├── image_handler.rs     # Image attachment processing
+│   │   │   ├── theme/               # Dark, Light, Zinc themes
+│   │   │   │   ├── dark.rs
+│   │   │   │   ├── light.rs
+│   │   │   │   ├── zinc.rs
+│   │   │   │   └── styles.rs        # Widget styling
+│   │   │   └── views/
+│   │   │       ├── config.rs        # Settings panel
+│   │   │       └── components/      # Reusable UI components
+│   │   │           ├── markdown.rs  # Markdown renderer with emoji & math
+│   │   │           ├── syntax.rs    # Syntax highlighting
+│   │   │           └── emoji.rs     # Twemoji SVG rendering
+│   │   └── assets/fonts/            # Noto Sans font family
+│   │
+│   ├── ticca-core/          # 🧠 Business logic & tools
+│   │   └── src/
+│   │       ├── agents/              # Agent definitions
+│   │       │   ├── base.rs          # Agent trait & types
+│   │       │   ├── coding.rs        # Coding agent (full tools)
+│   │       │   └── planning.rs      # Planning agent (read-only)
+│   │       ├── tools/               # Native Rust tools
+│   │       │   ├── registry.rs      # Tool registration system
+│   │       │   ├── file_ops.rs      # list_files, read_file
+│   │       │   ├── file_mods.rs     # edit_file, write_file
+│   │       │   ├── grep.rs          # Regex search (ripgrep)
+│   │       │   ├── shell.rs         # Command execution
+│   │       │   └── rig_tools.rs     # Rig framework integration
+│   │       ├── config/              # Configuration storage
+│   │       │   ├── database.rs      # SQLite config DB
+│   │       │   ├── models.rs        # Config data models
+│   │       │   └── migrations.rs    # Schema migrations
+│   │       ├── session/             # Conversation persistence
+│   │       │   ├── database.rs      # SQLite session DB
+│   │       │   └── models.rs        # Session/Message models
+│   │       └── llm/
+│   │           └── claude.rs        # Claude API client (streaming)
+│   │
+│   └── ticca-oauth/         # 🔐 OAuth implementations
+│       └── src/
+│           ├── common.rs            # Shared types & errors
+│           ├── pkce.rs              # PKCE utilities
+│           ├── callback_server.rs   # Local OAuth callback server
+│           ├── claude.rs            # Anthropic OAuth
+│           ├── gemini.rs            # Google OAuth
+│           └── chatgpt.rs           # OpenAI OAuth
+│
+├── Cargo.toml               # Workspace configuration
+├── LICENSE                  # MIT License
+└── README.md
+```
+
+### Crate Dependencies
+
+```
+ticca-app
+    ├── ticca-core (agents, tools, sessions, LLM client)
+    └── ticca-oauth (authentication flows)
+
+ticca-core
+    └── ticca-oauth (token management)
+```
+
+---
+
+## 🔌 Key Dependencies
+
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| [iced](https://github.com/iced-rs/iced) | 0.14 | Cross-platform GUI framework |
+| [tokio](https://tokio.rs) | 1.43 | Async runtime |
+| [rusqlite](https://github.com/rusqlite/rusqlite) | 0.32 | SQLite database (bundled) |
+| [reqwest](https://github.com/seanmonstar/reqwest) | 0.12 | HTTP client with streaming |
+| [pulldown-cmark](https://github.com/raphlinus/pulldown-cmark) | 0.11 | Markdown parsing |
+| [syntect](https://github.com/trishume/syntect) | 5.2 | Syntax highlighting |
+| [grep-regex](https://github.com/BurntSushi/ripgrep) | 0.1 | Ripgrep search engine |
+| [twemoji-assets](https://github.com/nickelc/twemoji-assets) | 1.5 | Emoji SVG rendering |
+| [arboard](https://github.com/1Password/arboard) | 3.x | Clipboard support (with images) |
+| [material-icons](https://github.com/nickelc/material-icons) | 0.2 | Material Design icons |
+| [rfd](https://github.com/PolyMeilex/rfd) | 0.15 | Native file dialogs |
+
+---
+
+## 🧪 Testing
+
+The project includes comprehensive tests across all crates:
 
 ```bash
-# Quick development build
-cargo build
+# Run all tests
+cargo test
 
-# Run with debug logging
-RUST_LOG=debug cargo run
-
-# Check all crates without building
-cargo check --all
+# Current test coverage: 58 tests passing
+# - ticca-app: 2 tests (keybindings)
+# - ticca-core: 42 tests (agents, tools, config, sessions, LLM)
+# - ticca-oauth: 13 tests (PKCE, callback server, provider flows)
+# - Doc tests: 1 test
 ```
 
-### Code Style Guidelines
-
-Ticca follows these principles:
-
-- **DRY** - Don't Repeat Yourself
-- **YAGNI** - You Aren't Gonna Need It
-- **SOLID** - Single responsibility, Open/closed, Liskov substitution, Interface segregation, Dependency inversion
-- **Zen of Python** - Even in Rust! Simple is better than complex.
-- **600-line limit** - Files should be split when they exceed this threshold
+Test categories:
+- **Agent behavior** — Tool availability, system prompts
+- **Tool execution** — File operations, grep, shell commands
+- **Database CRUD** — Sessions, messages, config, OAuth tokens
+- **OAuth flows** — PKCE generation, auth URL building, callback handling
 
 ---
 
-## 📦 Dependencies
+## 🛣️ Roadmap
 
-### Core Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| `iced` | Cross-platform GUI framework |
-| `rig-core` | LLM framework with tool support |
-| `tokio` | Async runtime |
-| `rusqlite` | SQLite database |
-| `reqwest` | HTTP client |
-| `serde` / `serde_json` | Serialization |
-
-### Search & Files
-
-| Crate | Purpose |
-|-------|---------|
-| `grep-regex` | ripgrep regex engine |
-| `grep-searcher` | ripgrep file searcher |
-| `ignore` | .gitignore-aware file walking |
-
-### UI Components
-
-| Crate | Purpose |
-|-------|---------|
-| `pulldown-cmark` | Markdown parsing |
-| `syntect` | Syntax highlighting |
-| `twemoji-assets` | Emoji rendering |
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Windows and macOS testing/support
+- [ ] Gemini model integration (OAuth ready)
+- [ ] ChatGPT model integration (OAuth ready)
+- [ ] Session export/import (JSON)
 - [ ] Plugin system for custom tools
-- [ ] Multiple LLM provider support in a single session
-- [ ] Code review agent
-- [ ] Git integration agent
-- [ ] Voice input support
-- [ ] Project templates
+- [ ] Multi-file diff view
+- [ ] Git integration (status, diff, commit)
+- [ ] Model selection per session
+- [ ] Configurable max tool rounds
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Run tests (`cargo test`)
+4. Commit your changes (`git commit -m 'Add amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a Pull Request
 
 ---
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🙏 Credits
+## 🙏 Acknowledgments
 
-Built with love and these amazing projects:
-
-- [Iced](https://github.com/iced-rs/iced) - Cross-platform GUI framework
-- [rig](https://github.com/0xPlaygrounds/rig) - LLM framework
-- [ripgrep](https://github.com/BurntSushi/ripgrep) - Blazing fast text search
-- [rusqlite](https://github.com/rusqlite/rusqlite) - SQLite bindings
-- [syntect](https://github.com/trishume/syntect) - Syntax highlighting
-- [Tailwind CSS](https://tailwindcss.com/) - Color scheme inspiration
+- [Iced](https://github.com/iced-rs/iced) — For the excellent Rust GUI framework
+- [Anthropic](https://anthropic.com) — For Claude and the inspiration
+- [ripgrep](https://github.com/BurntSushi/ripgrep) — For the grep libraries
+- [Noto Fonts](https://fonts.google.com/noto) — For the beautiful font family
+- [Twemoji](https://github.com/twitter/twemoji) — For emoji assets
+- [Material Design Icons](https://fonts.google.com/icons) — For the icon set
 
 ---
 
-<div align="center">
-
-**Made with Rust by Jan**
-
-</div>
+<p align="center">
+  Built with 🦀 Rust and ❤️
+</p>
