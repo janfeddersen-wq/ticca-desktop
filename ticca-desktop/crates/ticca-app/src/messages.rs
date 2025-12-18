@@ -1,6 +1,7 @@
 //! Iced Message types for the application
 
 use crate::theme::AppTheme;
+use iced::widget::text_editor;
 use ticca_core::agents::AgentType;
 
 /// Main application message type
@@ -9,6 +10,9 @@ pub enum Message {
     // Chat messages
     InputChanged(String),
     SendMessage,
+
+    /// Message content editor action (for text selection/copy)
+    MessageEditorAction(usize, text_editor::Action),
 
     /// Streaming chunk received from LLM
     StreamChunk(String),

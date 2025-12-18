@@ -27,6 +27,8 @@ use futures::StreamExt;
 
 use ticca_core::tools::ToolContext;
 
+use iced::widget::text_editor;
+
 /// Main application state
 pub struct TiccaApp {
     // UI State
@@ -36,6 +38,7 @@ pub struct TiccaApp {
     // Chat state
     input_value: String,
     messages: Vec<ChatMessage>,
+    message_editors: Vec<text_editor::Content>,
     is_streaming: bool,
 
     // Agent state
@@ -117,14 +120,16 @@ impl TiccaApp {
         // Load working directory from config or use current directory
         let working_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
+        let welcome_message = "Welcome to Ticca. How can I assist you?";
         let app = Self {
             current_view: View::Chat,
             theme: config.theme,
             input_value: String::new(),
             messages: vec![
-                ChatMessage::assistant(
-                    "Welcome to Ticca. How can I assist you?"
-                ),
+                ChatMessage::assistant(welcome_message),
+            ],
+            message_editors: vec![
+                text_editor::Content::with_text(welcome_message),
             ],
             is_streaming: false,
             current_agent: AgentType::Coding,
@@ -172,12 +177,13 @@ impl TiccaApp {
 
                 // Add user message
                 self.messages.push(ChatMessage::user(&user_message));
+                self.message_editors.push(text_editor::Content::with_text(&user_message));
 
                 // Check if we have credentials
                 if !llm::has_claude_credentials() {
-                    self.messages.push(ChatMessage::assistant(
-                        "⚠️ No Claude credentials found. Please go to Settings and authenticate with Claude OAuth first."
-                    ));
+                    let error_msg = "⚠️ No Claude credentials found. Please go to Settings and authenticate with Claude OAuth first.";
+                    self.messages.push(ChatMessage::assistant(error_msg));
+                    self.message_editors.push(text_editor::Content::with_text(error_msg));
                     return Task::none();
                 }
 
@@ -188,6 +194,7 @@ impl TiccaApp {
 
                 // Add streaming placeholder
                 self.messages.push(ChatMessage::assistant_streaming());
+                self.message_editors.push(text_editor::Content::with_text(""));
                 self.is_streaming = true;
 
                 // Get the system prompt based on current agent
@@ -198,11 +205,12 @@ impl TiccaApp {
                 let auth_token = match get_claude_auth_token() {
                     Some(token) => token,
                     None => {
-                        self.messages.push(ChatMessage::assistant(
-                            "❌ Failed to get Claude OAuth token. Please re-authenticate in Settings."
-                        ));
+                        let error_msg = "❌ Failed to get Claude OAuth token. Please re-authenticate in Settings.";
+                        self.messages.push(ChatMessage::assistant(error_msg));
+                        self.message_editors.push(text_editor::Content::with_text(error_msg));
                         self.is_streaming = false;
                         self.messages.pop(); // Remove the streaming placeholder
+                        self.message_editors.pop();
                         return Task::none();
                     }
                 };
@@ -222,6 +230,14 @@ impl TiccaApp {
                 )
             }
             
+            Message::MessageEditorAction(index, action) => {
+                // Handle text selection/copy actions in message editors
+                if let Some(editor) = self.message_editors.get_mut(index) {
+                    editor.perform(action);
+                }
+                Task::none()
+            }
+
             Message::StreamChunk(chunk) => {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
@@ -250,6 +266,12 @@ impl TiccaApp {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
                         last.is_streaming = false;
+                    }
+                }
+                // Sync the editor content with the final message
+                if let Some(last) = self.messages.last() {
+                    if let Some(editor) = self.message_editors.last_mut() {
+                        *editor = text_editor::Content::with_text(&last.content);
                     }
                 }
                 // Auto-save session after streaming completes
@@ -379,10 +401,11 @@ impl TiccaApp {
             }
             
             Message::NewSession => {
+                let welcome_msg = "Fresh start! What would you like to work on?";
                 self.messages.clear();
-                self.messages.push(ChatMessage::assistant(
-                    "Fresh start! What would you like to work on?"
-                ));
+                self.message_editors.clear();
+                self.messages.push(ChatMessage::assistant(welcome_msg));
+                self.message_editors.push(text_editor::Content::with_text(welcome_msg));
                 self.current_session = None;
                 Task::none()
             }
@@ -393,18 +416,23 @@ impl TiccaApp {
                     if let Ok(Some(session)) = db.get_session(&session_id) {
                         if let Ok(messages) = db.get_messages(&session_id) {
                             // Convert session messages to chat messages
-                            self.messages = messages.into_iter()
+                            self.messages = messages.iter()
                                 .map(|m| ChatMessage {
-                                    role: m.role,
-                                    content: m.content,
+                                    role: m.role.clone(),
+                                    content: m.content.clone(),
                                     is_streaming: false,
                                     reasoning: None,
                                 })
                                 .collect();
-                            
+
+                            // Create corresponding editors
+                            self.message_editors = messages.iter()
+                                .map(|m| text_editor::Content::with_text(&m.content))
+                                .collect();
+
                             // Set current session
                             self.current_session = Some(session.clone());
-                            
+
                             // Set agent type if it matches
                             if let Some(agent_type) = AgentType::from_str(&session.agent_type) {
                                 self.current_agent = agent_type;
@@ -719,7 +747,8 @@ impl TiccaApp {
         // Message list
         let message_widgets: Vec<Element<Message>> = self.messages
             .iter()
-            .map(|msg| self.render_message(msg))
+            .enumerate()
+            .map(|(idx, msg)| self.render_message(idx, msg))
             .collect();
 
         let messages: Element<Message> = scrollable(
@@ -846,7 +875,7 @@ impl TiccaApp {
     }
     
     /// Render a single message
-    fn render_message<'a>(&'a self, msg: &'a ChatMessage) -> Element<'a, Message> {
+    fn render_message<'a>(&'a self, index: usize, msg: &'a ChatMessage) -> Element<'a, Message> {
         let is_user = msg.role == MessageRole::User;
         let is_dark = matches!(self.theme, AppTheme::Dark);
 
@@ -869,10 +898,14 @@ impl TiccaApp {
             // Append cursor to show streaming is active
             let content_with_cursor = format!("{}▌", msg.content);
             crate::views::components::markdown::render(&content_with_cursor, is_dark)
-        } else if msg.role == MessageRole::Assistant || msg.role == MessageRole::System {
-            // Render markdown for assistant/system messages
-            crate::views::components::markdown::render(&msg.content, is_dark)
+        } else if let Some(editor_content) = self.message_editors.get(index) {
+            // Use text_editor for selectable/copyable text (completed messages)
+            text_editor(editor_content)
+                .on_action(move |action| Message::MessageEditorAction(index, action))
+                .style(move |theme, _status| styles::message_text_editor(theme, is_dark))
+                .into()
         } else {
+            // Fallback to plain text
             text(&msg.content).size(14).into()
         };
 

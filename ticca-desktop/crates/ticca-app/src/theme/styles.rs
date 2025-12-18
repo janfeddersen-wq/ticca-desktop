@@ -2,7 +2,7 @@
 //!
 //! Provides style functions for buttons, containers, inputs, and other widgets.
 
-use iced::widget::{button, container, text_input};
+use iced::widget::{button, container, text_editor, text_input};
 use iced::{Border, Color, Theme};
 
 /// Button border radius constant
@@ -436,5 +436,35 @@ pub fn reasoning_container(theme: &Theme, is_dark: bool) -> container::Style {
             radius: 6.0.into(),
         },
         ..container::Style::default()
+    }
+}
+
+/// Text editor style for message content (transparent, no border, selectable text)
+pub fn message_text_editor(theme: &Theme, is_dark: bool) -> text_editor::Style {
+    let palette = theme.extended_palette();
+
+    let text_color = if is_dark {
+        Color::from_rgb(0.9, 0.9, 0.9)
+    } else {
+        Color::from_rgb(0.1, 0.1, 0.1)
+    };
+
+    let selection_color = if is_dark {
+        Color::from_rgba(0.3, 0.5, 0.8, 0.4)
+    } else {
+        Color::from_rgba(0.2, 0.4, 0.8, 0.3)
+    };
+
+    text_editor::Style {
+        background: Color::TRANSPARENT.into(),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        icon: palette.background.weak.text,
+        placeholder: palette.background.weak.text,
+        value: text_color,
+        selection: selection_color,
     }
 }
