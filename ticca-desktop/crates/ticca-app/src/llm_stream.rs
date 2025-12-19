@@ -14,7 +14,8 @@ use ticca_core::config::models::providers;
 use ticca_core::llm;
 use ticca_core::llm::providers::chatgpt::{is_gpt_model, ChatGptOAuthClient};
 use ticca_core::llm::providers::gemini::is_gemini_model;
-use ticca_core::llm::{ClaudeOAuthClient, GeminiOAuthClient};
+use ticca_core::llm::providers::{CodeAssistContent, GeminiCodeAssistClient};
+use ticca_core::llm::ClaudeOAuthClient;
 use ticca_core::session::MessageRole;
 use ticca_core::tools::ToolContext;
 
@@ -185,6 +186,7 @@ pub fn run_rig_agent_stream(
         };
 
         // Build history and user message
+        let gemini_history = chat_history.clone();
         let history = build_chat_history(chat_history);
         let user_msg = build_user_message(&user_message, image_data);
         let mut full_history = history;
@@ -327,18 +329,7 @@ pub fn run_rig_agent_stream(
             }
             tracing::debug!("ChatGPT stream finished after {} chunks", chunk_count);
         } else if is_gemini_model(&model_name) {
-            // Use Gemini backend
-            //
-            // ⚠️ IMPORTANT: Gemini OAuth has limited API compatibility!
-            // The gemini-cli OAuth client ID only works with Cloud Code Assist API,
-            // NOT the standard Generative Language API that rig uses.
-            // Users will likely get ACCESS_TOKEN_SCOPE_INSUFFICIENT errors.
-            //
-            // For now, we provide a helpful error message explaining the limitation.
-            // In the future, we could:
-            // 1. Add API key support for Gemini
-            // 2. Implement Cloud Code Assist API support
-            tracing::info!("Using Gemini backend for model: {}", model_name);
+            tracing::info!("Using Gemini Code Assist backend for model: {}", model_name);
 
             let gemini_token = match get_gemini_auth_token() {
                 Some(token) => token,
@@ -350,136 +341,58 @@ pub fn run_rig_agent_stream(
                 }
             };
 
-            // Create Gemini OAuth client
-            let client = match GeminiOAuthClient::new(&gemini_token) {
-                Ok(c) => c,
+            let client = GeminiCodeAssistClient::new(&gemini_token);
+
+            let mut contents: Vec<CodeAssistContent> = Vec::new();
+            if !system_prompt.is_empty() {
+                let system_prefix = format!(
+                    "<system>\n{}\n</system>\n\nUser provided conversation begins here:",
+                    system_prompt
+                );
+                contents.push(CodeAssistContent::user(&system_prefix));
+            }
+            for msg in gemini_history {
+                match msg.role {
+                    MessageRole::User => contents.push(CodeAssistContent::user(&msg.content)),
+                    MessageRole::Assistant => contents.push(CodeAssistContent::model(&msg.content)),
+                    _ => {}
+                }
+            }
+            contents.push(CodeAssistContent::user(&user_message));
+            tracing::debug!(
+                "Gemini Code Assist payload: system_prompt_len={}, contents_len={}",
+                system_prompt.len(),
+                contents.len()
+            );
+
+            let stream = match client
+                .stream_generate_content(&model_name, &system_prompt, &contents)
+                .await
+            {
+                Ok(s) => s,
                 Err(e) => {
-                    // Provide more helpful error for scope issues
-                    let error_str = e.to_string();
-                    if error_str.contains("SCOPE_INSUFFICIENT") || error_str.contains("403") {
-                        yield Message::StreamError(
-                            "Gemini OAuth has limited API access. The gemini-cli OAuth credentials only work with \
-                             Google Cloud Code Assist API, not the standard Generative Language API used by this client. \
-                             \n\nOptions:\n\
-                             • Use Claude or ChatGPT instead (full OAuth support)\n\
-                             • Use a Gemini API key from https://aistudio.google.com/ (not yet supported)".to_string()
-                        );
-                    } else {
-                        yield Message::StreamError(format!("Failed to create Gemini client: {}", e));
-                    }
+                    yield Message::StreamError(format!("Gemini Code Assist error: {}", e));
                     return;
                 }
             };
 
-            // Get completion model
-            let model = client.completion_model(&model_name);
-
-            // Create tools
-            let (shell, read_file, list_files, edit_file, grep, write_file) =
-                ticca_core::tools::create_tools(tool_context);
-
-            // Create agent using AgentBuilder
-            let agent = AgentBuilder::new(model)
-                .preamble(&system_prompt)
-                .tool(shell)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(grep)
-                .tool(write_file)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .build();
-
-            // Stream the response
-            use rig::agent::MultiTurnStreamItem;
-            use rig::streaming::StreamingPrompt;
-            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
-
-            let mut stream = agent
-                .stream_prompt("")
-                .with_history(full_history.clone())
-                .multi_turn(max_tool_rounds as usize)
-                .await;
-
-            let mut chunk_count = 0u32;
+            futures::pin_mut!(stream);
             while let Some(chunk_result) = stream.next().await {
-                chunk_count += 1;
                 match chunk_result {
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Text(text_chunk),
-                    )) => {
-                        if !text_chunk.text.is_empty() {
-                            tracing::trace!("Claude text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
-                            yield Message::StreamChunk(text_chunk.text);
-                        }
-                    }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Reasoning(reasoning),
-                    )) => {
-                        let text = reasoning.reasoning.join("");
+                    Ok(text) => {
                         if !text.is_empty() {
-                            tracing::debug!("Claude reasoning chunk #{}: {} chars", chunk_count, text.len());
-                            yield Message::Reasoning(text);
+                            tracing::debug!("Gemini Code Assist UI chunk: {} chars", text.len());
+                            yield Message::StreamChunk(text);
                         }
-                    }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::ToolCall(tool_call),
-                    )) => {
-                        tracing::debug!("Claude tool call #{}: {}", chunk_count, tool_call.function.name);
-                        let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
-                            .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
-                        yield Message::ToolCall {
-                            name: tool_call.function.name.clone(),
-                            args: args_str,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::StreamUserItem(
-                        StreamedUserContent::ToolResult(tool_result),
-                    )) => {
-                        tracing::debug!("Claude tool result #{}: {}", chunk_count, tool_result.id);
-                        let result_text = tool_result
-                            .content
-                            .iter()
-                            .map(|c| match c {
-                                rig::message::ToolResultContent::Text(t) => t.text.clone(),
-                                _ => "[non-text content]".to_string(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        yield Message::ToolResult {
-                            name: tool_result.id.clone(),
-                            result: result_text,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                        tracing::debug!("Gemini received FinalResponse #{}", chunk_count);
-                    }
-                    Ok(other) => {
-                        tracing::debug!("Gemini other stream item #{}: {:?}", chunk_count, std::any::type_name_of_val(&other));
                     }
                     Err(e) => {
-                        tracing::error!("Gemini stream error #{}: {}", chunk_count, e);
-                        // Check for scope/permission errors and provide helpful message
-                        let error_str = e.to_string();
-                        if error_str.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT") 
-                            || error_str.contains("PERMISSION_DENIED")
-                            || error_str.contains("403") {
-                            yield Message::StreamError(
-                                "Gemini OAuth has limited API access. The gemini-cli OAuth credentials only work with \
-                                 Google Cloud Code Assist API, not the standard Generative Language API used by this client. \
-                                 \n\nOptions:\n\
-                                 • Use Claude or ChatGPT instead (full OAuth support)\n\
-                                 • Use a Gemini API key from https://aistudio.google.com/ (not yet supported)".to_string()
-                            );
-                        } else {
-                            yield Message::StreamError(format!("Stream error: {}", e));
-                        }
+                        tracing::error!("Gemini Code Assist stream error: {}", e);
+                        yield Message::StreamError(format!("Gemini Code Assist stream error: {}", e));
                         return;
                     }
                 }
             }
-            tracing::debug!("Gemini stream finished after {} chunks", chunk_count);
+            tracing::debug!("Gemini Code Assist stream finished");
         } else {
             // Use Claude/Anthropic backend (default)
             tracing::info!("Using Claude backend for model: {}", model_name);

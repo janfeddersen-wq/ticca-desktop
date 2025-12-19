@@ -263,7 +263,7 @@ impl TiccaApp {
                 let max_tool_rounds = self.max_tool_rounds;
                 // Build conversation history (exclude the last user message we just added)
                 let history: Vec<_> = self.messages.iter()
-                    .take(self.messages.len().saturating_sub(1)) // Exclude the message we just added
+                    .take(self.messages.len().saturating_sub(2)) // Exclude the user message + streaming placeholder
                     .filter(|m| !m.is_streaming) // Exclude streaming messages
                     .cloned()
                     .collect();

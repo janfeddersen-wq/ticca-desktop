@@ -13,11 +13,13 @@
 pub mod claude;
 pub mod chatgpt;
 pub mod gemini;
+pub mod gemini_code_assist;
 pub mod common;
 pub mod http_wrapper;
 
 pub use claude::ClaudeOAuthClient;
 pub use chatgpt::ChatGptOAuthClient;
 pub use gemini::GeminiOAuthClient;
+pub use gemini_code_assist::{CodeAssistContent, GeminiCodeAssistClient};
 pub use common::{OAuthProviderError, ProviderConfig};
 pub use http_wrapper::{OAuthHttpClient, CodexHttpClient};

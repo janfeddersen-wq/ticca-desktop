@@ -75,22 +75,12 @@ const GEMINI_REDIRECT_PATH: &str = "callback";
 const DEFAULT_PORT_RANGE: (u16, u16) = (52501, 52600);
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
-/// Hardcoded Gemini models for fallback when API fetch fails
-/// Models based on rig-core gemini completion constants and Google's public API
+/// Hardcoded Gemini models for OAuth (match LLXPRT/Gemini CLI behavior)
 const GEMINI_MODELS: &[&str] = &[
-    // Gemini 2.5 series (latest)
-    "gemini-2.5-pro-preview-06-05",
-    "gemini-2.5-flash-preview-05-20",
+    "gemini-2.5-pro",
     "gemini-2.5-flash",
-    // Gemini 2.0 series
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    // Gemini 1.5 series
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    // Legacy
-    "gemini-pro",
+    "gemini-2.5-flash-lite",
+    "gemini-3-pro-preview",
 ];
 
 /// Model information for Gemini
@@ -316,44 +306,13 @@ impl GeminiOAuth {
     
     /// Fetch available Gemini models
     /// 
-    /// Tries to fetch models from the Code Assist API first, falls back to hardcoded
-    /// models if the API is unavailable or returns an error.
+    /// For OAuth, Gemini CLI only supports Code Assist; use the fixed model list
+    /// (llxprt behavior). Dynamic listing is for API key / Vertex providers.
     pub async fn fetch_models(&self, access_token: &str, project_id: Option<&str>) -> OAuthResult<Vec<GeminiModel>> {
-        // Try Code Assist API if project_id is provided
-        if let Some(project_id) = project_id {
-            let url = format!(
-                "{}/v1/projects/{}/locations/global/codeAssistModels",
-                self.config.api_base_url, project_id
-            );
-            
-            let response = self.client
-                .get(&url)
-                .header("Authorization", format!("Bearer {}", access_token))
-                .send()
-                .await
-                .map_err(OAuthError::HttpError)?;
-            
-            if response.status().is_success() {
-                #[derive(Deserialize)]
-                struct ModelsResponse {
-                    #[serde(default)]
-                    models: Vec<GeminiModel>,
-                }
-                
-                if let Ok(models_response) = response.json::<ModelsResponse>().await {
-                    if !models_response.models.is_empty() {
-                        tracing::info!("Fetched {} models from Code Assist API", models_response.models.len());
-                        return Ok(models_response.models);
-                    }
-                }
-            } else {
-                let status = response.status();
-                tracing::warn!("Code Assist API returned {}, using fallback models", status);
-            }
-        }
-        
-        // Fallback to hardcoded models
-        tracing::info!("Using hardcoded Gemini models");
+        let _ = access_token;
+        let _ = project_id;
+
+        tracing::info!("Using hardcoded Gemini models for OAuth");
         let models: Vec<GeminiModel> = GEMINI_MODELS
             .iter()
             .map(|name| GeminiModel {
@@ -367,6 +326,8 @@ impl GeminiOAuth {
         
         Ok(models)
     }
+
+    // OAuth model listing is fixed; dynamic listing lives in API key / Vertex providers.
     
     /// Validate an access token
     pub async fn validate_token(&self, access_token: &str) -> OAuthResult<bool> {

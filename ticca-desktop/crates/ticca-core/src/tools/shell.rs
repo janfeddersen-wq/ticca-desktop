@@ -241,9 +241,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_shell_with_cwd() {
-        let result = shell_impl("pwd", Some("/tmp"), 10).await.unwrap();
+        let temp_dir = std::env::temp_dir();
+        let temp_str = temp_dir.to_string_lossy();
+        let result = shell_impl("pwd", Some(&temp_str), 10).await.unwrap();
         assert!(result.success);
-        assert!(result.content.contains("/tmp"));
+        let normalized = temp_str.replace('\\', "/");
+        assert!(result.content.contains(&normalized) || result.content.contains(&temp_str));
     }
 
     #[tokio::test]
