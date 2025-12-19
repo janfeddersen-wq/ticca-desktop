@@ -3,8 +3,10 @@
 //! Handles OAuth flows for various LLM providers.
 
 use ticca_core::config::ConfigDatabase;
+use ticca_core::config::OAuthAccount;
 use ticca_core::OAuthToken;
 use ticca_oauth::{ClaudeOAuth, ChatGptOAuth, GeminiOAuth};
+use uuid::Uuid;
 
 use crate::messages::OAuthProvider;
 
@@ -34,6 +36,21 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                                 None => token,
                             };
                             let _ = db.upsert_oauth_token(&token);
+
+                            let mut account = OAuthAccount::new(
+                                Uuid::new_v4().to_string(),
+                                "claude",
+                                &token_response.access_token,
+                            )
+                            .with_refresh_token(token_response.refresh_token.clone().unwrap_or_default());
+                            if let Some(expires_at) = token_response.expires_at_rfc3339() {
+                                account = account.with_expires_at(expires_at);
+                            }
+                            let account = match token_response.scope.clone() {
+                                Some(scope) => account.with_scope(scope),
+                                None => account,
+                            };
+                            let _ = db.upsert_oauth_account(&account);
                         }
                         Ok(())
                     }
@@ -59,6 +76,21 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                                 None => token,
                             };
                             let _ = db.upsert_oauth_token(&token);
+
+                            let mut account = OAuthAccount::new(
+                                Uuid::new_v4().to_string(),
+                                "gemini",
+                                &token_response.access_token,
+                            )
+                            .with_refresh_token(token_response.refresh_token.clone().unwrap_or_default());
+                            if let Some(expires_at) = token_response.expires_at_rfc3339() {
+                                account = account.with_expires_at(expires_at);
+                            }
+                            let account = match token_response.scope.clone() {
+                                Some(scope) => account.with_scope(scope),
+                                None => account,
+                            };
+                            let _ = db.upsert_oauth_account(&account);
                         }
                         Ok(())
                     }
@@ -89,6 +121,24 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                                 token = token.with_extra(extra_json);
                             }
                             let _ = db.upsert_oauth_token(&token);
+
+                            let mut account = OAuthAccount::new(
+                                Uuid::new_v4().to_string(),
+                                "chatgpt",
+                                &token_response.access_token,
+                            )
+                            .with_refresh_token(token_response.refresh_token.clone().unwrap_or_default());
+                            if let Some(expires_at) = token_response.expires_at_rfc3339() {
+                                account = account.with_expires_at(expires_at);
+                            }
+                            if let Some(scope) = token_response.scope.clone() {
+                                account = account.with_scope(scope);
+                            }
+                            if let Some(extra_json) = token_response.id_token() {
+                                let extra_json = serde_json::json!({"id_token": extra_json}).to_string();
+                                account = account.with_extra(extra_json);
+                            }
+                            let _ = db.upsert_oauth_account(&account);
                         }
                         Ok(())
                     }

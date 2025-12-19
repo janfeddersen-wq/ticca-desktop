@@ -16,6 +16,7 @@ impl Agent for CodingAgent {
             "read_file",
             "grep",
             "edit_file",
+            "delete_file",
             "write_file",
             "shell",
         ]
@@ -48,11 +49,14 @@ Modify an existing file by replacing text. The old_text must match exactly.
 - `old_text` (string, required): Exact text to find and replace
 - `new_text` (string, required): Replacement text
 
+### delete_file
+Delete an existing file.
+- `path` (string, required): Path to the file
+
 ### grep
 Search for text patterns in files using regex.
-- `pattern` (string, required): Regex pattern to search for
-- `path` (string, optional): Directory or file to search, defaults to project root
-- `case_insensitive` (boolean, optional): Case-insensitive search, defaults to false
+- `search_string` (string, required): Regex pattern to search for
+- `directory` (string, optional): Directory or file to search, defaults to project root
 
 ### shell
 Execute shell commands.
@@ -84,6 +88,7 @@ mod tests {
         assert!(agent.can_use_tool("list_files"));
         assert!(agent.can_use_tool("read_file"));
         assert!(agent.can_use_tool("edit_file"));
+        assert!(agent.can_use_tool("delete_file"));
         assert!(agent.can_use_tool("write_file"));
         assert!(agent.can_use_tool("shell"));
     }
@@ -118,9 +123,10 @@ mod tests {
         assert!(tools.contains(&"read_file"));
         assert!(tools.contains(&"grep"));
         assert!(tools.contains(&"edit_file"));
+        assert!(tools.contains(&"delete_file"));
         assert!(tools.contains(&"write_file"));
         assert!(tools.contains(&"shell"));
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
     }
 
     #[test]
@@ -133,6 +139,7 @@ mod tests {
         assert!(prompt.contains("### read_file"));
         assert!(prompt.contains("### write_file"));
         assert!(prompt.contains("### edit_file"));
+        assert!(prompt.contains("### delete_file"));
         assert!(prompt.contains("### grep"));
         assert!(prompt.contains("### shell"));
     }

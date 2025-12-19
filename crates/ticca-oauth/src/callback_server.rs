@@ -7,78 +7,167 @@ use crate::common::{OAuthError, OAuthResult};
 
 /// HTML response page for successful auth
 const SUCCESS_HTML: &str = r#"<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Authorization Complete</title>
     <style>
+        :root {
+            color-scheme: light;
+        }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
+            font-family: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             margin: 0;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #e0e0e0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            background: radial-gradient(circle at top, #f6f7fb 0%, #e8ebf3 60%, #dde2ee 100%);
+            color: #1f2937;
         }
-        .container {
-            text-align: center;
-            padding: 40px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        .card {
+            width: min(520px, 92vw);
+            background: #ffffff;
+            border-radius: 20px;
+            padding: 36px 40px;
+            box-shadow: 0 20px 50px rgba(31, 41, 55, 0.15);
+            border: 1px solid #e5e7eb;
         }
-        h1 { color: #4ade80; margin-bottom: 16px; }
-        p { color: #a0a0a0; }
-        .icon { font-size: 64px; margin-bottom: 20px; }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: #ecfdf3;
+            color: #15803d;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        h1 {
+            margin: 18px 0 8px;
+            font-size: 24px;
+        }
+        p {
+            margin: 0;
+            color: #4b5563;
+            line-height: 1.5;
+        }
+        .hint {
+            margin-top: 18px;
+            font-size: 13px;
+            color: #6b7280;
+        }
+        .actions {
+            margin-top: 22px;
+            display: inline-flex;
+            gap: 10px;
+        }
+        .button {
+            background: #111827;
+            color: #ffffff;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .secondary {
+            background: #f3f4f6;
+            color: #111827;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="icon">✅</div>
-        <h1>Authorization Complete!</h1>
-        <p>You can close this window and return to Ticca Desktop.</p>
+    <div class="card">
+        <div class="badge">Authorization Complete</div>
+        <h1>You're all set.</h1>
+        <p>The account is connected successfully. You can return to Ticca Desktop now.</p>
+        <div class="actions">
+            <span class="button">Done</span>
+            <span class="button secondary">Close this tab</span>
+        </div>
+        <div class="hint">This window can be closed safely.</div>
     </div>
 </body>
 </html>"#;
 
 /// HTML response page for errors
 const ERROR_HTML: &str = r#"<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Authorization Failed</title>
     <style>
+        :root {
+            color-scheme: light;
+        }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
+            font-family: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             margin: 0;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #e0e0e0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            background: radial-gradient(circle at top, #fff5f5 0%, #fde8e8 60%, #fbd5d5 100%);
+            color: #1f2937;
         }
-        .container {
-            text-align: center;
-            padding: 40px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        .card {
+            width: min(520px, 92vw);
+            background: #ffffff;
+            border-radius: 20px;
+            padding: 36px 40px;
+            box-shadow: 0 20px 50px rgba(127, 29, 29, 0.12);
+            border: 1px solid #fee2e2;
         }
-        h1 { color: #f87171; margin-bottom: 16px; }
-        p { color: #a0a0a0; }
-        .icon { font-size: 64px; margin-bottom: 20px; }
-        .error { color: #ef4444; font-family: monospace; margin-top: 16px; }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: #fef2f2;
+            color: #b91c1c;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        h1 {
+            margin: 18px 0 8px;
+            font-size: 24px;
+        }
+        p {
+            margin: 0;
+            color: #4b5563;
+            line-height: 1.5;
+        }
+        .error {
+            margin-top: 14px;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .hint {
+            margin-top: 18px;
+            font-size: 13px;
+            color: #6b7280;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="icon">❌</div>
-        <h1>Authorization Failed</h1>
-        <p>Something went wrong during authorization.</p>
-        <p class="error">ERROR_MESSAGE</p>
+    <div class="card">
+        <div class="badge">Authorization Failed</div>
+        <h1>We couldn't complete the request.</h1>
+        <p>Please return to Ticca Desktop and try again.</p>
+        <div class="error">ERROR_MESSAGE</div>
+        <div class="hint">If this persists, check your network connection or provider status.</div>
     </div>
 </body>
 </html>"#;

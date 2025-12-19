@@ -1,11 +1,11 @@
 //! File operation tools: list_files, read_file
 
-use crate::tools::registry::{ToolDefinition, ToolParameterSchema, ToolResult, ToolExecutor};
+use crate::tools::registry::{ToolDefinition, ToolResult, ToolExecutor};
+use crate::tools::spec;
 use anyhow::Result;
 use ignore::WalkBuilder;
 use serde::Serialize;
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -311,22 +311,11 @@ pub fn read_file_impl(file_path: &str, start_line: Option<usize>, num_lines: Opt
 
 /// Get list_files tool definition
 pub fn list_files_definition() -> ToolDefinition {
-    let mut params = HashMap::new();
-    params.insert(
-        "directory".to_string(),
-        ToolParameterSchema::string("Path to the directory to list. Defaults to current directory.")
-            .with_default(json!(".")),
-    );
-    params.insert(
-        "recursive".to_string(),
-        ToolParameterSchema::boolean("Whether to recursively list subdirectories. Defaults to true.")
-            .with_default(json!(true)),
-    );
-    
+    let spec = spec::list_files_spec();
     ToolDefinition {
-        name: "list_files".to_string(),
-        description: "List files and directories with intelligent filtering. Automatically ignores common build artifacts, caches, and other noise.".to_string(),
-        parameters: ToolParameterSchema::object(params, vec![]),
+        name: spec.name.to_string(),
+        description: spec.description.to_string(),
+        parameters: spec.registry_parameters,
     }
 }
 
@@ -348,26 +337,11 @@ pub fn list_files_executor() -> ToolExecutor {
 
 /// Get read_file tool definition
 pub fn read_file_definition() -> ToolDefinition {
-    let mut params = HashMap::new();
-    params.insert(
-        "file_path".to_string(),
-        ToolParameterSchema::string("Path to the file to read."),
-    );
-    params.insert(
-        "start_line".to_string(),
-        ToolParameterSchema::integer("Starting line number (1-based). Optional.")
-            .with_default(json!(null)),
-    );
-    params.insert(
-        "num_lines".to_string(),
-        ToolParameterSchema::integer("Number of lines to read from start_line. Required if start_line is set.")
-            .with_default(json!(null)),
-    );
-    
+    let spec = spec::read_file_spec();
     ToolDefinition {
-        name: "read_file".to_string(),
-        description: "Read file contents with optional line-range selection.".to_string(),
-        parameters: ToolParameterSchema::object(params, vec!["file_path".to_string()]),
+        name: spec.name.to_string(),
+        description: spec.description.to_string(),
+        parameters: spec.registry_parameters,
     }
 }
 
@@ -375,9 +349,10 @@ pub fn read_file_definition() -> ToolDefinition {
 pub fn read_file_executor() -> ToolExecutor {
     Arc::new(|params: Value| {
         Box::pin(async move {
-            let file_path = params.get("file_path")
+            let file_path = params.get("path")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("file_path is required"))?;
+                .or_else(|| params.get("file_path").and_then(|v| v.as_str()))
+                .ok_or_else(|| anyhow::anyhow!("path is required"))?;
             
             let start_line = params.get("start_line")
                 .and_then(|v| v.as_u64())

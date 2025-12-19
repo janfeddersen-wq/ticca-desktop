@@ -34,9 +34,13 @@
 
 pub mod claude;
 pub mod providers;
+pub mod auth;
+pub mod provider_registry;
+pub mod model_service;
 
 use crate::config::ConfigDatabase;
 use crate::config::models::providers as provider_names;
+use crate::llm::auth as account_auth;
 
 // Re-export legacy Claude client for model fetching
 pub use claude::ClaudeClient;
@@ -48,45 +52,25 @@ pub use providers::{
     GeminiOAuthClient,
     OAuthProviderError,
 };
+pub use provider_registry::{ProviderId, ProviderRegistry, ProviderCapabilities, ProviderInfo};
+pub use model_service::ModelService;
 
 /// Get a Claude client if we have valid credentials
 pub fn get_claude_client() -> Option<ClaudeClient> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(provider_names::CLAUDE).ok()??;
-
-    // Check if token is expired
-    if token.is_expired() {
-        tracing::warn!("Claude OAuth token is expired, need to refresh or re-authenticate");
-        return None;
-    }
-
+    let token = account_auth::select_token(provider_names::CLAUDE)?;
     Some(ClaudeClient::new(token.access_token))
 }
 
 /// Get a Claude client with a specific model
 pub fn get_claude_client_with_model(model: &str) -> Option<ClaudeClient> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(provider_names::CLAUDE).ok()??;
-
-    // Check if token is expired
-    if token.is_expired() {
-        tracing::warn!("Claude OAuth token is expired, need to refresh or re-authenticate");
-        return None;
-    }
-
+    let token = account_auth::select_token(provider_names::CLAUDE)?;
     Some(ClaudeClient::with_model(token.access_token, model))
 }
 
 /// Get a Claude client for a specific agent type (uses pinned model if set)
 pub fn get_claude_client_for_agent(agent_type: &str) -> Option<ClaudeClient> {
     let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(provider_names::CLAUDE).ok()??;
-
-    // Check if token is expired
-    if token.is_expired() {
-        tracing::warn!("Claude OAuth token is expired, need to refresh or re-authenticate");
-        return None;
-    }
+    let token = account_auth::select_token(provider_names::CLAUDE)?;
 
     // Check for pinned model
     let model = db.get_agent_pinned_model(agent_type).ok().flatten();
@@ -99,7 +83,7 @@ pub fn get_claude_client_for_agent(agent_type: &str) -> Option<ClaudeClient> {
 
 /// Check if we have valid Claude credentials
 pub fn has_claude_credentials() -> bool {
-    get_claude_client().is_some()
+    account_auth::has_valid_account(provider_names::CLAUDE)
 }
 
 // =============================================================================
@@ -108,46 +92,19 @@ pub fn has_claude_credentials() -> bool {
 
 /// Get a Claude OAuth client if we have valid credentials
 pub fn get_claude_oauth_client() -> Option<ClaudeOAuthClient> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(provider_names::CLAUDE).ok()??;
-
-    if token.is_expired() {
-        tracing::warn!("Claude OAuth token is expired");
-        return None;
-    }
-
+    let token = account_auth::select_token(provider_names::CLAUDE)?;
     ClaudeOAuthClient::new(token.access_token).ok()
 }
 
 /// Get a ChatGPT OAuth client if we have valid credentials
 pub fn get_chatgpt_oauth_client() -> Option<ChatGptOAuthClient> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(provider_names::CHATGPT).ok()??;
-
-    if token.is_expired() {
-        tracing::warn!("ChatGPT OAuth token is expired");
-        return None;
-    }
-
-    // Extract id_token from extra_json
-    let id_token = token.extra_json.as_ref().and_then(|json_str| {
-        serde_json::from_str::<serde_json::Value>(json_str)
-            .ok()
-            .and_then(|v| v.get("id_token").and_then(|t| t.as_str()).map(|s| s.to_string()))
-    })?;
-
+    let token = account_auth::select_token(provider_names::CHATGPT)?;
+    let id_token = token.id_token?;
     ChatGptOAuthClient::from_tokens(token.access_token, &id_token).ok()
 }
 
 /// Get a Gemini OAuth client if we have valid credentials
 pub fn get_gemini_oauth_client() -> Option<GeminiOAuthClient> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(provider_names::GEMINI).ok()??;
-
-    if token.is_expired() {
-        tracing::warn!("Gemini OAuth token is expired");
-        return None;
-    }
-
+    let token = account_auth::select_token(provider_names::GEMINI)?;
     GeminiOAuthClient::new(token.access_token).ok()
 }

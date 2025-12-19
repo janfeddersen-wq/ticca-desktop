@@ -36,9 +36,8 @@ Read file contents.
 
 ### grep
 Search for text patterns in files using regex.
-- `pattern` (string, required): Regex pattern to search for
-- `path` (string, optional): Directory or file to search, defaults to project root
-- `case_insensitive` (boolean, optional): Case-insensitive search, defaults to false
+- `search_string` (string, required): Regex pattern to search for
+- `directory` (string, optional): Directory or file to search, defaults to project root
 
 ## Planning Process
 

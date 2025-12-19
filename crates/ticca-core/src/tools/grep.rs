@@ -1,13 +1,13 @@
 //! Grep tool using ripgrep libraries
 
-use crate::tools::registry::{ToolDefinition, ToolParameterSchema, ToolResult, ToolExecutor};
+use crate::tools::registry::{ToolDefinition, ToolResult, ToolExecutor};
+use crate::tools::spec;
 use anyhow::Result;
 use grep_regex::RegexMatcher;
 use grep_searcher::{Searcher, Sink, SinkMatch};
 use ignore::WalkBuilder;
 use serde::Serialize;
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::Value;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -196,27 +196,15 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
 
 /// Get grep tool definition
 pub fn grep_definition() -> ToolDefinition {
-    let mut params = HashMap::new();
-    params.insert(
-        "search_string".to_string(),
-        ToolParameterSchema::string(
-            "The text pattern to search for. Supports regex. Can include ripgrep flags like '--ignore-case' or '-i' at the start."
-        ),
-    );
-    params.insert(
-        "directory".to_string(),
-        ToolParameterSchema::string("Root directory to search in. Defaults to current directory.")
-            .with_default(json!(".")),
-    );
-
+    let spec = spec::grep_spec(MAX_MATCHES);
     ToolDefinition {
-        name: "grep".to_string(),
+        name: spec.name.to_string(),
         description: format!(
-            "Recursively search for text patterns across files using ripgrep. \
-            Returns up to {} matches with file path, line number, and content.",
+            "{} Returns up to {} matches with file path, line number, and content.",
+            spec.description,
             MAX_MATCHES
         ),
-        parameters: ToolParameterSchema::object(params, vec!["search_string".to_string()]),
+        parameters: spec.registry_parameters,
     }
 }
 

@@ -6,10 +6,11 @@ use iced::{Border, Color, Element, Length};
 use std::collections::HashMap;
 
 use crate::material_icons::{icon, icons};
-use crate::messages::{Message, OAuthProvider};
+use crate::messages::{Message, OAuthProvider, SettingsTab};
 use crate::theme::{styles, AppTheme};
 
 use ticca_core::agents::AgentType;
+use ticca_core::config::{ConfigDatabase, OAuthAccount};
 use ticca_core::session::SessionDatabase;
 
 /// Create horizontal space that fills available width (iced 0.14 helper)
@@ -33,6 +34,8 @@ pub fn view<'a>(
     agent_pinned_models: &'a HashMap<AgentType, String>,
     is_loading_models: bool,
     auth_status: &ProviderAuthStatus,
+    yolo_mode_enabled: bool,
+    active_tab: SettingsTab,
 ) -> Element<'a, Message> {
     let header = row![
         button(
@@ -51,6 +54,8 @@ pub fn view<'a>(
     .padding(10)
     .align_y(iced::Alignment::Center);
 
+    let tabs = build_tabs(active_tab);
+
     // Theme selector with all available themes
     let theme_options: Vec<AppTheme> = vec![
         AppTheme::Dark,
@@ -68,7 +73,7 @@ pub fn view<'a>(
 
     let theme_icon = if theme.is_dark() { icons::DARK_MODE } else { icons::LIGHT_MODE };
 
-    let appearance = container(
+    let appearance: Element<Message> = container(
         column![
             text("Appearance").size(18),
             row![
@@ -87,65 +92,32 @@ pub fn view<'a>(
         .spacing(15)
     )
     .padding(20)
-    .style(styles::card_container);
+    .style(styles::card_container)
+    .into();
 
-    // Helper to create OAuth button with auth status indicator
-    let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
-        let auth_icon = if is_authenticated {
-            icons::CHECK_CIRCLE
-        } else {
-            icons::VPN_KEY
-        };
-        let style_fn = if is_authenticated {
-            styles::success_button
-        } else {
-            styles::secondary_button
-        };
-        button(
-            row![
-                icon(auth_icon).size(16),
-                text(format!(" {}", label)).size(14),
-            ]
-            .spacing(4)
-        )
-        .on_press(Message::StartOAuth(provider))
-        .style(style_fn)
-        .padding([8, 12])
-    };
-
-    let oauth_settings = container(
-        column![
-            text("Authentication").size(18),
-            row![
-                oauth_button(OAuthProvider::Claude, "Claude", auth_status.claude),
-                oauth_button(OAuthProvider::Gemini, "Gemini", auth_status.gemini),
-                oauth_button(OAuthProvider::ChatGpt, "ChatGPT", auth_status.chatgpt),
-            ]
-            .spacing(8),
-        ]
-        .spacing(15)
-    )
-    .padding(20)
-    .style(styles::card_container);
-
-    // Model selection section
     let model_settings = build_model_settings_section(
         available_models,
         default_model,
         agent_pinned_models,
         is_loading_models,
     );
-
-    // Load recent sessions
+    let tools_section = build_tools_section(yolo_mode_enabled);
     let sessions_section = build_sessions_section();
+    let accounts_section = build_accounts_section(auth_status);
+
+    let content = match active_tab {
+        SettingsTab::Accounts => accounts_section,
+        SettingsTab::Models => model_settings,
+        SettingsTab::Tools => tools_section,
+        SettingsTab::Appearance => appearance,
+        SettingsTab::Sessions => sessions_section,
+    };
 
     scrollable(
         column![
             header,
-            appearance,
-            oauth_settings,
-            model_settings,
-            sessions_section,
+            tabs,
+            content,
         ]
         .spacing(16)
         .padding(10)
@@ -303,6 +275,213 @@ fn build_model_settings_section<'a>(
     .into()
 }
 
+fn build_tabs(active: SettingsTab) -> Element<'static, Message> {
+    let tab_button = |tab: SettingsTab, label: &str, tab_icon| {
+        let style = if tab == active {
+            styles::primary_button
+        } else {
+            styles::secondary_button
+        };
+
+        button(
+            row![
+                icon(tab_icon).size(14),
+                text(format!(" {}", label)).size(13),
+            ]
+            .spacing(4)
+        )
+        .on_press(Message::SwitchSettingsTab(tab))
+        .style(style)
+        .padding([6, 10])
+    };
+
+    row![
+        tab_button(SettingsTab::Accounts, "Accounts", icons::KEY),
+        tab_button(SettingsTab::Models, "Models", icons::TUNE),
+        tab_button(SettingsTab::Tools, "Tools & Safety", icons::SECURITY),
+        tab_button(SettingsTab::Appearance, "Appearance", icons::BRIGHTNESS_6),
+        tab_button(SettingsTab::Sessions, "Sessions", icons::FOLDER_OPEN),
+    ]
+    .spacing(8)
+    .into()
+}
+
+fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, Message> {
+    let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
+        let auth_icon = if is_authenticated {
+            icons::CHECK_CIRCLE
+        } else {
+            icons::VPN_KEY
+        };
+        let style_fn = if is_authenticated {
+            styles::success_button
+        } else {
+            styles::secondary_button
+        };
+        button(
+            row![
+                icon(auth_icon).size(16),
+                text(format!(" Add {}", label)).size(14),
+            ]
+            .spacing(4)
+        )
+        .on_press(Message::StartOAuth(provider))
+        .style(style_fn)
+        .padding([8, 12])
+    };
+
+    let db = ConfigDatabase::open().ok();
+    let claude_accounts = db
+        .as_ref()
+        .and_then(|db| db.list_oauth_accounts(Some("claude")).ok())
+        .unwrap_or_default();
+    let gemini_accounts = db
+        .as_ref()
+        .and_then(|db| db.list_oauth_accounts(Some("gemini")).ok())
+        .unwrap_or_default();
+    let chatgpt_accounts = db
+        .as_ref()
+        .and_then(|db| db.list_oauth_accounts(Some("chatgpt")).ok())
+        .unwrap_or_default();
+
+    let accounts_section = |label: &str, accounts: Vec<OAuthAccount>| -> Element<Message> {
+        let label = label.to_string();
+        let rows: Vec<Element<Message>> = if accounts.is_empty() {
+            vec![text("No accounts yet.").size(13).into()]
+        } else {
+            accounts
+                .into_iter()
+                .map(|account| {
+                    let status = if !account.is_active {
+                        "inactive"
+                    } else if account.is_expired() {
+                        "expired"
+                    } else if account.is_cooling() {
+                        "cooldown"
+                    } else {
+                        "ready"
+                    };
+
+                    let label_text = account
+                        .label
+                        .clone()
+                        .unwrap_or_else(|| format!("{}…", account.id.chars().take(8).collect::<String>()));
+
+                    let detail = account
+                        .cooldown_until
+                        .clone()
+                        .map(|until| format!("priority {} • {} • cooldown until {}", account.priority, status, until))
+                        .unwrap_or_else(|| format!("priority {} • {}", account.priority, status));
+
+                    container(
+                        row![
+                            column![
+                                text(label_text).size(14),
+                                text(detail).size(11),
+                            ]
+                            .spacing(2)
+                            .width(Length::Fill),
+                            row![
+                                button(
+                                    row![
+                                        icon(if account.is_active { icons::CHECK_CIRCLE } else { icons::CANCEL }).size(14),
+                                        text(if account.is_active { " Active" } else { " Disabled" }).size(12),
+                                    ]
+                                    .spacing(4)
+                                )
+                                .on_press(Message::ToggleOAuthAccountActive {
+                                    account_id: account.id.clone(),
+                                    is_active: !account.is_active,
+                                })
+                                .style(styles::secondary_button)
+                                .padding([6, 10]),
+                                button(
+                                    row![
+                                        icon(icons::ARROW_BACK).size(14),
+                                        text(" Priority -").size(12),
+                                    ]
+                                    .spacing(4)
+                                )
+                                .on_press(Message::AdjustOAuthAccountPriority {
+                                    account_id: account.id.clone(),
+                                    delta: -1,
+                                })
+                                .style(styles::secondary_button)
+                                .padding([6, 10]),
+                                button(
+                                    row![
+                                        icon(icons::ARROW_FORWARD).size(14),
+                                        text(" Priority +").size(12),
+                                    ]
+                                    .spacing(4)
+                                )
+                                .on_press(Message::AdjustOAuthAccountPriority {
+                                    account_id: account.id.clone(),
+                                    delta: 1,
+                                })
+                                .style(styles::secondary_button)
+                                .padding([6, 10]),
+                                button(
+                                    row![
+                                        icon(icons::REFRESH).size(14),
+                                        text(" Reset cooldown").size(12),
+                                    ]
+                                    .spacing(4)
+                                )
+                                .on_press(Message::ResetOAuthCooldown(account.id.clone()))
+                                .style(styles::secondary_button)
+                                .padding([6, 10]),
+                                button(
+                                    row![
+                                        icon(icons::DELETE).size(14),
+                                        text(" Remove").size(12),
+                                    ]
+                                    .spacing(4)
+                                )
+                                .on_press(Message::RemoveOAuthAccount(account.id))
+                                .style(styles::secondary_button)
+                                .padding([6, 10]),
+                            ]
+                            .spacing(6)
+                        ]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center)
+                    )
+                    .padding(8)
+                    .width(Length::Fill)
+                    .into()
+                })
+                .collect()
+        };
+
+        column![
+            text(label).size(16),
+            Column::with_children(rows).spacing(4),
+        ]
+        .spacing(8)
+        .into()
+    };
+
+    container(
+        column![
+            text("Accounts").size(18),
+            row![
+                oauth_button(OAuthProvider::Claude, "Claude", auth_status.claude),
+                oauth_button(OAuthProvider::Gemini, "Gemini", auth_status.gemini),
+                oauth_button(OAuthProvider::ChatGpt, "ChatGPT", auth_status.chatgpt),
+            ]
+            .spacing(8),
+            accounts_section("Claude Accounts", claude_accounts),
+            accounts_section("Gemini Accounts", gemini_accounts),
+            accounts_section("ChatGPT Accounts", chatgpt_accounts),
+        ]
+        .spacing(12)
+    )
+    .padding(20)
+    .style(styles::card_container)
+    .into()
+}
+
 /// Option type for agent model picker
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ModelOption {
@@ -317,6 +496,48 @@ impl std::fmt::Display for ModelOption {
             ModelOption::Model(name) => write!(f, "{}", name),
         }
     }
+}
+
+fn build_tools_section(yolo_mode_enabled: bool) -> Element<'static, Message> {
+    let status_label = if yolo_mode_enabled {
+        "On (no prompts)"
+    } else {
+        "Off (ask first)"
+    };
+
+    let status_button = if yolo_mode_enabled {
+        button(text(status_label).size(12))
+            .on_press(Message::SetYoloMode(!yolo_mode_enabled))
+            .style(styles::success_button)
+            .padding([6, 10])
+    } else {
+        button(text(status_label).size(12))
+            .on_press(Message::SetYoloMode(!yolo_mode_enabled))
+            .style(styles::secondary_button)
+            .padding([6, 10])
+    };
+
+    container(
+        column![
+            text("Tools & Safety").size(18),
+            row![
+                icon(icons::SECURITY).size(16),
+                text("Yolo Mode:").size(14).width(Length::Fixed(120.0)),
+                status_button,
+                text("Require approval for edit/delete/shell when Off.")
+                    .size(12)
+                    .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(120, 120, 120)),
+                    }),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(12)
+    )
+    .padding(20)
+    .style(styles::card_container)
+    .into()
 }
 
 /// Build the recent sessions section

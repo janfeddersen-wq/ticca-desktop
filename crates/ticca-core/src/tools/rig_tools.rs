@@ -13,12 +13,36 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ToolContext {
     pub working_directory: PathBuf,
+    pub approval_gate: Option<Arc<super::approval::ToolApprovalGate>>,
+    pub yolo_mode_enabled: bool,
 }
 
 impl Default for ToolContext {
     fn default() -> Self {
         Self {
             working_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            approval_gate: None,
+            yolo_mode_enabled: true,
+        }
+    }
+}
+
+impl ToolContext {
+    async fn require_approval(&self, tool_name: &str, args: String) -> Result<(), String> {
+        if self.yolo_mode_enabled {
+            return Ok(());
+        }
+
+        match &self.approval_gate {
+            Some(gate) => {
+                let approved = gate.request(tool_name, args).await;
+                if approved {
+                    Ok(())
+                } else {
+                    Err("Tool execution denied by user".to_string())
+                }
+            }
+            None => Err("Approval gate not available".to_string()),
         }
     }
 }
@@ -63,27 +87,11 @@ impl Tool for ShellTool {
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::shell_spec(60, 256);
         ToolDefinition {
-            name: "shell".to_string(),
-            description: "Execute a shell command. Use this to run builds, tests, git commands, or any CLI tool. Output is captured and returned.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute"
-                    },
-                    "cwd": {
-                        "type": "string",
-                        "description": "Working directory for command execution (optional, defaults to project root)"
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "Timeout in seconds (default: 60)"
-                    }
-                },
-                "required": ["command"]
-            }),
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
         }
     }
 
@@ -95,6 +103,15 @@ impl Tool for ShellTool {
                 .unwrap_or_else(|| ".".to_string())
         });
         let timeout = args.timeout.unwrap_or(60);
+
+        if let Some(context) = &self.context {
+            if let Err(e) = context
+                .require_approval("shell", format!("command={}", args.command))
+                .await
+            {
+                return Err(ShellError(e));
+            }
+        }
 
         let result = super::shell::shell_impl(&args.command, Some(&cwd), timeout)
             .await
@@ -152,27 +169,11 @@ impl Tool for ReadFileTool {
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::read_file_spec();
         ToolDefinition {
-            name: "read_file".to_string(),
-            description: "Read the contents of a file. Use start_line and num_lines to read specific portions of large files.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file (relative to project root or absolute)"
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "Starting line number (1-based, optional)"
-                    },
-                    "num_lines": {
-                        "type": "integer",
-                        "description": "Number of lines to read (optional)"
-                    }
-                },
-                "required": ["path"]
-            }),
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
         }
     }
 
@@ -249,23 +250,11 @@ impl Tool for ListFilesTool {
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::list_files_spec();
         ToolDefinition {
-            name: "list_files".to_string(),
-            description: "List files and directories. Use this to explore project structure and find files.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "directory": {
-                        "type": "string",
-                        "description": "Directory to list (relative to project root or absolute, defaults to project root)"
-                    },
-                    "recursive": {
-                        "type": "boolean",
-                        "description": "Whether to list recursively (default: false)"
-                    }
-                },
-                "required": []
-            }),
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
         }
     }
 
@@ -344,27 +333,11 @@ impl Tool for EditFileTool {
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::edit_file_spec();
         ToolDefinition {
-            name: "edit_file".to_string(),
-            description: "Edit a file by replacing specific text. The old_text must match exactly (including whitespace and indentation). Use read_file first to see the exact content.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to edit"
-                    },
-                    "old_text": {
-                        "type": "string",
-                        "description": "The exact text to find and replace (must match exactly)"
-                    },
-                    "new_text": {
-                        "type": "string",
-                        "description": "The new text to insert in place of old_text"
-                    }
-                },
-                "required": ["path", "old_text", "new_text"]
-            }),
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
         }
     }
 
@@ -414,6 +387,91 @@ impl Tool for EditFileTool {
 // Grep Tool
 // ============================================================================
 
+// ============================================================================
+// Delete File Tool
+// ============================================================================
+
+#[derive(Debug, thiserror::Error)]
+#[error("Delete file error: {0}")]
+pub struct DeleteFileError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteFileArgs {
+    /// Path to the file to delete
+    pub path: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DeleteFileTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl DeleteFileTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for DeleteFileTool {
+    const NAME: &'static str = "delete_file";
+
+    type Error = DeleteFileError;
+    type Args = DeleteFileArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::delete_file_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        if let Some(context) = &self.context {
+            if let Err(e) = context
+                .require_approval("delete_file", format!("path={}", args.path))
+                .await
+            {
+                return Err(DeleteFileError(e));
+            }
+        }
+
+        let base_path = self
+            .context
+            .as_ref()
+            .map(|c| c.working_directory.clone())
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let full_path = if PathBuf::from(&args.path).is_absolute() {
+            PathBuf::from(&args.path)
+        } else {
+            base_path.join(&args.path)
+        };
+
+        let path_str = full_path.to_string_lossy().to_string();
+
+        let result = tokio::task::spawn_blocking(move || {
+            super::file_mods::delete_file_impl(&path_str)
+        })
+        .await
+        .map_err(|e| DeleteFileError(format!("Task join error: {}", e)))?
+        .map_err(|e| DeleteFileError(e.to_string()))?;
+
+        if result.success {
+            Ok(result.content)
+        } else {
+            Err(DeleteFileError(
+                result.error.unwrap_or_else(|| "Unknown error".to_string()),
+            ))
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("Grep error: {0}")]
 pub struct GrepError(String);
@@ -421,9 +479,9 @@ pub struct GrepError(String);
 #[derive(Debug, Clone, Deserialize)]
 pub struct GrepArgs {
     /// The pattern to search for (regex supported)
-    pub pattern: String,
+    pub search_string: String,
     /// Directory or file to search in (defaults to project root)
-    pub path: Option<String>,
+    pub directory: Option<String>,
     /// Whether to search case-insensitively
     pub case_insensitive: Option<bool>,
 }
@@ -450,27 +508,11 @@ impl Tool for GrepTool {
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::grep_spec(200);
         ToolDefinition {
-            name: "grep".to_string(),
-            description: "Search for text patterns in files using regex. Returns matching lines with file paths and line numbers.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "The regex pattern to search for"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Directory or file to search in (defaults to project root)"
-                    },
-                    "case_insensitive": {
-                        "type": "boolean",
-                        "description": "Whether to search case-insensitively (default: false)"
-                    }
-                },
-                "required": ["pattern"]
-            }),
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
         }
     }
 
@@ -481,7 +523,7 @@ impl Tool for GrepTool {
             .map(|c| c.working_directory.clone())
             .unwrap_or_else(|| PathBuf::from("."));
 
-        let search_path = args.path.unwrap_or_else(|| ".".to_string());
+        let search_path = args.directory.unwrap_or_else(|| ".".to_string());
         let full_path = if PathBuf::from(&search_path).is_absolute() {
             PathBuf::from(&search_path)
         } else {
@@ -492,9 +534,9 @@ impl Tool for GrepTool {
 
         // Prepend -i flag if case insensitive
         let pattern = if args.case_insensitive.unwrap_or(false) {
-            format!("-i {}", args.pattern)
+            format!("-i {}", args.search_string)
         } else {
-            args.pattern
+            args.search_string
         };
 
         // Run synchronous grep in blocking task
@@ -553,23 +595,11 @@ impl Tool for WriteFileTool {
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::write_file_spec();
         ToolDefinition {
-            name: "write_file".to_string(),
-            description: "Write content to a file, creating it if it doesn't exist or overwriting if it does. Use edit_file for modifying existing files.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to write"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                    }
-                },
-                "required": ["path", "content"]
-            }),
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
         }
     }
 
@@ -611,6 +641,7 @@ pub fn create_tools(context: Arc<ToolContext>) -> (
     ReadFileTool,
     ListFilesTool,
     EditFileTool,
+    DeleteFileTool,
     GrepTool,
     WriteFileTool,
 ) {
@@ -619,6 +650,7 @@ pub fn create_tools(context: Arc<ToolContext>) -> (
         ReadFileTool::new(context.clone()),
         ListFilesTool::new(context.clone()),
         EditFileTool::new(context.clone()),
+        DeleteFileTool::new(context.clone()),
         GrepTool::new(context.clone()),
         WriteFileTool::new(context),
     )

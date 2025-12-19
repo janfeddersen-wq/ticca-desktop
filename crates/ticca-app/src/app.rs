@@ -2,16 +2,17 @@
 
 use iced::widget::{button, column, container, row, text, text_editor};
 use iced::widget::scrollable::AbsoluteOffset;
-use iced::{Element, Length, Subscription, Task, Theme, widget};
+use iced::{Element, Length, Subscription, Task, Theme, widget, Color};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use base64::Engine as _;
 
-use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType, get_agent};
+use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType, AgentProfile};
 use ticca_core::config::{ConfigDatabase, setting_keys};
-use ticca_core::llm;
+use ticca_core::llm::auth;
+use ticca_core::llm::{ProviderId, ProviderRegistry};
 use ticca_core::session::Session;
 use crate::oauth_handler;
 use crate::session_manager;
@@ -20,11 +21,14 @@ use crate::app_config::load_config;
 use crate::chat_message::ChatMessage;
 use crate::helpers::format_tool_call_oneliner;
 use crate::image_handler;
-use crate::llm_stream::{self, get_claude_auth_token, get_gemini_auth_token, get_chatgpt_auth_token, get_chatgpt_id_token};
+use crate::llm_stream;
 use crate::messages::{Message, ImageAttachment};
 use crate::theme::AppTheme;
 use crate::views::chat::CHAT_SCROLLABLE_ID;
 use crate::views::config::ProviderAuthStatus;
+use crate::messages::SettingsTab;
+
+use tokio::sync::mpsc;
 
 /// Main application state
 pub struct TiccaApp {
@@ -58,6 +62,15 @@ pub struct TiccaApp {
 
     // Agent configuration
     max_tool_rounds: u32,
+    yolo_mode_enabled: bool,
+
+    // Settings view state
+    settings_tab: SettingsTab,
+
+    // Tool approval flow
+    approval_tx: Option<mpsc::UnboundedSender<ticca_core::tools::ToolApprovalDecision>>,
+    pending_approvals: std::collections::VecDeque<ToolApprovalPrompt>,
+    active_approval: Option<ToolApprovalPrompt>,
 
     // Raw view toggle state (message indices showing raw text)
     raw_view_messages: HashSet<usize>,
@@ -87,6 +100,13 @@ pub struct TiccaApp {
     spinner_frame: usize,
 }
 
+#[derive(Debug, Clone)]
+struct ToolApprovalPrompt {
+    id: u64,
+    name: String,
+    args: String,
+}
+
 /// Views in the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
@@ -98,9 +118,9 @@ pub enum View {
 /// Check if all providers have valid (non-expired) tokens
 fn check_provider_auth_status() -> ProviderAuthStatus {
     ProviderAuthStatus {
-        claude: get_claude_auth_token().is_some(),
-        gemini: get_gemini_auth_token().is_some(),
-        chatgpt: get_chatgpt_auth_token().is_some(),
+        claude: auth::has_valid_account(ticca_core::config::models::providers::CLAUDE),
+        gemini: auth::has_valid_account(ticca_core::config::models::providers::GEMINI),
+        chatgpt: auth::has_valid_account(ticca_core::config::models::providers::CHATGPT),
     }
 }
 
@@ -131,6 +151,11 @@ impl TiccaApp {
             current_session: None,
             working_directory,
             max_tool_rounds: config.max_tool_rounds,
+            yolo_mode_enabled: config.yolo_mode_enabled,
+            settings_tab: SettingsTab::Accounts,
+            approval_tx: None,
+            pending_approvals: VecDeque::new(),
+            active_approval: None,
             raw_view_messages: HashSet::new(),
             raw_view_editors: HashMap::new(),
             error_message: None,
@@ -146,7 +171,7 @@ impl TiccaApp {
         };
 
         // Automatically fetch models on startup if we have credentials
-        let startup_task = if llm::has_claude_credentials() {
+        let startup_task = if auth::has_any_valid_account() {
             Task::done(Message::RefreshModels)
         } else {
             Task::none()
@@ -218,18 +243,31 @@ impl TiccaApp {
                 // User just sent a message, so scroll to bottom and track as at bottom
                 self.user_at_bottom = true;
 
-                // Check if we have credentials
-                if !llm::has_claude_credentials() {
+                let profile = AgentProfile::for_type(self.current_agent, self.max_tool_rounds);
+                // Determine which model to use: pinned > default > fetch from API
+                let model_name = profile.resolve_model(
+                    self.agent_pinned_models.get(&self.current_agent).cloned(),
+                    self.default_model.clone(),
+                );
+
+                let provider = model_name
+                    .as_deref()
+                    .map(ProviderRegistry::resolve_provider)
+                    .unwrap_or(ProviderId::Claude);
+
+                let provider_ok = match provider {
+                    ProviderId::Claude => auth::has_valid_account(ticca_core::config::models::providers::CLAUDE),
+                    ProviderId::Gemini => auth::has_valid_account(ticca_core::config::models::providers::GEMINI),
+                    ProviderId::ChatGpt => auth::has_valid_account(ticca_core::config::models::providers::CHATGPT),
+                };
+
+                if !provider_ok {
+                    let provider_name = ProviderRegistry::info(provider).display_name;
                     self.messages.push(ChatMessage::assistant(
-                        "⚠️ No Claude credentials found. Please go to Settings and authenticate with Claude OAuth first."
+                        format!("⚠️ No {} accounts available. Please authenticate in Settings.", provider_name)
                     ));
                     return Task::none();
                 }
-
-                // Determine which model to use: pinned > default > fetch from API
-                let model_name = self.agent_pinned_models.get(&self.current_agent)
-                    .cloned()
-                    .or_else(|| self.default_model.clone());
 
                 // Add streaming placeholder
                 self.messages.push(ChatMessage::assistant_streaming());
@@ -241,26 +279,16 @@ impl TiccaApp {
                 self.current_tps = 0.0;
                 self.stream_pulse = false;
 
-                // Get the system prompt based on current agent
-                let agent = get_agent(self.current_agent);
-                let system_prompt = agent.system_prompt();
-
-                // Get the auth token for Claude Code
-                let auth_token = match llm_stream::get_claude_auth_token() {
-                    Some(token) => token,
-                    None => {
-                        self.messages.push(ChatMessage::assistant(
-                            "❌ Failed to get Claude OAuth token. Please re-authenticate in Settings."
-                        ));
-                        self.is_streaming = false;
-                        self.messages.pop(); // Remove the streaming placeholder
-                        return Task::none();
-                    }
-                };
+                // Get the system prompt based on current agent profile
+                let system_prompt = profile.system_prompt;
 
                 // Send to Claude via Rig OAuthClient with streaming (ReAct loop enabled)
                 let working_dir = self.working_directory.clone();
-                let max_tool_rounds = self.max_tool_rounds;
+                let max_tool_rounds = profile.max_tool_rounds;
+                let (approval_tx, approval_rx) = mpsc::unbounded_channel();
+                self.approval_tx = Some(approval_tx);
+                self.pending_approvals.clear();
+                self.active_approval = None;
                 // Build conversation history (exclude the last user message we just added)
                 let history: Vec<_> = self.messages.iter()
                     .take(self.messages.len().saturating_sub(2)) // Exclude the user message + streaming placeholder
@@ -277,7 +305,17 @@ impl TiccaApp {
                     .collect();
 
                 let stream_task = Task::run(
-                    llm_stream::run_rig_agent_stream(auth_token, system_prompt, user_message, model_name, working_dir, max_tool_rounds, history, image_data),
+                    llm_stream::run_rig_agent_stream(
+                        system_prompt,
+                        user_message,
+                        model_name,
+                        working_dir,
+                        max_tool_rounds,
+                        history,
+                        image_data,
+                        self.yolo_mode_enabled,
+                        approval_rx,
+                    ),
                     |event| event,
                 );
 
@@ -410,6 +448,9 @@ impl TiccaApp {
 
             Message::StreamComplete => {
                 self.is_streaming = false;
+                self.approval_tx = None;
+                self.pending_approvals.clear();
+                self.active_approval = None;
                 // Reset streaming stats
                 self.stream_start_time = None;
                 self.stream_chars_received = 0;
@@ -432,6 +473,9 @@ impl TiccaApp {
 
             Message::StreamError(error) => {
                 self.is_streaming = false;
+                self.approval_tx = None;
+                self.pending_approvals.clear();
+                self.active_approval = None;
                 // Reset streaming stats
                 self.stream_start_time = None;
                 self.stream_chars_received = 0;
@@ -451,6 +495,11 @@ impl TiccaApp {
             
             Message::OpenSettings => {
                 self.current_view = View::Settings;
+                Task::none()
+            }
+
+            Message::SwitchSettingsTab(tab) => {
+                self.settings_tab = tab;
                 Task::none()
             }
             
@@ -473,6 +522,15 @@ impl TiccaApp {
                 // Save to config
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.set_setting(setting_keys::THEME, self.theme.as_str());
+                }
+                Task::none()
+            }
+
+            Message::SetYoloMode(enabled) => {
+                self.yolo_mode_enabled = enabled;
+                if let Ok(db) = ConfigDatabase::open() {
+                    let value = if enabled { "true" } else { "false" };
+                    let _ = db.set_setting(setting_keys::YOLO_MODE, value);
                 }
                 Task::none()
             }
@@ -502,6 +560,39 @@ impl TiccaApp {
                     }
                     Err(e) => {
                         self.error_message = Some(e);
+                    }
+                }
+                Task::none()
+            }
+
+            Message::RemoveOAuthAccount(account_id) => {
+                if let Ok(db) = ConfigDatabase::open() {
+                    let _ = db.delete_oauth_account(&account_id);
+                }
+                self.provider_auth_status = check_provider_auth_status();
+                Task::none()
+            }
+
+            Message::ToggleOAuthAccountActive { account_id, is_active } => {
+                if let Ok(db) = ConfigDatabase::open() {
+                    let _ = db.set_oauth_account_active(&account_id, is_active);
+                }
+                self.provider_auth_status = check_provider_auth_status();
+                Task::none()
+            }
+
+            Message::ResetOAuthCooldown(account_id) => {
+                if let Ok(db) = ConfigDatabase::open() {
+                    let _ = db.clear_oauth_account_cooldown(&account_id);
+                }
+                Task::none()
+            }
+
+            Message::AdjustOAuthAccountPriority { account_id, delta } => {
+                if let Ok(db) = ConfigDatabase::open() {
+                    if let Ok(Some(account)) = db.get_oauth_account(&account_id) {
+                        let new_priority = account.priority.saturating_add(delta);
+                        let _ = db.set_oauth_account_priority(&account_id, new_priority);
                     }
                 }
                 Task::none()
@@ -545,72 +636,13 @@ impl TiccaApp {
                 }
                 self.is_loading_models = true;
 
-                // Get all available auth tokens
-                let claude_token = get_claude_auth_token();
-                let gemini_token = get_gemini_auth_token();
-                let chatgpt_token = get_chatgpt_auth_token();
-                let chatgpt_id_token = get_chatgpt_id_token();
-
-                if claude_token.is_none() && gemini_token.is_none() && chatgpt_token.is_none() {
+                if !auth::has_any_valid_account() {
                     self.is_loading_models = false;
                     return Task::none();
                 }
 
-                // Fetch models from all authenticated providers
                 Task::perform(
-                    async move {
-                        let mut all_models: Vec<String> = Vec::new();
-
-                        // Fetch Claude models
-                        if let Some(token) = claude_token {
-                            let client = llm::ClaudeClient::new(token);
-                            if let Ok(models) = client.fetch_latest_models().await {
-                                all_models.extend(models);
-                            }
-                        }
-
-                        // Fetch Gemini models
-                        if let Some(token) = gemini_token {
-                            use ticca_oauth::GeminiOAuth;
-                            let oauth = GeminiOAuth::new();
-                            match oauth.fetch_models(&token, None).await {
-                                Ok(models) => all_models.extend(models.into_iter().map(|m| m.name)),
-                                Err(e) => {
-                                    tracing::warn!("Could not fetch Gemini models: {}", e);
-                                    // Add default Gemini models
-                                    all_models.extend(vec![
-                                        "gemini-2.0-flash-exp".to_string(),
-                                        "gemini-1.5-pro".to_string(),
-                                        "gemini-1.5-flash".to_string(),
-                                    ]);
-                                }
-                            }
-                        }
-
-                        // Fetch ChatGPT models
-                        if let Some(token) = chatgpt_token {
-                            use ticca_oauth::ChatGptOAuth;
-                            let oauth = ChatGptOAuth::new();
-                            match oauth.fetch_models(&token, chatgpt_id_token.as_deref()).await {
-                                Ok(models) => all_models.extend(models.into_iter().map(|m| m.id)),
-                                Err(e) => {
-                                    tracing::warn!("Could not fetch ChatGPT models: {}", e);
-                                    // Add default ChatGPT models
-                                    all_models.extend(vec![
-                                        "gpt-4o".to_string(),
-                                        "gpt-4o-mini".to_string(),
-                                        "o1-preview".to_string(),
-                                    ]);
-                                }
-                            }
-                        }
-
-                        if all_models.is_empty() {
-                            Err("No models found from any provider".to_string())
-                        } else {
-                            Ok(all_models)
-                        }
-                    },
+                    async move { ticca_core::llm::ModelService::fetch_all().await },
                     Message::ModelsLoaded
                 )
             }
@@ -625,82 +657,20 @@ impl TiccaApp {
 
                 match provider {
                     OAuthProvider::Claude => {
-                        let auth_token = match get_claude_auth_token() {
-                            Some(token) => token,
-                            None => {
-                                self.is_loading_models = false;
-                                return Task::none();
-                            }
-                        };
                         Task::perform(
-                            async move {
-                                let client = llm::ClaudeClient::new(auth_token);
-                                client.fetch_latest_models().await
-                                    .map_err(|e| e.to_string())
-                            },
+                            async move { ticca_core::llm::ModelService::fetch_for(ProviderId::Claude).await },
                             Message::ModelsLoaded
                         )
                     }
                     OAuthProvider::Gemini => {
-                        let auth_token = match get_gemini_auth_token() {
-                            Some(token) => token,
-                            None => {
-                                self.is_loading_models = false;
-                                return Task::none();
-                            }
-                        };
                         Task::perform(
-                            async move {
-                                use ticca_oauth::GeminiOAuth;
-                                let oauth = GeminiOAuth::new();
-                                match oauth.fetch_models(&auth_token, None).await {
-                                    Ok(models) => Ok(models.into_iter().map(|m| m.name).collect()),
-                                    Err(e) => {
-                                        // Fall back to hardcoded list of popular Gemini models
-                                        tracing::warn!("Could not fetch Gemini models ({}), using defaults", e);
-                                        Ok(vec![
-                                            "gemini-2.0-flash-exp".to_string(),
-                                            "gemini-1.5-pro".to_string(),
-                                            "gemini-1.5-flash".to_string(),
-                                            "gemini-1.0-pro".to_string(),
-                                        ])
-                                    }
-                                }
-                            },
+                            async move { ticca_core::llm::ModelService::fetch_for(ProviderId::Gemini).await },
                             Message::ModelsLoaded
                         )
                     }
                     OAuthProvider::ChatGpt => {
-                        let auth_token = match get_chatgpt_auth_token() {
-                            Some(token) => token,
-                            None => {
-                                self.is_loading_models = false;
-                                return Task::none();
-                            }
-                        };
-                        let id_token = get_chatgpt_id_token();
                         Task::perform(
-                            async move {
-                                use ticca_oauth::ChatGptOAuth;
-                                let oauth = ChatGptOAuth::new();
-                                match oauth.fetch_models(&auth_token, id_token.as_deref()).await {
-                                    Ok(models) => Ok(models.into_iter().map(|m| m.id).collect()),
-                                    Err(e) => {
-                                        // OAuth token may not have model listing permissions
-                                        // Fall back to hardcoded list of popular models
-                                        tracing::warn!("Could not fetch ChatGPT models ({}), using defaults", e);
-                                        Ok(vec![
-                                            "gpt-4o".to_string(),
-                                            "gpt-4o-mini".to_string(),
-                                            "gpt-4-turbo".to_string(),
-                                            "gpt-4".to_string(),
-                                            "gpt-3.5-turbo".to_string(),
-                                            "o1-preview".to_string(),
-                                            "o1-mini".to_string(),
-                                        ])
-                                    }
-                                }
-                            },
+                            async move { ticca_core::llm::ModelService::fetch_for(ProviderId::ChatGpt).await },
                             Message::ModelsLoaded
                         )
                     }
@@ -772,6 +742,22 @@ impl TiccaApp {
             Message::ToolResult { name: _, result: _ } => {
                 // Don't count tool results - they're local execution, not LLM output
                 // Don't display tool results - keep the UI clean
+                Task::none()
+            }
+
+            Message::ToolApprovalRequested { id, name, args } => {
+                self.pending_approvals.push_back(ToolApprovalPrompt { id, name, args });
+                if self.active_approval.is_none() {
+                    self.active_approval = self.pending_approvals.pop_front();
+                }
+                Task::none()
+            }
+
+            Message::ToolApprovalDecision { id, approved } => {
+                if let Some(tx) = &self.approval_tx {
+                    let _ = tx.send(ticca_core::tools::ToolApprovalDecision { id, approved });
+                }
+                self.active_approval = self.pending_approvals.pop_front();
                 Task::none()
             }
 
@@ -907,7 +893,7 @@ impl TiccaApp {
             .height(Length::Fill)
             .padding(0);
         
-        if let Some(ref error) = self.error_message {
+        let base: Element<Message> = if let Some(ref error) = self.error_message {
             // Show error toast at top
             let error_banner = container(
                 row![
@@ -928,6 +914,13 @@ impl TiccaApp {
             .into()
         } else {
             main.into()
+        };
+
+        if let Some(prompt) = &self.active_approval {
+            let overlay = self.view_approval_modal(prompt);
+            iced::widget::stack![base, overlay].into()
+        } else {
+            base
         }
     }
 
@@ -1022,7 +1015,44 @@ impl TiccaApp {
             &self.agent_pinned_models,
             self.is_loading_models,
             &self.provider_auth_status,
+            self.yolo_mode_enabled,
+            self.settings_tab,
         )
+    }
+
+    fn view_approval_modal(&self, prompt: &ToolApprovalPrompt) -> Element<'_, Message> {
+        let content = container(
+            column![
+                text("Tool approval required").size(18),
+                text(format!("Tool: {}", prompt.name)).size(14),
+                text(prompt.args.clone()).size(12),
+                row![
+                    button("Deny")
+                        .on_press(Message::ToolApprovalDecision { id: prompt.id, approved: false })
+                        .style(crate::theme::styles::secondary_button)
+                        .padding([6, 12]),
+                    button("Approve")
+                        .on_press(Message::ToolApprovalDecision { id: prompt.id, approved: true })
+                        .style(crate::theme::styles::success_button)
+                        .padding([6, 12]),
+                ]
+                .spacing(12),
+            ]
+            .spacing(10)
+        )
+        .padding(20)
+        .style(crate::theme::styles::card_container);
+
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.4).into()),
+                ..Default::default()
+            })
+            .into()
     }
 }
 

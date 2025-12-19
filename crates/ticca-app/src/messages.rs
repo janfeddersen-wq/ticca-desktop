@@ -52,6 +52,11 @@ pub enum Message {
     /// Tool result received
     ToolResult { name: String, result: String },
 
+    /// Approval required before running a protected tool
+    ToolApprovalRequested { id: u64, name: String, args: String },
+    /// User decision for a tool approval
+    ToolApprovalDecision { id: u64, approved: bool },
+
     /// Reasoning/thinking content from the model
     Reasoning(String),
 
@@ -68,10 +73,18 @@ pub enum Message {
     // Navigation
     OpenSettings,
     CloseSettings,
+    SwitchSettingsTab(SettingsTab),
 
     // Appearance
     ThemeToggle,
     SetTheme(AppTheme),
+    SetYoloMode(bool),
+
+    // OAuth accounts
+    RemoveOAuthAccount(String),
+    ToggleOAuthAccountActive { account_id: String, is_active: bool },
+    ResetOAuthCooldown(String),
+    AdjustOAuthAccountPriority { account_id: String, delta: i64 },
 
     // Agent selection
     SwitchAgent(AgentType),
@@ -123,6 +136,16 @@ pub enum OAuthProvider {
     Claude,
     Gemini,
     ChatGpt,
+}
+
+/// Settings tabs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTab {
+    Accounts,
+    Models,
+    Tools,
+    Appearance,
+    Sessions,
 }
 
 impl std::fmt::Display for OAuthProvider {

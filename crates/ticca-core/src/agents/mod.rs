@@ -7,7 +7,9 @@
 pub mod base;
 pub mod coding;
 pub mod planning;
+pub mod profile;
 
 pub use base::{Agent, AgentConfig, AgentType, get_agent, get_all_agents};
 pub use coding::CodingAgent;
 pub use planning::PlanningAgent;
+pub use profile::AgentProfile;

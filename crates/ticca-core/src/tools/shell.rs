@@ -1,9 +1,9 @@
 //! Shell command execution tool
 
-use crate::tools::registry::{ToolDefinition, ToolParameterSchema, ToolResult, ToolExecutor};
+use crate::tools::registry::{ToolDefinition, ToolResult, ToolExecutor};
+use crate::tools::spec;
 use anyhow::Result;
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -177,33 +177,15 @@ pub async fn shell_impl(
 
 /// Get shell tool definition
 pub fn shell_definition() -> ToolDefinition {
-    let mut params = HashMap::new();
-    params.insert(
-        "command".to_string(),
-        ToolParameterSchema::string("The shell command to execute."),
-    );
-    params.insert(
-        "cwd".to_string(),
-        ToolParameterSchema::string("Working directory for command execution. Defaults to current directory.")
-            .with_default(json!(null)),
-    );
-    params.insert(
-        "timeout".to_string(),
-        ToolParameterSchema::integer(format!(
-            "Timeout in seconds. Defaults to {} seconds.",
-            DEFAULT_TIMEOUT_SECS
-        ))
-        .with_default(json!(DEFAULT_TIMEOUT_SECS)),
-    );
-
+    let spec = spec::shell_spec(DEFAULT_TIMEOUT_SECS, MAX_OUTPUT_LINES);
     ToolDefinition {
-        name: "shell".to_string(),
+        name: spec.name.to_string(),
         description: format!(
-            "Execute a shell command with configurable timeout and working directory. \
-            Output is limited to {} lines per stream.",
+            "{} Output is limited to {} lines per stream.",
+            spec.description,
             MAX_OUTPUT_LINES
         ),
-        parameters: ToolParameterSchema::object(params, vec!["command".to_string()]),
+        parameters: spec.registry_parameters,
     }
 }
 

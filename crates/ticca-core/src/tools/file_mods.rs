@@ -1,10 +1,10 @@
 //! File modification tools: edit_file, delete_file
 
-use crate::tools::registry::{ToolDefinition, ToolParameterSchema, ToolResult, ToolExecutor};
+use crate::tools::registry::{ToolDefinition, ToolResult, ToolExecutor};
+use crate::tools::spec;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -267,33 +267,11 @@ pub fn delete_file_impl(file_path: &str) -> Result<ToolResult> {
 
 /// Get edit_file tool definition
 pub fn edit_file_definition() -> ToolDefinition {
-    let mut params = HashMap::new();
-    params.insert(
-        "file_path".to_string(),
-        ToolParameterSchema::string("Path to the file to edit."),
-    );
-    params.insert(
-        "content".to_string(),
-        ToolParameterSchema::string("Full content to write (for ContentPayload). Optional."),
-    );
-    params.insert(
-        "overwrite".to_string(),
-        ToolParameterSchema::boolean("Whether to overwrite existing file. Default: false.")
-            .with_default(json!(false)),
-    );
-    params.insert(
-        "replacements".to_string(),
-        ToolParameterSchema::string("Array of {old_str, new_str} objects for text replacement. Optional."),
-    );
-    params.insert(
-        "delete_snippet".to_string(),
-        ToolParameterSchema::string("Exact text snippet to delete from file. Optional."),
-    );
-    
+    let spec = spec::edit_file_spec();
     ToolDefinition {
-        name: "edit_file".to_string(),
-        description: "Edit a file using one of three methods: full content replacement, targeted text replacements, or snippet deletion.".to_string(),
-        parameters: ToolParameterSchema::object(params, vec!["file_path".to_string()]),
+        name: spec.name.to_string(),
+        description: spec.description.to_string(),
+        parameters: spec.registry_parameters,
     }
 }
 
@@ -301,6 +279,12 @@ pub fn edit_file_definition() -> ToolDefinition {
 pub fn edit_file_executor() -> ToolExecutor {
     Arc::new(|params: Value| {
         Box::pin(async move {
+            let mut params = params;
+            if params.get("file_path").is_none() {
+                if let Some(path) = params.get("path").cloned() {
+                    params["file_path"] = path;
+                }
+            }
             edit_file_impl(params)
         })
     })
@@ -308,16 +292,11 @@ pub fn edit_file_executor() -> ToolExecutor {
 
 /// Get delete_file tool definition
 pub fn delete_file_definition() -> ToolDefinition {
-    let mut params = HashMap::new();
-    params.insert(
-        "file_path".to_string(),
-        ToolParameterSchema::string("Path to the file to delete."),
-    );
-    
+    let spec = spec::delete_file_spec();
     ToolDefinition {
-        name: "delete_file".to_string(),
-        description: "Delete a file with diff generation showing what was removed.".to_string(),
-        parameters: ToolParameterSchema::object(params, vec!["file_path".to_string()]),
+        name: spec.name.to_string(),
+        description: spec.description.to_string(),
+        parameters: spec.registry_parameters,
     }
 }
 
@@ -325,9 +304,10 @@ pub fn delete_file_definition() -> ToolDefinition {
 pub fn delete_file_executor() -> ToolExecutor {
     Arc::new(|params: Value| {
         Box::pin(async move {
-            let file_path = params.get("file_path")
+            let file_path = params.get("path")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("file_path is required"))?;
+                .or_else(|| params.get("file_path").and_then(|v| v.as_str()))
+                .ok_or_else(|| anyhow::anyhow!("path is required"))?;
             
             delete_file_impl(file_path)
         })

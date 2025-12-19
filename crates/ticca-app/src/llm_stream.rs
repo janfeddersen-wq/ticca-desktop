@@ -9,78 +9,31 @@
 use crate::chat_message::ChatMessage;
 use crate::messages::Message;
 
-use ticca_core::config::ConfigDatabase;
 use ticca_core::config::models::providers;
 use ticca_core::llm;
-use ticca_core::llm::providers::chatgpt::{is_gpt_model, ChatGptOAuthClient};
-use ticca_core::llm::providers::gemini::is_gemini_model;
+use ticca_core::llm::auth::{self, AuthToken};
+use ticca_core::llm::providers::chatgpt::ChatGptOAuthClient;
 use ticca_core::llm::providers::GeminiCodeAssistRigClient;
 use ticca_core::llm::ClaudeOAuthClient;
+use ticca_core::llm::{ProviderId, ProviderRegistry};
 use ticca_core::session::MessageRole;
-use ticca_core::tools::ToolContext;
+use ticca_core::tools::{ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext};
 
 use rig::agent::AgentBuilder;
 
 use futures::StreamExt;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::mpsc;
 
-/// Get the Claude OAuth token if available and valid
-pub fn get_claude_auth_token() -> Option<String> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(providers::CLAUDE).ok()??;
-
-    if token.is_expired() {
-        tracing::warn!("Claude OAuth token is expired");
-        return None;
-    }
-
-    Some(token.access_token)
-}
-
-/// Get the Gemini OAuth token if available and valid
-pub fn get_gemini_auth_token() -> Option<String> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(providers::GEMINI).ok()??;
-
-    if token.is_expired() {
-        tracing::warn!("Gemini OAuth token is expired");
-        return None;
-    }
-
-    Some(token.access_token)
-}
-
-/// Get the ChatGPT OAuth token if available and valid
-pub fn get_chatgpt_auth_token() -> Option<String> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(providers::CHATGPT).ok()??;
-
-    if token.is_expired() {
-        tracing::warn!("ChatGPT OAuth token is expired");
-        return None;
-    }
-
-    Some(token.access_token)
-}
-
-/// Get the ChatGPT id_token for API calls (stored in extra_json)
-pub fn get_chatgpt_id_token() -> Option<String> {
-    let db = ConfigDatabase::open().ok()?;
-    let token = db.get_oauth_token(providers::CHATGPT).ok()??;
-
-    // Parse id_token from extra_json
-    token.extra_json.as_ref().and_then(|json_str| {
-        serde_json::from_str::<serde_json::Value>(json_str)
-            .ok()
-            .and_then(|v| v.get("id_token").and_then(|t| t.as_str()).map(|s| s.to_string()))
-    })
-}
+const DEFAULT_COOLDOWN_SECS: i64 = 60;
+const CLAUDE_CODE_INSTRUCTIONS: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Fetch the best available model from the Claude API
-pub async fn fetch_best_model(auth_token: &str) -> Result<String, String> {
-    let client = llm::ClaudeClient::new(auth_token.to_string());
+pub async fn fetch_best_model(auth_token: &AuthToken) -> Result<String, String> {
+    let client = llm::ClaudeClient::new(auth_token.access_token.to_string());
     let models = client
         .fetch_latest_models()
         .await
@@ -149,6 +102,33 @@ fn build_user_message(user_message: &str, image_data: Vec<(String, String)>) -> 
     }
 }
 
+fn is_rate_limit_error(message: &str) -> bool {
+    let lowered = message.to_lowercase();
+    lowered.contains("429")
+        || lowered.contains("rate limit")
+        || lowered.contains("too many requests")
+        || lowered.contains("quota")
+}
+
+fn prepend_system_to_first_user_message(
+    system_prompt: &str,
+    history: &mut [rig::message::Message],
+) {
+    if system_prompt.is_empty() {
+        return;
+    }
+
+    for msg in history.iter_mut() {
+        if let rig::message::Message::User { content } = msg {
+            let first_content = content.first_mut();
+            if let rig::message::UserContent::Text(text_content) = first_content {
+                text_content.text = format!("{}\n\n{}", system_prompt, text_content.text);
+            }
+            break;
+        }
+    }
+}
+
 /// Run the Rig agent with streaming response and tools (ReAct loop)
 ///
 /// Routes to Claude, ChatGPT/Codex, or Gemini based on model name.
@@ -156,7 +136,6 @@ fn build_user_message(user_message: &str, image_data: Vec<(String, String)>) -> 
 ///
 /// `image_data` is a list of (media_type, base64_data) tuples for attached images
 pub fn run_rig_agent_stream(
-    auth_token: String,
     system_prompt: String,
     user_message: String,
     model_name: Option<String>,
@@ -164,485 +143,395 @@ pub fn run_rig_agent_stream(
     max_tool_rounds: u32,
     chat_history: Vec<ChatMessage>,
     image_data: Vec<(String, String)>,
+    yolo_mode_enabled: bool,
+    mut approval_decision_rx: mpsc::UnboundedReceiver<ToolApprovalDecision>,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
-        let mut stats_window_start = Instant::now();
-        let mut stats_window_chars: usize = 0;
-        const STATS_WINDOW_MIN_MS: u64 = 200;
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Message>();
+        let (approval_request_tx, mut approval_request_rx) = mpsc::unbounded_channel::<ToolApprovalRequest>();
+        let approval_gate = Arc::new(ToolApprovalGate::new(approval_request_tx));
 
-        let mut emit_stream_stats = |stats_window_chars: &mut usize,
-                                     stats_window_start: &mut Instant|
-         -> Option<Message> {
-            if *stats_window_chars == 0 {
-                return None;
-            }
-            let elapsed = stats_window_start.elapsed();
-            let window_ms = elapsed.as_millis() as u64;
-            if window_ms < STATS_WINDOW_MIN_MS {
-                return None;
-            }
-            let chars = *stats_window_chars;
-            *stats_window_chars = 0;
-            *stats_window_start = Instant::now();
-            Some(Message::StreamStats {
-                chars_in_window: chars,
-                window_ms,
-            })
-        };
-
-        // Use provided model or fetch from API
-        let model_name = match model_name {
-            Some(name) => {
-                tracing::info!("Using configured model: {}", name);
-                name
-            }
-            None => {
-                match fetch_best_model(&auth_token).await {
-                    Ok(name) => {
-                        tracing::info!("Using auto-detected model: {}", name);
-                        name
-                    }
-                    Err(e) => {
-                        yield Message::StreamError(e);
-                        return;
-                    }
-                }
-            }
-        };
-
-        // Build history and user message
-        let history = build_chat_history(chat_history);
-        let user_msg = build_user_message(&user_message, image_data);
-        let mut full_history = history;
-        full_history.push(user_msg);
-
-        // Create tool context with working directory
         let tool_context = Arc::new(ToolContext {
             working_directory: working_directory.clone(),
+            approval_gate: Some(approval_gate),
+            yolo_mode_enabled,
         });
 
-        // Route to appropriate provider based on model name
-        if is_gpt_model(&model_name) {
-            // Use ChatGPT/Codex backend
-            tracing::info!("Using ChatGPT/Codex backend for model: {}", model_name);
+        let mut pending_approvals: HashMap<u64, tokio::sync::oneshot::Sender<bool>> = HashMap::new();
+        let event_tx_for_manager = event_tx.clone();
 
-            // Get ChatGPT auth token and id_token
-            let chatgpt_token = match get_chatgpt_auth_token() {
-                Some(token) => token,
-                None => {
-                    yield Message::StreamError(
-                        "ChatGPT authentication required. Please authenticate with ChatGPT in Settings.".to_string()
-                    );
-                    return;
-                }
-            };
-
-            let id_token = match get_chatgpt_id_token() {
-                Some(token) => token,
-                None => {
-                    yield Message::StreamError(
-                        "ChatGPT id_token not found. Please re-authenticate with ChatGPT.".to_string()
-                    );
-                    return;
-                }
-            };
-
-            // Create ChatGPT OAuth client
-            let client = match ChatGptOAuthClient::from_tokens(&chatgpt_token, &id_token) {
-                Ok(c) => c,
-                Err(e) => {
-                    yield Message::StreamError(format!("Failed to create ChatGPT client: {}", e));
-                    return;
-                }
-            };
-
-            // Get completion model
-            let model = client.completion_model(&model_name);
-
-            // Create tools
-            let (shell, read_file, list_files, edit_file, grep, write_file) =
-                ticca_core::tools::create_tools(tool_context);
-
-            // Create agent with Codex-specific params using AgentBuilder
-            let agent = AgentBuilder::new(model)
-                .preamble(&system_prompt)
-                .tool(shell)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(grep)
-                .tool(write_file)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .additional_params(ChatGptOAuthClient::codex_params())
-                .build();
-
-            // Stream the response
-            use rig::agent::MultiTurnStreamItem;
-            use rig::streaming::StreamingPrompt;
-            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
-
-            let mut stream = agent
-                .stream_prompt("")
-                .with_history(full_history.clone())
-                .multi_turn(max_tool_rounds as usize)
-                .await;
-
-            let mut chunk_count = 0u32;
-            while let Some(chunk_result) = stream.next().await {
-                chunk_count += 1;
-                match chunk_result {
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Text(text_chunk),
-                    )) => {
-                        if !text_chunk.text.is_empty() {
-                            let chunk_len = text_chunk.text.len();
-                            tracing::trace!("ChatGPT text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
-                            yield Message::StreamChunk(text_chunk.text);
-                            stats_window_chars += chunk_len;
-                            if let Some(stats) =
-                                emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
-                            {
-                                yield stats;
-                            }
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(request) = approval_request_rx.recv() => {
+                        pending_approvals.insert(request.id, request.responder);
+                        let _ = event_tx_for_manager.send(Message::ToolApprovalRequested {
+                            id: request.id,
+                            name: request.tool_name,
+                            args: request.args,
+                        });
+                    }
+                    Some(decision) = approval_decision_rx.recv() => {
+                        if let Some(responder) = pending_approvals.remove(&decision.id) {
+                            let _ = responder.send(decision.approved);
                         }
                     }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Reasoning(reasoning),
-                    )) => {
-                        let text = reasoning.reasoning.join("");
-                        if !text.is_empty() {
-                            tracing::debug!("ChatGPT reasoning chunk #{}: {} chars", chunk_count, text.len());
-                            yield Message::Reasoning(text);
-                        }
-                    }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::ToolCall(tool_call),
-                    )) => {
-                        tracing::debug!("ChatGPT tool call #{}: {}", chunk_count, tool_call.function.name);
-                        let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
-                            .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
-                        yield Message::ToolCall {
-                            name: tool_call.function.name.clone(),
-                            args: args_str,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::StreamUserItem(
-                        StreamedUserContent::ToolResult(tool_result),
-                    )) => {
-                        tracing::debug!("ChatGPT tool result #{}: {}", chunk_count, tool_result.id);
-                        let result_text = tool_result
-                            .content
-                            .iter()
-                            .map(|c| match c {
-                                rig::message::ToolResultContent::Text(t) => t.text.clone(),
-                                _ => "[non-text content]".to_string(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        yield Message::ToolResult {
-                            name: tool_result.id.clone(),
-                            result: result_text,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                        tracing::debug!("ChatGPT received FinalResponse #{}", chunk_count);
-                    }
-                    Ok(other) => {
-                        tracing::debug!("ChatGPT other stream item #{}: {:?}", chunk_count, std::any::type_name_of_val(&other));
-                    }
-                    Err(e) => {
-                        tracing::error!("ChatGPT stream error #{}: {}", chunk_count, e);
-                        yield Message::StreamError(format!("ChatGPT stream error: {}", e));
-                        return;
-                    }
+                    else => break,
                 }
             }
-            tracing::debug!("ChatGPT stream finished after {} chunks", chunk_count);
-        } else if is_gemini_model(&model_name) {
-            tracing::info!("Using Gemini backend for model: {}", model_name);
+        });
 
-            let gemini_token = match get_gemini_auth_token() {
-                Some(token) => token,
-                None => {
-                    yield Message::StreamError(
-                        "Gemini authentication required. Please authenticate with Gemini in Settings.".to_string()
-                    );
-                    return;
-                }
-            };
+        let event_tx_for_worker = event_tx.clone();
+        let tool_context_worker = tool_context.clone();
 
-            let client = GeminiCodeAssistRigClient::new(&gemini_token);
-            let model = client.completion_model(&model_name);
+        tokio::spawn(async move {
+            let result = run_agent_stream(
+                event_tx_for_worker.clone(),
+                tool_context_worker,
+                system_prompt,
+                user_message,
+                model_name,
+                max_tool_rounds,
+                chat_history,
+                image_data,
+            )
+            .await;
 
-            let (shell, read_file, list_files, edit_file, grep, write_file) =
-                ticca_core::tools::create_tools(tool_context);
-
-            let agent = AgentBuilder::new(model)
-                .preamble(&system_prompt)
-                .tool(shell)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(grep)
-                .tool(write_file)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .build();
-
-            use rig::agent::MultiTurnStreamItem;
-            use rig::streaming::StreamingPrompt;
-            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
-
-            let mut stream = agent
-                .stream_prompt("")
-                .with_history(full_history.clone())
-                .multi_turn(max_tool_rounds as usize)
-                .await;
-
-            let mut chunk_count = 0u32;
-            while let Some(chunk_result) = stream.next().await {
-                chunk_count += 1;
-                match chunk_result {
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Text(text_chunk),
-                    )) => {
-                        if !text_chunk.text.is_empty() {
-                            let chunk_len = text_chunk.text.len();
-                            tracing::trace!("Gemini text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
-                            yield Message::StreamChunk(text_chunk.text);
-                            stats_window_chars += chunk_len;
-                            if let Some(stats) =
-                                emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
-                            {
-                                yield stats;
-                            }
-                        }
-                    }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Reasoning(reasoning),
-                    )) => {
-                        let text = reasoning.reasoning.join("");
-                        if !text.is_empty() {
-                            tracing::debug!("Gemini reasoning chunk #{}: {} chars", chunk_count, text.len());
-                            yield Message::Reasoning(text);
-                        }
-                    }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::ToolCall(tool_call),
-                    )) => {
-                        tracing::debug!("Gemini tool call #{}: {}", chunk_count, tool_call.function.name);
-                        let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
-                            .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
-                        yield Message::ToolCall {
-                            name: tool_call.function.name.clone(),
-                            args: args_str,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::StreamUserItem(
-                        StreamedUserContent::ToolResult(tool_result),
-                    )) => {
-                        tracing::debug!("Gemini tool result #{}: {}", chunk_count, tool_result.id);
-                        let result_text = tool_result
-                            .content
-                            .iter()
-                            .map(|c| match c {
-                                rig::message::ToolResultContent::Text(t) => t.text.clone(),
-                                _ => "[non-text content]".to_string(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        yield Message::ToolResult {
-                            name: tool_result.id.clone(),
-                            result: result_text,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                        tracing::debug!("Gemini received FinalResponse #{}", chunk_count);
-                    }
-                    Ok(other) => {
-                        tracing::debug!("Gemini other stream item #{}: {:?}", chunk_count, std::any::type_name_of_val(&other));
-                    }
-                    Err(e) => {
-                        tracing::error!("Gemini stream error #{}: {}", chunk_count, e);
-                        yield Message::StreamError(format!("Gemini stream error: {}", e));
-                        return;
-                    }
-                }
-            }
-            tracing::debug!("Gemini stream finished after {} chunks", chunk_count);
-        } else {
-            // Use Claude/Anthropic backend (default)
-            tracing::info!("Using Claude backend for model: {}", model_name);
-            tracing::debug!("Claude auth_token present: {}", !auth_token.is_empty());
-            tracing::debug!("System prompt length: {} chars", system_prompt.len());
-            tracing::debug!("Full history count: {} messages", full_history.len());
-
-            // Claude Code OAuth requires special system prompt handling:
-            // 1. Prepend the original system prompt to the first user message
-            // 2. Use hardcoded Claude Code instruction as the actual system prompt
-            const CLAUDE_CODE_INSTRUCTIONS: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-
-            // Prepend system_prompt to the first user message in history
-            let mut claude_history = full_history;
-            if !system_prompt.is_empty() && !claude_history.is_empty() {
-                tracing::debug!("Prepending system prompt to first user message");
-                // Find the first user message and prepend the system prompt to it
-                for msg in claude_history.iter_mut() {
-                    if let rig::message::Message::User { content } = msg {
-                        // Get mutable access to the first content item
-                        let first_content = content.first_mut();
-                        if let rig::message::UserContent::Text(text_content) = first_content {
-                            let original_len = text_content.text.len();
-                            text_content.text = format!("{}\n\n{}", system_prompt, text_content.text);
-                            tracing::debug!(
-                                "Modified first user message: {} -> {} chars",
-                                original_len,
-                                text_content.text.len()
-                            );
-                            break; // Only prepend to the first user message
-                        }
-                    }
-                }
-            } else {
-                tracing::debug!("Skipping system prompt prepend: system_prompt.is_empty()={}, history.is_empty()={}",
-                    system_prompt.is_empty(), claude_history.is_empty());
+            if let Err(error) = result {
+                let _ = event_tx_for_worker.send(Message::StreamError(error));
             }
 
-            // Create Claude OAuth client
-            tracing::debug!("Creating ClaudeOAuthClient...");
-            let client = match ClaudeOAuthClient::new(&auth_token) {
-                Ok(c) => {
-                    tracing::debug!("ClaudeOAuthClient created successfully");
-                    c
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create Claude client: {}", e);
-                    yield Message::StreamError(format!("Failed to create Claude client: {}", e));
-                    return;
-                }
-            };
+            let _ = event_tx_for_worker.send(Message::StreamComplete);
+        });
 
-            // Get completion model
-            tracing::debug!("Getting completion model for: {}", model_name);
-            let model = client.completion_model(&model_name);
-
-            // Create tools
-            let (shell, read_file, list_files, edit_file, grep, write_file) =
-                ticca_core::tools::create_tools(tool_context);
-
-            // Create agent using AgentBuilder with hardcoded Claude Code instruction
-            let agent = AgentBuilder::new(model)
-                .preamble(CLAUDE_CODE_INSTRUCTIONS)  // Hardcoded, not system_prompt
-                .tool(shell)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(grep)
-                .tool(write_file)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .build();
-
-            // Stream the response
-            use rig::agent::MultiTurnStreamItem;
-            use rig::streaming::StreamingPrompt;
-            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
-
-            tracing::debug!("Starting Claude stream with {} history messages, max_tool_rounds={}",
-                claude_history.len(), max_tool_rounds);
-            
-            let mut stream = agent
-                .stream_prompt("")
-                .with_history(claude_history)  // Use modified history with prepended system prompt
-                .multi_turn(max_tool_rounds as usize)
-                .await;
-            
-            tracing::debug!("Claude stream created, starting iteration...");
-
-            let mut chunk_count = 0u32;
-            while let Some(chunk_result) = stream.next().await {
-                chunk_count += 1;
-                match chunk_result {
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Text(text_chunk),
-                    )) => {
-                        if !text_chunk.text.is_empty() {
-                            let chunk_len = text_chunk.text.len();
-                            tracing::trace!("Claude text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
-                            yield Message::StreamChunk(text_chunk.text);
-                            stats_window_chars += chunk_len;
-                            if let Some(stats) =
-                                emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
-                            {
-                                yield stats;
-                            }
-                        }
-                    }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Reasoning(reasoning),
-                    )) => {
-                        let text = reasoning.reasoning.join("");
-                        if !text.is_empty() {
-                            tracing::debug!("Claude reasoning chunk #{}: {} chars", chunk_count, text.len());
-                            yield Message::Reasoning(text);
-                        }
-                    }
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::ToolCall(tool_call),
-                    )) => {
-                        tracing::debug!("Claude tool call #{}: {}", chunk_count, tool_call.function.name);
-                        let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
-                            .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
-                        yield Message::ToolCall {
-                            name: tool_call.function.name.clone(),
-                            args: args_str,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::StreamUserItem(
-                        StreamedUserContent::ToolResult(tool_result),
-                    )) => {
-                        tracing::debug!("Claude tool result #{}: {}", chunk_count, tool_result.id);
-                        let result_text = tool_result
-                            .content
-                            .iter()
-                            .map(|c| match c {
-                                rig::message::ToolResultContent::Text(t) => t.text.clone(),
-                                _ => "[non-text content]".to_string(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        yield Message::ToolResult {
-                            name: tool_result.id.clone(),
-                            result: result_text,
-                        };
-                    }
-                    Ok(MultiTurnStreamItem::FinalResponse(_)) => {
-                        tracing::debug!("Claude received FinalResponse #{}", chunk_count);
-                    }
-                    Ok(other) => {
-                        tracing::debug!("Claude other stream item #{}: {:?}", chunk_count, std::any::type_name_of_val(&other));
-                    }
-                    Err(e) => {
-                        tracing::error!("Claude stream error #{}: {}", chunk_count, e);
-                        yield Message::StreamError(format!("Stream error: {}", e));
-                        return;
-                    }
-                }
+        while let Some(event) = event_rx.recv().await {
+            let is_terminal = matches!(event, Message::StreamComplete | Message::StreamError(_));
+            yield event;
+            if is_terminal {
+                break;
             }
-            tracing::debug!("Claude stream finished after {} chunks", chunk_count);
         }
+    }
+}
 
-        if stats_window_chars > 0 {
-            let elapsed = stats_window_start.elapsed();
-            if elapsed.as_millis() > 0 {
-                yield Message::StreamStats {
-                    chars_in_window: stats_window_chars,
-                    window_ms: elapsed.as_millis() as u64,
-                };
+async fn run_agent_stream(
+    event_tx: mpsc::UnboundedSender<Message>,
+    tool_context: Arc<ToolContext>,
+    system_prompt: String,
+    user_message: String,
+    model_name: Option<String>,
+    max_tool_rounds: u32,
+    chat_history: Vec<ChatMessage>,
+    image_data: Vec<(String, String)>,
+) -> Result<(), String> {
+    let mut stats_window_start = Instant::now();
+    let mut stats_window_chars: usize = 0;
+    const STATS_WINDOW_MIN_MS: u64 = 200;
+
+    let mut emit_stream_stats = |stats_window_chars: &mut usize,
+                                 stats_window_start: &mut Instant|
+     -> Option<Message> {
+        if *stats_window_chars == 0 {
+            return None;
+        }
+        let elapsed = stats_window_start.elapsed();
+        let window_ms = elapsed.as_millis() as u64;
+        if window_ms < STATS_WINDOW_MIN_MS {
+            return None;
+        }
+        let chars = *stats_window_chars;
+        *stats_window_chars = 0;
+        *stats_window_start = Instant::now();
+        Some(Message::StreamStats {
+            chars_in_window: chars,
+            window_ms,
+        })
+    };
+
+    let model_name = match model_name {
+        Some(name) => {
+            tracing::info!("Using configured model: {}", name);
+            name
+        }
+        None => {
+            let claude_token = auth::select_token(providers::CLAUDE)
+                .ok_or_else(|| "Claude authentication required to auto-select a model".to_string())?;
+            match fetch_best_model(&claude_token).await {
+                Ok(name) => {
+                    tracing::info!("Using auto-detected model: {}", name);
+                    name
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    };
+
+    let history = build_chat_history(chat_history);
+    let user_msg = build_user_message(&user_message, image_data);
+    let mut full_history = history;
+    full_history.push(user_msg);
+
+    match ProviderRegistry::resolve_provider(&model_name) {
+    ProviderId::ChatGpt => {
+        tracing::info!("Using ChatGPT/Codex backend for model: {}", model_name);
+
+        let token = auth::select_token(providers::CHATGPT)
+            .ok_or_else(|| "ChatGPT authentication required. Please authenticate in Settings.".to_string())?;
+        let id_token = token
+            .id_token
+            .ok_or_else(|| "ChatGPT id_token not found. Please re-authenticate in Settings.".to_string())?;
+
+        let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
+            .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
+
+        let model = client.completion_model(&model_name);
+        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+            ticca_core::tools::create_tools(tool_context);
+
+        let agent = AgentBuilder::new(model)
+            .preamble(&system_prompt)
+            .tool(shell)
+            .tool(read_file)
+            .tool(list_files)
+            .tool(edit_file)
+            .tool(delete_file)
+            .tool(grep)
+            .tool(write_file)
+            .temperature(0.7)
+            .max_tokens(8192)
+            .additional_params(ChatGptOAuthClient::codex_params())
+            .build();
+
+        use rig::agent::MultiTurnStreamItem;
+        use rig::streaming::StreamingPrompt;
+        use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+
+        let mut stream = agent
+            .stream_prompt("")
+            .with_history(full_history)
+            .multi_turn(max_tool_rounds as usize)
+            .await;
+
+        let mut chunk_count = 0u32;
+        while let Some(chunk_result) = stream.next().await {
+            chunk_count += 1;
+            match chunk_result {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Text(text_chunk),
+                )) => {
+                    if !text_chunk.text.is_empty() {
+                        let chunk_len = text_chunk.text.len();
+                        tracing::trace!("ChatGPT text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
+                        let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
+                        stats_window_chars += chunk_len;
+                        if let Some(stats) =
+                            emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
+                        {
+                            let _ = event_tx.send(stats);
+                        }
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Reasoning(reasoning),
+                )) => {
+                    let text = reasoning.reasoning.join("");
+                    if !text.is_empty() {
+                        tracing::debug!("ChatGPT reasoning chunk #{}: {} chars", chunk_count, text.len());
+                        let _ = event_tx.send(Message::Reasoning(text));
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ToolCall(tool_call),
+                )) => {
+                    let name = tool_call.function.name;
+                    let args = tool_call.function.arguments.to_string();
+                    let _ = event_tx.send(Message::ToolCall { name, args });
+                }
+                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
+                Ok(_) => {}
+                Err(e) => {
+                    let error_msg = format!("ChatGPT stream error: {}", e);
+                    if is_rate_limit_error(&error_msg) {
+                        auth::mark_cooldown(&token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                    }
+                    return Err(error_msg);
+                }
             }
         }
 
-        yield Message::StreamComplete;
+        return Ok(());
+    }
+    ProviderId::Gemini => {
+        tracing::info!("Using Gemini backend for model: {}", model_name);
+
+        let token = auth::select_token(providers::GEMINI)
+            .ok_or_else(|| "Gemini authentication required. Please authenticate in Settings.".to_string())?;
+
+        let client = GeminiCodeAssistRigClient::new(token.access_token);
+
+        let model = client.completion_model(&model_name);
+        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+            ticca_core::tools::create_tools(tool_context);
+
+        let agent = AgentBuilder::new(model)
+            .preamble(&system_prompt)
+            .tool(shell)
+            .tool(read_file)
+            .tool(list_files)
+            .tool(edit_file)
+            .tool(delete_file)
+            .tool(grep)
+            .tool(write_file)
+            .temperature(0.7)
+            .max_tokens(8192)
+            .build();
+
+        use rig::agent::MultiTurnStreamItem;
+        use rig::streaming::StreamingPrompt;
+        use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+
+        let mut stream = agent
+            .stream_prompt("")
+            .with_history(full_history)
+            .multi_turn(max_tool_rounds as usize)
+            .await;
+
+        let mut chunk_count = 0u32;
+        while let Some(chunk_result) = stream.next().await {
+            chunk_count += 1;
+            match chunk_result {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Text(text_chunk),
+                )) => {
+                    if !text_chunk.text.is_empty() {
+                        let chunk_len = text_chunk.text.len();
+                        tracing::trace!("Gemini text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
+                        let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
+                        stats_window_chars += chunk_len;
+                        if let Some(stats) =
+                            emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
+                        {
+                            let _ = event_tx.send(stats);
+                        }
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Reasoning(reasoning),
+                )) => {
+                    let text = reasoning.reasoning.join("");
+                    if !text.is_empty() {
+                        tracing::debug!("Gemini reasoning chunk #{}: {} chars", chunk_count, text.len());
+                        let _ = event_tx.send(Message::Reasoning(text));
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ToolCall(tool_call),
+                )) => {
+                    let name = tool_call.function.name;
+                    let args = tool_call.function.arguments.to_string();
+                    let _ = event_tx.send(Message::ToolCall { name, args });
+                }
+                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
+                Ok(_) => {}
+                Err(e) => {
+                    let error_msg = format!("Gemini stream error: {}", e);
+                    if is_rate_limit_error(&error_msg) {
+                        auth::mark_cooldown(&token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                    }
+                    return Err(error_msg);
+                }
+            }
+        }
+
+        return Ok(());
+    }
+    ProviderId::Claude => {
+    tracing::info!("Using Claude backend for model: {}", model_name);
+
+    let token = auth::select_token(providers::CLAUDE)
+        .ok_or_else(|| "Claude authentication required. Please authenticate in Settings.".to_string())?;
+
+    let client = ClaudeOAuthClient::new(token.access_token)
+        .map_err(|e| format!("Failed to create Claude client: {}", e))?;
+
+    let model = client.completion_model(&model_name);
+    let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+        ticca_core::tools::create_tools(tool_context);
+
+    let mut claude_history = full_history;
+    prepend_system_to_first_user_message(&system_prompt, &mut claude_history);
+
+    let agent = AgentBuilder::new(model)
+        .preamble(CLAUDE_CODE_INSTRUCTIONS)
+        .tool(shell)
+        .tool(read_file)
+        .tool(list_files)
+        .tool(edit_file)
+        .tool(delete_file)
+        .tool(grep)
+        .tool(write_file)
+        .temperature(0.7)
+        .max_tokens(8192)
+        .build();
+
+    use rig::agent::MultiTurnStreamItem;
+    use rig::streaming::StreamingPrompt;
+    use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+
+    let mut stream = agent
+        .stream_prompt("")
+        .with_history(claude_history)
+        .multi_turn(max_tool_rounds as usize)
+        .await;
+
+    let mut chunk_count = 0u32;
+    while let Some(chunk_result) = stream.next().await {
+        chunk_count += 1;
+        match chunk_result {
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(text_chunk),
+            )) => {
+                if !text_chunk.text.is_empty() {
+                    let chunk_len = text_chunk.text.len();
+                    tracing::trace!("Claude text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
+                    let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
+                    stats_window_chars += chunk_len;
+                    if let Some(stats) =
+                        emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
+                    {
+                        let _ = event_tx.send(stats);
+                    }
+                }
+            }
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Reasoning(reasoning),
+            )) => {
+                let text = reasoning.reasoning.join("");
+                if !text.is_empty() {
+                    tracing::debug!("Claude reasoning chunk #{}: {} chars", chunk_count, text.len());
+                    let _ = event_tx.send(Message::Reasoning(text));
+                }
+            }
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::ToolCall(tool_call),
+            )) => {
+                let name = tool_call.function.name;
+                let args = tool_call.function.arguments.to_string();
+                let _ = event_tx.send(Message::ToolCall { name, args });
+            }
+            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
+            Ok(_) => {}
+            Err(e) => {
+                let error_msg = format!("Claude stream error: {}", e);
+                if is_rate_limit_error(&error_msg) {
+                    auth::mark_cooldown(&token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                }
+                return Err(error_msg);
+            }
+        }
+    }
+
+    Ok(())
+    }
     }
 }

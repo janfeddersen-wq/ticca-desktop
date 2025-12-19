@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub default_model: Option<String>,
     pub agent_pinned_models: HashMap<AgentType, String>,
     pub max_tool_rounds: u32,
+    pub yolo_mode_enabled: bool,
 }
 
 /// Load configuration from database
@@ -24,6 +25,7 @@ pub fn load_config() -> AppConfig {
             default_model: None,
             agent_pinned_models: HashMap::new(),
             max_tool_rounds: defaults::MAX_TOOL_ROUNDS,
+            yolo_mode_enabled: defaults::YOLO_MODE,
         },
     };
 
@@ -45,6 +47,12 @@ pub fn load_config() -> AppConfig {
         .and_then(|s| s.value.parse().ok())
         .unwrap_or(defaults::MAX_TOOL_ROUNDS);
 
+    let yolo_mode_enabled = db.get_setting(setting_keys::YOLO_MODE)
+        .ok()
+        .flatten()
+        .map(|s| s.value == "true")
+        .unwrap_or(defaults::YOLO_MODE);
+
     // Load agent pinned models
     let pinned_map = db.get_all_agent_pinned_models()
         .ok()
@@ -62,5 +70,6 @@ pub fn load_config() -> AppConfig {
         default_model,
         agent_pinned_models,
         max_tool_rounds,
+        yolo_mode_enabled,
     }
 }
