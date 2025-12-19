@@ -36,7 +36,10 @@ impl Agent for CodingAgent {
             &[
                 "Use list_files to explore project structure before modifying files",
                 "Follow DRY, YAGNI, and SOLID principles",
+                "Keep solutions simple and readable (KISS)",
+                "Keep individual files under 600 lines; split modules when needed",
                 "Continue working autonomously until the task is complete",
+                "When invoking another agent, provide clear context, desired output, and constraints",
             ],
         );
 

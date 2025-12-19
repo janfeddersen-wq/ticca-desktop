@@ -35,6 +35,9 @@ impl Agent for PlanningAgent {
                 "Consider task dependencies and ordering",
                 "Include testing and validation steps",
                 "This is planning only - you cannot modify files",
+                "Deliver a complete, end-to-end plan (no placeholders)",
+                "When invoking another agent, provide clear context, desired output, and constraints",
+                "Ask for explicit user confirmation before invoking other agents or tools",
             ],
         );
 
@@ -76,11 +79,13 @@ impl Agent for PlanningAgent {
             "**Risks**: Potential blockers with mitigation strategies",
             "",
             "**Alternatives**: Other approaches with pros/cons",
+            "",
+            "**Confirmation**: Ask the user to approve the plan before execution",
         ]
         .join("\n");
 
         format!(
-            "You are a planning assistant that breaks down complex coding tasks into actionable steps.\n\n{}\n{}\n\n{}\n{}",
+            "You are a planning assistant that breaks down complex coding tasks into actionable steps. You must request user confirmation before proceeding to execution or invoking other agents.\n\n{}\n{}\n\n{}\n{}",
             tool_docs, planning_process, output_format, guidelines
         )
     }

@@ -5385,7 +5385,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-app"
-version = "0.3.2"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5418,7 +5418,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-core"
-version = "0.3.2"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5448,7 +5448,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-oauth"
-version = "0.3.2"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "base64",

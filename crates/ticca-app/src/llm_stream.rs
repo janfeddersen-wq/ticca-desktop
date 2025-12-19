@@ -419,13 +419,28 @@ fn resolve_invocation_model(agent_type: AgentType, parent_context: &ToolContext)
         .ok_or_else(|| "No model configured for invoke_agent".to_string())
 }
 
+async fn append_agents_md(system_prompt: &str, working_directory: &PathBuf) -> String {
+    let agents_path = working_directory.join("AGENTS.md");
+    match tokio::fs::read_to_string(&agents_path).await {
+        Ok(contents) if !contents.trim().is_empty() => {
+            format!(
+                "{}\n\n## AGENTS.md\n{}\n",
+                system_prompt.trim_end(),
+                contents.trim()
+            )
+        }
+        _ => system_prompt.to_string(),
+    }
+}
+
 async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
     let parent_context = request.parent_context;
     let agent_type = request.agent_type;
     let model_name = resolve_invocation_model(agent_type, &parent_context)?;
     let max_tool_rounds = parent_context.max_tool_rounds.max(1);
 
-    let profile = AgentProfile::for_type(agent_type, max_tool_rounds);
+    let mut profile = AgentProfile::for_type(agent_type, max_tool_rounds);
+    profile.system_prompt = append_agents_md(&profile.system_prompt, &parent_context.working_directory).await;
     if let Some(tx) = &parent_context.agent_stream_tx {
         let _ = tx.send(AgentStreamEvent::Start {
             node_id: request.node_id,
@@ -447,7 +462,12 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
         agent_invoker: parent_context.agent_invoker.clone(),
     });
 
-    let user_msg = build_user_message(&request.prompt, Vec::new());
+    let invoke_prompt = format!(
+        "You are assisting the {}. Provide a concise, actionable response for the invoking agent.\n\nTask:\n{}",
+        parent_context.current_agent.display_name(),
+        request.prompt
+    );
+    let user_msg = build_user_message(&invoke_prompt, Vec::new());
     let mut history = vec![user_msg];
 
     let result = match ProviderRegistry::resolve_provider(&model_name) {
