@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{ConfigDatabase, setting_keys, defaults};
+use ticca_core::config::{ConfigDatabase, TypedSettings};
 
 use crate::theme::AppTheme;
 
@@ -24,34 +24,16 @@ pub fn load_config() -> AppConfig {
             theme: AppTheme::Dark,
             default_model: None,
             agent_pinned_models: HashMap::new(),
-            max_tool_rounds: defaults::MAX_TOOL_ROUNDS,
-            yolo_mode_enabled: defaults::YOLO_MODE,
+            max_tool_rounds: ticca_core::config::defaults::MAX_TOOL_ROUNDS,
+            yolo_mode_enabled: ticca_core::config::defaults::YOLO_MODE,
         },
     };
 
-    let theme = db.get_setting(setting_keys::THEME)
-        .ok()
-        .flatten()
-        .map(|s| AppTheme::from_str(&s.value))
-        .unwrap_or(AppTheme::Dark);
-
-    let default_model = db.get_setting(setting_keys::DEFAULT_MODEL)
-        .ok()
-        .flatten()
-        .map(|s| s.value)
-        .filter(|s| !s.is_empty());
-
-    let max_tool_rounds = db.get_setting(setting_keys::MAX_TOOL_ROUNDS)
-        .ok()
-        .flatten()
-        .and_then(|s| s.value.parse().ok())
-        .unwrap_or(defaults::MAX_TOOL_ROUNDS);
-
-    let yolo_mode_enabled = db.get_setting(setting_keys::YOLO_MODE)
-        .ok()
-        .flatten()
-        .map(|s| s.value == "true")
-        .unwrap_or(defaults::YOLO_MODE);
+    let settings = TypedSettings::load(&db);
+    let theme = AppTheme::from_str(&settings.theme);
+    let default_model = settings.default_model;
+    let max_tool_rounds = settings.max_tool_rounds;
+    let yolo_mode_enabled = settings.yolo_mode_enabled;
 
     // Load agent pinned models
     let pinned_map = db.get_all_agent_pinned_models()

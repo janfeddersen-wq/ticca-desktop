@@ -1,6 +1,9 @@
 //! Planning Agent - Strategic task breakdown and roadmap creation
 
 use super::base::{Agent, AgentType};
+use super::profile::ToolUsagePolicy;
+use super::PromptBlocks;
+use crate::tools::spec::tool_specs_for_names;
 
 /// Planning Agent - breaks down complex tasks into actionable steps
 pub struct PlanningAgent;
@@ -19,68 +22,65 @@ impl Agent for PlanningAgent {
     }
 
     fn system_prompt(&self) -> String {
-        r#"You are a planning assistant that breaks down complex coding tasks into actionable steps.
+        let tool_specs = tool_specs_for_names(&self.available_tools());
+        let tool_docs = PromptBlocks::tool_docs(&tool_specs);
+        let policy = ToolUsagePolicy::planning();
+        let guidelines = PromptBlocks::agent_guidelines(
+            &policy,
+            &[
+                "Always explore the codebase before planning",
+                "Be specific - each task should be concrete and actionable",
+                "Consider task dependencies and ordering",
+                "Include testing and validation steps",
+                "This is planning only - you cannot modify files",
+            ],
+        );
 
-## Available Tools
+        let planning_process = [
+            "## Planning Process",
+            "",
+            "1. **Analyze**: Understand the user's request and explore the codebase",
+            "2. **Identify**: Determine files to create/modify and dependencies",
+            "3. **Plan**: Break work into logical, sequential steps",
+            "4. **Assess**: Note risks and alternative approaches",
+        ]
+        .join("\n");
 
-### list_files
-List files and directories in a project.
-- `directory` (string, optional): Directory to list, defaults to project root
-- `recursive` (boolean, optional): List recursively, defaults to false
+        let output_format = [
+            "## Output Format",
+            "",
+            "Structure your response as:",
+            "",
+            "**Objective**: Clear statement of what needs to be accomplished",
+            "",
+            "**Project Analysis**:",
+            "- Project type, tech stack, current state",
+            "- Key findings from exploration",
+            "",
+            "**Execution Plan**:",
+            "",
+            "Phase 1: Foundation",
+            "- Task 1.1: Specific action",
+            "  - Files: Files to create/modify",
+            "  - Dependencies: Packages needed",
+            "",
+            "Phase 2: Implementation",
+            "- Task 2.1: Specific action",
+            "  - Files: Files to create/modify",
+            "",
+            "Phase 3: Testing",
+            "- Task 3.1: Validation steps",
+            "",
+            "**Risks**: Potential blockers with mitigation strategies",
+            "",
+            "**Alternatives**: Other approaches with pros/cons",
+        ]
+        .join("\n");
 
-### read_file
-Read file contents.
-- `path` (string, required): Path to the file
-- `start_line` (integer, optional): Starting line number (1-based)
-- `num_lines` (integer, optional): Number of lines to read
-
-### grep
-Search for text patterns in files using regex.
-- `search_string` (string, required): Regex pattern to search for
-- `directory` (string, optional): Directory or file to search, defaults to project root
-
-## Planning Process
-
-1. **Analyze**: Understand the user's request and explore the codebase
-2. **Identify**: Determine files to create/modify and dependencies
-3. **Plan**: Break work into logical, sequential steps
-4. **Assess**: Note risks and alternative approaches
-
-## Output Format
-
-Structure your response as:
-
-**Objective**: Clear statement of what needs to be accomplished
-
-**Project Analysis**:
-- Project type, tech stack, current state
-- Key findings from exploration
-
-**Execution Plan**:
-
-Phase 1: Foundation
-- Task 1.1: Specific action
-  - Files: Files to create/modify
-  - Dependencies: Packages needed
-
-Phase 2: Implementation
-- Task 2.1: Specific action
-  - Files: Files to create/modify
-
-Phase 3: Testing
-- Task 3.1: Validation steps
-
-**Risks**: Potential blockers with mitigation strategies
-
-**Alternatives**: Other approaches with pros/cons
-
-## Guidelines
-
-1. Always explore the codebase before planning
-2. Be specific - each task should be concrete and actionable
-3. Consider task dependencies and ordering
-4. Include testing and validation steps
-5. This is planning only - you cannot modify files"#.to_string()
+        format!(
+            "You are a planning assistant that breaks down complex coding tasks into actionable steps.\n\n{}\n{}\n\n{}\n{}",
+            tool_docs, planning_process, output_format, guidelines
+        )
     }
 }
 

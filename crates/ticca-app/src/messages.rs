@@ -43,6 +43,9 @@ pub enum Message {
     /// Streaming completed
     StreamComplete,
 
+    /// Streaming stopped by user
+    StreamStopped,
+
     /// Streaming error
     StreamError(String),
 
@@ -69,6 +72,9 @@ pub enum Message {
 
     /// Animation tick for smooth 60 FPS spinner animation
     AnimationTick,
+
+    /// Stop the active streaming request
+    StopStreaming,
 
     // Navigation
     OpenSettings,
@@ -127,6 +133,8 @@ pub enum Message {
     LinkClicked(iced::widget::markdown::Uri),
 
     // Errors
+    /// Internal no-op for async command completions
+    Noop,
     DismissError,
 }
 

@@ -138,8 +138,8 @@ pub fn view<'a>(
     let attachment_preview = build_attachment_preview(pending_attachments);
 
     // Check if we can send (has text or attachments)
-    let can_send = !is_streaming &&
-        (!input_value.trim().is_empty() || !pending_attachments.is_empty());
+    let can_send = !is_streaming
+        && (!input_value.trim().is_empty() || !pending_attachments.is_empty());
 
     // Streaming indicator - shows LLM output rate or waiting animation
     let streaming_indicator: Option<Element<'_, Message>> = if is_streaming {
@@ -218,7 +218,11 @@ pub fn view<'a>(
         .push(
             text_input("Type a message...", input_value)
                 .on_input(Message::InputChanged)
-                .on_submit(Message::SendMessage)
+                .on_submit(if is_streaming {
+                    Message::StopStreaming
+                } else {
+                    Message::SendMessage
+                })
                 .style(styles::text_input_style)
                 .padding(12)
                 .size(14)
@@ -227,12 +231,18 @@ pub fn view<'a>(
         .push(
             button(
                 if is_streaming {
-                    icon(icons::HOURGLASS_EMPTY).size(20)
+                    icon(icons::CANCEL).size(20)
                 } else {
                     icon(icons::ARROW_UPWARD).size(20)
                 }
             )
-            .on_press_maybe(if can_send { Some(Message::SendMessage) } else { None })
+            .on_press_maybe(if is_streaming {
+                Some(Message::StopStreaming)
+            } else if can_send {
+                Some(Message::SendMessage)
+            } else {
+                None
+            })
             .style(styles::send_button)
             .padding([8, 8])
         );

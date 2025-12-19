@@ -228,3 +228,44 @@ pub fn write_file_spec() -> ToolSpec {
         ),
     }
 }
+
+pub fn tool_specs_for_names(names: &[&str]) -> Vec<ToolSpec> {
+    names
+        .iter()
+        .filter_map(|name| match *name {
+            "list_files" => Some(list_files_spec()),
+            "read_file" => Some(read_file_spec()),
+            "edit_file" => Some(edit_file_spec()),
+            "delete_file" => Some(delete_file_spec()),
+            "grep" => Some(grep_spec(200)),
+            "shell" => Some(shell_spec(60, 256)),
+            "write_file" => Some(write_file_spec()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_files_spec_contains_schema() {
+        let spec = list_files_spec();
+        let properties = spec
+            .rig_parameters
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("properties should exist");
+
+        assert!(properties.contains_key("directory"));
+        assert!(properties.contains_key("recursive"));
+    }
+
+    #[test]
+    fn tool_specs_for_names_filters_unknown() {
+        let specs = tool_specs_for_names(&["list_files", "nope", "read_file"]);
+        let names: Vec<&str> = specs.iter().map(|s| s.name).collect();
+        assert_eq!(names, vec!["list_files", "read_file"]);
+    }
+}

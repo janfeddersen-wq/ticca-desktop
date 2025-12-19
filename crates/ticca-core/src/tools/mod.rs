@@ -16,6 +16,7 @@ pub mod shell;
 pub mod rig_tools;
 pub mod approval;
 pub mod spec;
+pub mod policy;
 
 // Re-export registry types
 pub use registry::{
@@ -40,6 +41,7 @@ pub use rig_tools::{
     create_tools,
 };
 pub use approval::{ToolApprovalGate, ToolApprovalRequest, ToolApprovalDecision};
+pub use policy::ToolPolicy;
 
 /// Create a tool registry with all available tools registered
 pub fn create_default_registry() -> ToolRegistry {

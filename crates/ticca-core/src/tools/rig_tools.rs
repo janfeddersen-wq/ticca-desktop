@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
+use super::policy::ToolPolicy;
 
 /// Shared context for all tools - primarily the working directory
 #[derive(Clone)]
@@ -15,12 +16,16 @@ pub struct ToolContext {
     pub working_directory: PathBuf,
     pub approval_gate: Option<Arc<super::approval::ToolApprovalGate>>,
     pub yolo_mode_enabled: bool,
+    pub policy: ToolPolicy,
 }
 
 impl Default for ToolContext {
     fn default() -> Self {
+        let working_directory =
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
-            working_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            policy: ToolPolicy::allow_root(working_directory.clone()),
+            working_directory,
             approval_gate: None,
             yolo_mode_enabled: true,
         }
@@ -43,6 +48,17 @@ impl ToolContext {
                 }
             }
             None => Err("Approval gate not available".to_string()),
+        }
+    }
+
+    fn enforce_path(&self, path: &PathBuf) -> Result<(), String> {
+        if self.policy.is_path_allowed(path) {
+            Ok(())
+        } else {
+            Err(format!(
+                "Tool access denied for path outside allowed roots: {}",
+                path.display()
+            ))
         }
     }
 }
@@ -194,6 +210,12 @@ impl Tool for ReadFileTool {
         let start = args.start_line;
         let num = args.num_lines;
 
+        if let Some(context) = &self.context {
+            context
+                .enforce_path(&full_path)
+                .map_err(ReadFileError)?;
+        }
+
         // Run synchronous file read in blocking task
         let result = tokio::task::spawn_blocking(move || {
             super::file_ops::read_file_impl(&path_str, start, num)
@@ -271,6 +293,12 @@ impl Tool for ListFilesTool {
         } else {
             base_path.join(&dir)
         };
+
+        if let Some(context) = &self.context {
+            context
+                .enforce_path(&full_path)
+                .map_err(ListFilesError)?;
+        }
 
         let path_str = full_path.to_string_lossy().to_string();
         let recursive = args.recursive.unwrap_or(false);
@@ -353,6 +381,12 @@ impl Tool for EditFileTool {
         } else {
             base_path.join(&args.path)
         };
+
+        if let Some(context) = &self.context {
+            context
+                .enforce_path(&full_path)
+                .map_err(EditFileError)?;
+        }
 
         let path_str = full_path.to_string_lossy().to_string();
 
@@ -530,6 +564,12 @@ impl Tool for GrepTool {
             base_path.join(&search_path)
         };
 
+        if let Some(context) = &self.context {
+            context
+                .enforce_path(&full_path)
+                .map_err(GrepError)?;
+        }
+
         let path_str = full_path.to_string_lossy().to_string();
 
         // Prepend -i flag if case insensitive
@@ -616,6 +656,12 @@ impl Tool for WriteFileTool {
             base_path.join(&args.path)
         };
 
+        if let Some(context) = &self.context {
+            context
+                .enforce_path(&full_path)
+                .map_err(WriteFileError)?;
+        }
+
         // Create parent directories if they don't exist
         if let Some(parent) = full_path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -654,4 +700,21 @@ pub fn create_tools(context: Arc<ToolContext>) -> (
         GrepTool::new(context.clone()),
         WriteFileTool::new(context),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::spec;
+
+    #[tokio::test]
+    async fn list_files_definition_matches_spec() {
+        let context = Arc::new(ToolContext::default());
+        let tool = ListFilesTool::new(context);
+        let definition = tool.definition("".to_string()).await;
+        let spec = spec::list_files_spec();
+
+        assert_eq!(definition.name, spec.name);
+        assert_eq!(definition.description, spec.description);
+    }
 }

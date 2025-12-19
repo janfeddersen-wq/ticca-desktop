@@ -95,3 +95,31 @@ impl ProviderRegistry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_chatgpt_models() {
+        assert_eq!(ProviderRegistry::resolve_provider("gpt-4o"), ProviderId::ChatGpt);
+        assert_eq!(ProviderRegistry::resolve_provider("chatgpt-4o-latest"), ProviderId::ChatGpt);
+    }
+
+    #[test]
+    fn resolves_gemini_models() {
+        assert_eq!(
+            ProviderRegistry::resolve_provider("gemini-2.0-flash"),
+            ProviderId::Gemini
+        );
+    }
+
+    #[test]
+    fn resolves_claude_as_default() {
+        assert_eq!(
+            ProviderRegistry::resolve_provider("claude-3-5-sonnet"),
+            ProviderId::Claude
+        );
+        assert_eq!(ProviderRegistry::resolve_provider("unknown-model"), ProviderId::Claude);
+    }
+}

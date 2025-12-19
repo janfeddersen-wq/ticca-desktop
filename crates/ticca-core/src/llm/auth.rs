@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::config::ConfigDatabase;
+use crate::config::{AccountRotationPolicy, ConfigDatabase, TypedSettings};
 use crate::config::models::providers as provider_names;
 use crate::config::OAuthAccount;
 
@@ -64,14 +64,27 @@ pub fn select_token(provider: &str) -> Option<AuthToken> {
         .filter(|a| !is_cooling(a))
         .collect();
 
-    eligible.sort_by(|a, b| {
-        let priority_cmp = b.priority.cmp(&a.priority);
-        if priority_cmp != std::cmp::Ordering::Equal {
-            return priority_cmp;
+    let rotation_policy = ConfigDatabase::open()
+        .ok()
+        .map(|db| TypedSettings::load(&db).account_rotation_policy)
+        .unwrap_or(crate::config::defaults::ACCOUNT_ROTATION_POLICY);
+
+    eligible.sort_by(|a, b| match rotation_policy {
+        AccountRotationPolicy::PriorityThenLeastRecentlyUsed => {
+            let priority_cmp = b.priority.cmp(&a.priority);
+            if priority_cmp != std::cmp::Ordering::Equal {
+                return priority_cmp;
+            }
+            let a_used = parse_time(&a.last_used_at);
+            let b_used = parse_time(&b.last_used_at);
+            a_used.cmp(&b_used)
         }
-        let a_used = parse_time(&a.last_used_at);
-        let b_used = parse_time(&b.last_used_at);
-        a_used.cmp(&b_used)
+        AccountRotationPolicy::PriorityOnly => b.priority.cmp(&a.priority),
+        AccountRotationPolicy::LeastRecentlyUsed => {
+            let a_used = parse_time(&a.last_used_at);
+            let b_used = parse_time(&b.last_used_at);
+            a_used.cmp(&b_used)
+        }
     });
 
     let account = eligible.into_iter().next()?;

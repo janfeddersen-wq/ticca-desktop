@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use base64::Engine as _;
 
-use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType, AgentProfile};
+use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType, AgentProfile, ModelSelectionContext};
 use ticca_core::config::{ConfigDatabase, setting_keys};
 use ticca_core::llm::auth;
 use ticca_core::llm::{ProviderId, ProviderRegistry};
@@ -17,7 +17,7 @@ use ticca_core::session::Session;
 use crate::oauth_handler;
 use crate::session_manager;
 
-use crate::app_config::load_config;
+use crate::app_config::{load_config, AppConfig};
 use crate::chat_message::ChatMessage;
 use crate::helpers::format_tool_call_oneliner;
 use crate::image_handler;
@@ -32,72 +32,11 @@ use tokio::sync::mpsc;
 
 /// Main application state
 pub struct TiccaApp {
-    // UI State
     current_view: View,
     theme: AppTheme,
-
-    // Chat state
-    input_value: String,
-    messages: Vec<ChatMessage>,
-    is_streaming: bool,
-
-    // Image attachments pending to be sent
-    pending_attachments: Vec<ImageAttachment>,
-
-    // Agent state
-    current_agent: AgentType,
-    agent_config: CoreAgentConfig,
-
-    // Model selection state
-    available_models: Vec<String>,
-    default_model: Option<String>,
-    agent_pinned_models: HashMap<AgentType, String>,
-    is_loading_models: bool,
-
-    // Session state
-    current_session: Option<Session>,
-
-    // Working directory for tools
-    working_directory: PathBuf,
-
-    // Agent configuration
-    max_tool_rounds: u32,
-    yolo_mode_enabled: bool,
-
-    // Settings view state
-    settings_tab: SettingsTab,
-
-    // Tool approval flow
-    approval_tx: Option<mpsc::UnboundedSender<ticca_core::tools::ToolApprovalDecision>>,
-    pending_approvals: std::collections::VecDeque<ToolApprovalPrompt>,
-    active_approval: Option<ToolApprovalPrompt>,
-
-    // Raw view toggle state (message indices showing raw text)
-    raw_view_messages: HashSet<usize>,
-    // Text editor content for raw view (created on demand)
-    raw_view_editors: HashMap<usize, text_editor::Content>,
-
-    // Error display
+    chat: ChatState,
+    settings: SettingsState,
     error_message: Option<String>,
-
-    // Provider authentication status
-    provider_auth_status: ProviderAuthStatus,
-
-    // Auto-scroll tracking: true if user is at/near bottom of chat
-    user_at_bottom: bool,
-
-    // Streaming stats for TPS indicator
-    stream_start_time: Option<std::time::Instant>,
-    stream_chars_received: usize,
-    current_tps: f64,
-    /// Toggles on each chunk for pulse effect
-    stream_pulse: bool,
-    /// Rolling window of TPS samples for 1-minute average (one sample per second)
-    tps_samples: std::collections::VecDeque<f64>,
-    /// Time when we last received bytes (for detecting "waiting" state)
-    last_bytes_time: Option<std::time::Instant>,
-    /// Counter for spinner animation frames
-    spinner_frame: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -107,12 +46,120 @@ struct ToolApprovalPrompt {
     args: String,
 }
 
+struct ChatState {
+    input_value: String,
+    messages: Vec<ChatMessage>,
+    is_streaming: bool,
+    pending_attachments: Vec<ImageAttachment>,
+    current_agent: AgentType,
+    agent_config: CoreAgentConfig,
+    available_models: Vec<String>,
+    default_model: Option<String>,
+    agent_pinned_models: HashMap<AgentType, String>,
+    is_loading_models: bool,
+    current_session: Option<Session>,
+    working_directory: PathBuf,
+    max_tool_rounds: u32,
+    yolo_mode_enabled: bool,
+    approval_tx: Option<mpsc::UnboundedSender<ticca_core::tools::ToolApprovalDecision>>,
+    pending_approvals: VecDeque<ToolApprovalPrompt>,
+    active_approval: Option<ToolApprovalPrompt>,
+    stream_cancel: Option<tokio::sync::oneshot::Sender<()>>,
+    raw_view_messages: HashSet<usize>,
+    raw_view_editors: HashMap<usize, text_editor::Content>,
+    user_at_bottom: bool,
+    stream_start_time: Option<std::time::Instant>,
+    stream_chars_received: usize,
+    current_tps: f64,
+    stream_pulse: bool,
+    tps_samples: VecDeque<f64>,
+    last_bytes_time: Option<std::time::Instant>,
+    spinner_frame: usize,
+}
+
+impl ChatState {
+    fn new(config: &AppConfig, working_directory: PathBuf) -> Self {
+        Self {
+            input_value: String::new(),
+            messages: vec![ChatMessage::assistant(
+                "Welcome to Ticca. How can I assist you?",
+            )],
+            is_streaming: false,
+            pending_attachments: Vec::new(),
+            current_agent: AgentType::Coding,
+            agent_config: CoreAgentConfig::coding(),
+            available_models: Vec::new(),
+            default_model: config.default_model.clone(),
+            agent_pinned_models: config.agent_pinned_models.clone(),
+            is_loading_models: false,
+            current_session: None,
+            working_directory,
+            max_tool_rounds: config.max_tool_rounds,
+            yolo_mode_enabled: config.yolo_mode_enabled,
+            approval_tx: None,
+            pending_approvals: VecDeque::new(),
+            active_approval: None,
+            stream_cancel: None,
+            raw_view_messages: HashSet::new(),
+            raw_view_editors: HashMap::new(),
+            user_at_bottom: true,
+            stream_start_time: None,
+            stream_chars_received: 0,
+            current_tps: 0.0,
+            stream_pulse: false,
+            tps_samples: VecDeque::with_capacity(60),
+            last_bytes_time: None,
+            spinner_frame: 0,
+        }
+    }
+}
+
+struct SettingsState {
+    settings_tab: SettingsTab,
+    provider_auth_status: ProviderAuthStatus,
+}
+
+impl SettingsState {
+    fn new(provider_auth_status: ProviderAuthStatus) -> Self {
+        Self {
+            settings_tab: SettingsTab::Accounts,
+            provider_auth_status,
+        }
+    }
+}
+
 /// Views in the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
     #[default]
     Chat,
     Settings,
+}
+
+#[derive(Debug)]
+enum AppCommand {
+    RunStream {
+        system_prompt: String,
+        user_message: String,
+        model_name: Option<String>,
+        working_directory: PathBuf,
+        max_tool_rounds: u32,
+        history: Vec<ChatMessage>,
+        image_data: Vec<(String, String)>,
+        yolo_mode_enabled: bool,
+        approval_rx: mpsc::UnboundedReceiver<ticca_core::tools::ToolApprovalDecision>,
+        cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    },
+    ScrollToBottom,
+    StartOAuth(crate::messages::OAuthProvider),
+    RefreshModels,
+    RefreshModelsForProvider(ProviderId),
+    CopyToClipboard(String),
+    PickWorkingDirectory,
+    PickImageFile,
+    LoadImage(PathBuf),
+    PasteImage,
+    OpenUrl(String),
 }
 
 /// Check if all providers have valid (non-expired) tokens
@@ -132,42 +179,14 @@ impl TiccaApp {
 
         // Load working directory from config or use current directory
         let working_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let provider_auth_status = check_provider_auth_status();
 
         let app = Self {
             current_view: View::Chat,
             theme: config.theme,
-            input_value: String::new(),
-            messages: vec![
-                ChatMessage::assistant("Welcome to Ticca. How can I assist you?"),
-            ],
-            is_streaming: false,
-            pending_attachments: Vec::new(),
-            current_agent: AgentType::Coding,
-            agent_config: CoreAgentConfig::coding(),
-            available_models: Vec::new(),
-            default_model: config.default_model,
-            agent_pinned_models: config.agent_pinned_models,
-            is_loading_models: false,
-            current_session: None,
-            working_directory,
-            max_tool_rounds: config.max_tool_rounds,
-            yolo_mode_enabled: config.yolo_mode_enabled,
-            settings_tab: SettingsTab::Accounts,
-            approval_tx: None,
-            pending_approvals: VecDeque::new(),
-            active_approval: None,
-            raw_view_messages: HashSet::new(),
-            raw_view_editors: HashMap::new(),
+            chat: ChatState::new(&config, working_directory),
+            settings: SettingsState::new(provider_auth_status),
             error_message: None,
-            provider_auth_status: check_provider_auth_status(),
-            user_at_bottom: true, // Start at bottom
-            stream_start_time: None,
-            stream_chars_received: 0,
-            current_tps: 0.0,
-            stream_pulse: false,
-            tps_samples: std::collections::VecDeque::with_capacity(60),
-            last_bytes_time: None,
-            spinner_frame: 0,
         };
 
         // Automatically fetch models on startup if we have credentials
@@ -182,15 +201,17 @@ impl TiccaApp {
 
     /// Get the window title
     pub fn title(&self) -> String {
-        format!("Ticca Desktop - {}", self.current_agent.display_name())
+        format!("Ticca Desktop - {}", self.chat.current_agent.display_name())
     }
 
     /// Handle a message and return any resulting tasks
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let mut commands = Vec::new();
+
         match message {
+            Message::Noop => {}
             Message::InputChanged(value) => {
-                self.input_value = value;
-                Task::none()
+                self.chat.input_value = value;
             }
 
             Message::ChatScrolled(viewport) => {
@@ -201,26 +222,22 @@ impl TiccaApp {
                 let scroll_offset = viewport.absolute_offset().y;
                 let max_scroll = (content_height - viewport_height).max(0.0);
                 let distance_from_bottom = max_scroll - scroll_offset;
-                self.user_at_bottom = distance_from_bottom < 50.0;
-                Task::none()
+                self.chat.user_at_bottom = distance_from_bottom < 50.0;
             }
 
             Message::SendMessage => {
-                // Check if we have something to send (text or images)
-                let has_text = !self.input_value.trim().is_empty();
-                let has_images = !self.pending_attachments.is_empty();
+                let has_text = !self.chat.input_value.trim().is_empty();
+                let has_images = !self.chat.pending_attachments.is_empty();
 
-                if (!has_text && !has_images) || self.is_streaming {
-                    return Task::none();
+                if (!has_text && !has_images) || self.chat.is_streaming {
+                    return self.execute_commands(commands);
                 }
 
-                let user_message = self.input_value.clone();
-                self.input_value.clear();
+                let user_message = self.chat.input_value.clone();
+                self.chat.input_value.clear();
 
-                // Take the pending attachments
-                let attachments = std::mem::take(&mut self.pending_attachments);
+                let attachments = std::mem::take(&mut self.chat.pending_attachments);
 
-                // Build display message with image indicators
                 let display_message = if attachments.is_empty() {
                     user_message.clone()
                 } else {
@@ -237,18 +254,15 @@ impl TiccaApp {
                     }
                 };
 
-                // Add user message
-                self.messages.push(ChatMessage::user(&display_message));
+                self.chat.messages.push(ChatMessage::user(&display_message));
+                self.chat.user_at_bottom = true;
 
-                // User just sent a message, so scroll to bottom and track as at bottom
-                self.user_at_bottom = true;
-
-                let profile = AgentProfile::for_type(self.current_agent, self.max_tool_rounds);
-                // Determine which model to use: pinned > default > fetch from API
-                let model_name = profile.resolve_model(
-                    self.agent_pinned_models.get(&self.current_agent).cloned(),
-                    self.default_model.clone(),
-                );
+                let profile = AgentProfile::for_type(self.chat.current_agent, self.chat.max_tool_rounds);
+                let model_name = profile.resolve_model(ModelSelectionContext {
+                    pinned: self.chat.agent_pinned_models.get(&self.chat.current_agent).map(String::as_str),
+                    default_model: self.chat.default_model.as_deref(),
+                    available_models: &self.chat.available_models,
+                });
 
                 let provider = model_name
                     .as_deref()
@@ -263,40 +277,36 @@ impl TiccaApp {
 
                 if !provider_ok {
                     let provider_name = ProviderRegistry::info(provider).display_name;
-                    self.messages.push(ChatMessage::assistant(
+                    self.chat.messages.push(ChatMessage::assistant(
                         format!("⚠️ No {} accounts available. Please authenticate in Settings.", provider_name)
                     ));
-                    return Task::none();
+                    return self.execute_commands(commands);
                 }
 
-                // Add streaming placeholder
-                self.messages.push(ChatMessage::assistant_streaming());
-                self.is_streaming = true;
+                self.chat.messages.push(ChatMessage::assistant_streaming());
+                self.chat.is_streaming = true;
 
-                // Initialize streaming stats
-                self.stream_start_time = Some(std::time::Instant::now());
-                self.stream_chars_received = 0;
-                self.current_tps = 0.0;
-                self.stream_pulse = false;
+                self.chat.stream_start_time = Some(std::time::Instant::now());
+                self.chat.stream_chars_received = 0;
+                self.chat.current_tps = 0.0;
+                self.chat.stream_pulse = false;
 
-                // Get the system prompt based on current agent profile
                 let system_prompt = profile.system_prompt;
-
-                // Send to Claude via Rig OAuthClient with streaming (ReAct loop enabled)
-                let working_dir = self.working_directory.clone();
+                let working_dir = self.chat.working_directory.clone();
                 let max_tool_rounds = profile.max_tool_rounds;
                 let (approval_tx, approval_rx) = mpsc::unbounded_channel();
-                self.approval_tx = Some(approval_tx);
-                self.pending_approvals.clear();
-                self.active_approval = None;
-                // Build conversation history (exclude the last user message we just added)
-                let history: Vec<_> = self.messages.iter()
-                    .take(self.messages.len().saturating_sub(2)) // Exclude the user message + streaming placeholder
-                    .filter(|m| !m.is_streaming) // Exclude streaming messages
+                let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+                self.chat.approval_tx = Some(approval_tx);
+                self.chat.stream_cancel = Some(cancel_tx);
+                self.chat.pending_approvals.clear();
+                self.chat.active_approval = None;
+
+                let history: Vec<_> = self.chat.messages.iter()
+                    .take(self.chat.messages.len().saturating_sub(2))
+                    .filter(|m| !m.is_streaming)
                     .cloned()
                     .collect();
 
-                // Convert attachments to base64 for the API
                 let image_data: Vec<(String, String)> = attachments.iter()
                     .map(|att| {
                         let base64_data = base64::engine::general_purpose::STANDARD.encode(&*att.data);
@@ -304,100 +314,65 @@ impl TiccaApp {
                     })
                     .collect();
 
-                let stream_task = Task::run(
-                    llm_stream::run_rig_agent_stream(
-                        system_prompt,
-                        user_message,
-                        model_name,
-                        working_dir,
-                        max_tool_rounds,
-                        history,
-                        image_data,
-                        self.yolo_mode_enabled,
-                        approval_rx,
-                    ),
-                    |event| event,
-                );
-
-                // Scroll to bottom immediately after sending
-                let scroll_task = widget::operation::scroll_to(
-                    widget::Id::new(CHAT_SCROLLABLE_ID),
-                    AbsoluteOffset { x: 0.0, y: f32::MAX },
-                );
-
-                Task::batch([scroll_task, stream_task])
+                commands.push(AppCommand::RunStream {
+                    system_prompt,
+                    user_message,
+                    model_name,
+                    working_directory: working_dir,
+                    max_tool_rounds,
+                    history,
+                    image_data,
+                    yolo_mode_enabled: self.chat.yolo_mode_enabled,
+                    approval_rx,
+                    cancel_rx,
+                });
+                commands.push(AppCommand::ScrollToBottom);
             }
-            
+
             Message::CopyMessage(index) => {
-                // Copy message content to clipboard
-                if let Some(msg) = self.messages.get(index) {
-                    let content = msg.content.clone();
-                    return Task::perform(
-                        async move {
-                            use arboard::Clipboard;
-                            match Clipboard::new() {
-                                Ok(mut clipboard) => {
-                                    if let Err(e) = clipboard.set_text(&content) {
-                                        tracing::error!("Failed to copy to clipboard: {}", e);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to access clipboard: {}", e);
-                                }
-                            }
-                        },
-                        |_| Message::DismissError, // No-op message after clipboard operation
-                    );
+                if let Some(msg) = self.chat.messages.get(index) {
+                    commands.push(AppCommand::CopyToClipboard(msg.content.clone()));
                 }
-                Task::none()
             }
 
             Message::ToggleRawView(index) => {
-                // Toggle between markdown and raw text view
-                if self.raw_view_messages.contains(&index) {
-                    self.raw_view_messages.remove(&index);
-                    self.raw_view_editors.remove(&index);
+                if self.chat.raw_view_messages.contains(&index) {
+                    self.chat.raw_view_messages.remove(&index);
+                    self.chat.raw_view_editors.remove(&index);
                 } else {
-                    // Create editor content from message
-                    if let Some(msg) = self.messages.get(index) {
+                    if let Some(msg) = self.chat.messages.get(index) {
                         let content = text_editor::Content::with_text(&msg.content);
-                        self.raw_view_editors.insert(index, content);
+                        self.chat.raw_view_editors.insert(index, content);
                     }
-                    self.raw_view_messages.insert(index);
+                    self.chat.raw_view_messages.insert(index);
                 }
-                Task::none()
             }
 
             Message::RawViewEditorAction(index, action) => {
-                // Handle text selection/copy in raw view editor
-                if let Some(editor) = self.raw_view_editors.get_mut(&index) {
+                if let Some(editor) = self.chat.raw_view_editors.get_mut(&index) {
                     editor.perform(action);
                 }
-                Task::none()
             }
 
             Message::StreamChunk(chunk) => {
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.chat.messages.last_mut() {
                     if last.is_streaming {
-                        self.last_bytes_time = Some(std::time::Instant::now());
-                        // If previous content was a tool call, prefix with lightbulb
+                        self.chat.last_bytes_time = Some(std::time::Instant::now());
                         if last.last_was_tool_call && !chunk.trim().is_empty() {
                             last.content.push_str("\n\n💡 ");
                             last.last_was_tool_call = false;
                         }
                         last.content.push_str(&chunk);
-                        // Update parsed markdown items for rendering
                         last.update_parsed_items();
                     }
                 }
-                self.scroll_to_bottom_if_needed()
+                self.push_scroll_if_needed(&mut commands);
             }
 
             Message::Reasoning(reasoning) => {
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.chat.messages.last_mut() {
                     if last.is_streaming {
-                        self.last_bytes_time = Some(std::time::Instant::now());
-                        // Append to existing reasoning or create new
+                        self.chat.last_bytes_time = Some(std::time::Instant::now());
                         if let Some(ref mut existing) = last.reasoning {
                             existing.push_str(&reasoning);
                         } else {
@@ -405,187 +380,193 @@ impl TiccaApp {
                         }
                     }
                 }
-                self.scroll_to_bottom_if_needed()
+                self.push_scroll_if_needed(&mut commands);
             }
 
             Message::StreamStats { chars_in_window, window_ms } => {
-                // Update stats from the stream - this is emitted ~every second
-                self.stream_chars_received = chars_in_window;
-                self.stream_pulse = !self.stream_pulse;
+                self.chat.stream_chars_received = chars_in_window;
+                self.chat.stream_pulse = !self.chat.stream_pulse;
 
-                // Calculate tokens for this window: chars / 4
                 if window_ms > 0 {
                     let seconds = window_ms as f64 / 1000.0;
                     let sample_tps = (chars_in_window as f64) / seconds / 4.0;
 
-                    // Add to rolling window (keep last 60 samples = ~1 minute)
-                    self.tps_samples.push_back(sample_tps);
-                    while self.tps_samples.len() > 60 {
-                        self.tps_samples.pop_front();
+                    self.chat.tps_samples.push_back(sample_tps);
+                    while self.chat.tps_samples.len() > 60 {
+                        self.chat.tps_samples.pop_front();
                     }
 
-                    // Calculate rolling average
-                    if !self.tps_samples.is_empty() {
-                        let sum: f64 = self.tps_samples.iter().sum();
-                        self.current_tps = sum / self.tps_samples.len() as f64;
+                    if !self.chat.tps_samples.is_empty() {
+                        let sum: f64 = self.chat.tps_samples.iter().sum();
+                        self.chat.current_tps = sum / self.chat.tps_samples.len() as f64;
                     }
                 }
-                Task::none()
             }
 
             Message::AnimationTick => {
-                // Fast animation tick (~60 FPS) for smooth spinner
-                self.spinner_frame = self.spinner_frame.wrapping_add(1);
-                Task::none()
+                self.chat.spinner_frame = self.chat.spinner_frame.wrapping_add(1);
             }
 
             Message::PollStreamStats => {
-                // Stream stats polling (formerly used fork-specific byte counter)
-                // TODO: Could be reimplemented with custom byte tracking if needed
-                self.stream_pulse = !self.stream_pulse;
-                Task::none()
+                self.chat.stream_pulse = !self.chat.stream_pulse;
+            }
+
+            Message::StopStreaming => {
+                if let Some(cancel) = self.chat.stream_cancel.take() {
+                    let _ = cancel.send(());
+                }
             }
 
             Message::StreamComplete => {
-                self.is_streaming = false;
-                self.approval_tx = None;
-                self.pending_approvals.clear();
-                self.active_approval = None;
-                // Reset streaming stats
-                self.stream_start_time = None;
-                self.stream_chars_received = 0;
-                self.current_tps = 0.0;
-                self.tps_samples.clear();
-                self.last_bytes_time = None;
-                self.spinner_frame = 0;
+                if !self.chat.is_streaming {
+                    return self.execute_commands(commands);
+                }
+                self.chat.is_streaming = false;
+                self.chat.approval_tx = None;
+                self.chat.pending_approvals.clear();
+                self.chat.active_approval = None;
+                self.chat.stream_cancel = None;
+                self.chat.stream_start_time = None;
+                self.chat.stream_chars_received = 0;
+                self.chat.current_tps = 0.0;
+                self.chat.tps_samples.clear();
+                self.chat.last_bytes_time = None;
+                self.chat.spinner_frame = 0;
 
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.chat.messages.last_mut() {
                     if last.is_streaming {
                         last.is_streaming = false;
-                        // Final parse of markdown after streaming completes
                         last.update_parsed_items();
                     }
                 }
-                // Auto-save session after streaming completes
                 self.save_current_session();
-                Task::none()
             }
 
             Message::StreamError(error) => {
-                self.is_streaming = false;
-                self.approval_tx = None;
-                self.pending_approvals.clear();
-                self.active_approval = None;
-                // Reset streaming stats
-                self.stream_start_time = None;
-                self.stream_chars_received = 0;
-                self.current_tps = 0.0;
-                self.tps_samples.clear();
-                self.last_bytes_time = None;
-                self.spinner_frame = 0;
+                self.chat.is_streaming = false;
+                self.chat.approval_tx = None;
+                self.chat.pending_approvals.clear();
+                self.chat.active_approval = None;
+                self.chat.stream_cancel = None;
+                self.chat.stream_start_time = None;
+                self.chat.stream_chars_received = 0;
+                self.chat.current_tps = 0.0;
+                self.chat.tps_samples.clear();
+                self.chat.last_bytes_time = None;
+                self.chat.spinner_frame = 0;
 
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.chat.messages.last_mut() {
                     if last.is_streaming {
                         last.content = format!("❌ Error: {}", error);
                         last.is_streaming = false;
                     }
                 }
-                Task::none()
             }
-            
+
+            Message::StreamStopped => {
+                self.chat.is_streaming = false;
+                self.chat.approval_tx = None;
+                self.chat.pending_approvals.clear();
+                self.chat.active_approval = None;
+                self.chat.stream_cancel = None;
+                self.chat.stream_start_time = None;
+                self.chat.stream_chars_received = 0;
+                self.chat.current_tps = 0.0;
+                self.chat.tps_samples.clear();
+                self.chat.last_bytes_time = None;
+                self.chat.spinner_frame = 0;
+
+                if let Some(last) = self.chat.messages.last_mut() {
+                    if last.is_streaming {
+                        if !last.content.trim().is_empty() {
+                            last.content.push_str("\n\n");
+                        }
+                        last.content.push_str("[Stopped by user]");
+                        last.is_streaming = false;
+                        last.update_parsed_items();
+                    }
+                }
+                self.save_current_session();
+            }
+
             Message::OpenSettings => {
                 self.current_view = View::Settings;
-                Task::none()
             }
 
             Message::SwitchSettingsTab(tab) => {
-                self.settings_tab = tab;
-                Task::none()
+                self.settings.settings_tab = tab;
             }
-            
+
             Message::CloseSettings => {
                 self.current_view = View::Chat;
-                Task::none()
             }
-            
+
             Message::ThemeToggle => {
                 self.theme = self.theme.next();
-                // Save to config
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.set_setting(setting_keys::THEME, self.theme.as_str());
                 }
-                Task::none()
             }
 
             Message::SetTheme(theme) => {
                 self.theme = theme;
-                // Save to config
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.set_setting(setting_keys::THEME, self.theme.as_str());
                 }
-                Task::none()
             }
 
             Message::SetYoloMode(enabled) => {
-                self.yolo_mode_enabled = enabled;
+                self.chat.yolo_mode_enabled = enabled;
                 if let Ok(db) = ConfigDatabase::open() {
                     let value = if enabled { "true" } else { "false" };
                     let _ = db.set_setting(setting_keys::YOLO_MODE, value);
                 }
-                Task::none()
             }
-            
+
             Message::SwitchAgent(agent_type) => {
-                self.current_agent = agent_type;
-                self.agent_config = CoreAgentConfig::new(agent_type);
-                Task::none()
+                self.chat.current_agent = agent_type;
+                self.chat.agent_config = CoreAgentConfig::new(agent_type);
             }
-            
+
             Message::StartOAuth(provider) => {
-                // Start OAuth flow in background
-                Task::perform(
-                    oauth_handler::start_oauth(provider),
-                    move |result| Message::OAuthComplete(provider, result)
-                )
+                commands.push(AppCommand::StartOAuth(provider));
             }
-            
+
             Message::OAuthComplete(provider, result) => {
                 match result {
                     Ok(()) => {
                         self.error_message = None;
-                        // Update auth status after successful OAuth
-                        self.provider_auth_status = check_provider_auth_status();
-                        // Trigger model loading for the provider that just authenticated
-                        return Task::done(Message::RefreshModelsForProvider(provider));
+                        self.settings.provider_auth_status = check_provider_auth_status();
+                        commands.push(AppCommand::RefreshModelsForProvider(match provider {
+                            crate::messages::OAuthProvider::Claude => ProviderId::Claude,
+                            crate::messages::OAuthProvider::Gemini => ProviderId::Gemini,
+                            crate::messages::OAuthProvider::ChatGpt => ProviderId::ChatGpt,
+                        }));
                     }
                     Err(e) => {
                         self.error_message = Some(e);
                     }
                 }
-                Task::none()
             }
 
             Message::RemoveOAuthAccount(account_id) => {
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.delete_oauth_account(&account_id);
                 }
-                self.provider_auth_status = check_provider_auth_status();
-                Task::none()
+                self.settings.provider_auth_status = check_provider_auth_status();
             }
 
             Message::ToggleOAuthAccountActive { account_id, is_active } => {
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.set_oauth_account_active(&account_id, is_active);
                 }
-                self.provider_auth_status = check_provider_auth_status();
-                Task::none()
+                self.settings.provider_auth_status = check_provider_auth_status();
             }
 
             Message::ResetOAuthCooldown(account_id) => {
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.clear_oauth_account_cooldown(&account_id);
                 }
-                Task::none()
             }
 
             Message::AdjustOAuthAccountPriority { account_id, delta } => {
@@ -595,288 +576,321 @@ impl TiccaApp {
                         let _ = db.set_oauth_account_priority(&account_id, new_priority);
                     }
                 }
-                Task::none()
             }
-            
+
             Message::NewSession => {
-                self.messages.clear();
-                self.raw_view_messages.clear();
-                self.raw_view_editors.clear();
-                self.messages.push(ChatMessage::assistant("New session started. How can I help you?"));
-                self.current_session = None;
-                Task::none()
+                self.chat.messages.clear();
+                self.chat.raw_view_messages.clear();
+                self.chat.raw_view_editors.clear();
+                self.chat.messages.push(ChatMessage::assistant(
+                    "New session started. How can I help you?",
+                ));
+                self.chat.current_session = None;
             }
-            
+
             Message::LoadSession(session_id) => {
                 tracing::info!("Loading session: {}", session_id);
                 if let Some(loaded) = session_manager::load_session(&session_id) {
-                    self.messages = loaded.messages;
-                    self.current_session = Some(loaded.session);
+                    self.chat.messages = loaded.messages;
+                    self.chat.current_session = Some(loaded.session);
 
-                    // Clear raw view state for new session
-                    self.raw_view_messages.clear();
-                    self.raw_view_editors.clear();
+                    self.chat.raw_view_messages.clear();
+                    self.chat.raw_view_editors.clear();
 
-                    // Set agent type if it matches
                     if let Some(agent_type) = loaded.agent_type {
-                        self.current_agent = agent_type;
-                        self.agent_config = CoreAgentConfig::new(agent_type);
+                        self.chat.current_agent = agent_type;
+                        self.chat.agent_config = CoreAgentConfig::new(agent_type);
                     }
 
-                    tracing::info!("Loaded session with {} messages", self.messages.len());
+                    tracing::info!("Loaded session with {} messages", self.chat.messages.len());
                 }
-                // Switch to chat view after loading
                 self.current_view = View::Chat;
-                Task::none()
             }
-            
+
             Message::RefreshModels => {
-                if self.is_loading_models {
-                    return Task::none();
+                if self.chat.is_loading_models {
+                    return self.execute_commands(commands);
                 }
-                self.is_loading_models = true;
+                self.chat.is_loading_models = true;
 
                 if !auth::has_any_valid_account() {
-                    self.is_loading_models = false;
-                    return Task::none();
+                    self.chat.is_loading_models = false;
+                    return self.execute_commands(commands);
                 }
 
-                Task::perform(
-                    async move { ticca_core::llm::ModelService::fetch_all().await },
-                    Message::ModelsLoaded
-                )
+                commands.push(AppCommand::RefreshModels);
             }
 
             Message::RefreshModelsForProvider(provider) => {
-                use crate::messages::OAuthProvider;
-
-                if self.is_loading_models {
-                    return Task::none();
+                if self.chat.is_loading_models {
+                    return self.execute_commands(commands);
                 }
-                self.is_loading_models = true;
+                self.chat.is_loading_models = true;
 
-                match provider {
-                    OAuthProvider::Claude => {
-                        Task::perform(
-                            async move { ticca_core::llm::ModelService::fetch_for(ProviderId::Claude).await },
-                            Message::ModelsLoaded
-                        )
-                    }
-                    OAuthProvider::Gemini => {
-                        Task::perform(
-                            async move { ticca_core::llm::ModelService::fetch_for(ProviderId::Gemini).await },
-                            Message::ModelsLoaded
-                        )
-                    }
-                    OAuthProvider::ChatGpt => {
-                        Task::perform(
-                            async move { ticca_core::llm::ModelService::fetch_for(ProviderId::ChatGpt).await },
-                            Message::ModelsLoaded
-                        )
-                    }
-                }
+                let mapped = match provider {
+                    crate::messages::OAuthProvider::Claude => ProviderId::Claude,
+                    crate::messages::OAuthProvider::Gemini => ProviderId::Gemini,
+                    crate::messages::OAuthProvider::ChatGpt => ProviderId::ChatGpt,
+                };
+                commands.push(AppCommand::RefreshModelsForProvider(mapped));
             }
 
             Message::ModelsLoaded(result) => {
-                self.is_loading_models = false;
+                self.chat.is_loading_models = false;
                 match result {
                     Ok(models) => {
                         tracing::info!("Loaded {} models: {:?}", models.len(), models);
-                        self.available_models = models;
+                        self.chat.available_models = models;
                     }
                     Err(e) => {
                         tracing::error!("Failed to load models: {}", e);
                         self.error_message = Some(format!("Failed to load models: {}", e));
                     }
                 }
-                Task::none()
             }
 
             Message::SetDefaultModel(model_name) => {
-                self.default_model = Some(model_name.clone());
-                // Persist to database
+                self.chat.default_model = Some(model_name.clone());
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.set_setting(setting_keys::DEFAULT_MODEL, &model_name);
                 }
                 tracing::info!("Set default model: {}", model_name);
-                Task::none()
             }
 
             Message::SetAgentModel(agent_type, model) => {
                 match &model {
                     Some(model_name) => {
-                        self.agent_pinned_models.insert(agent_type, model_name.clone());
-                        // Persist to database
+                        self.chat.agent_pinned_models.insert(agent_type, model_name.clone());
                         if let Ok(db) = ConfigDatabase::open() {
                             let _ = db.set_agent_pinned_model(agent_type.as_str(), model_name);
                         }
                         tracing::info!("Pinned {} to model: {}", agent_type.as_str(), model_name);
                     }
                     None => {
-                        self.agent_pinned_models.remove(&agent_type);
-                        // Clear from database
+                        self.chat.agent_pinned_models.remove(&agent_type);
                         if let Ok(db) = ConfigDatabase::open() {
                             let _ = db.clear_agent_pinned_model(agent_type.as_str());
                         }
                         tracing::info!("Cleared pinned model for {}", agent_type.as_str());
                     }
                 }
-                Task::none()
             }
 
             Message::ToolCall { name, args } => {
-                // Add a one-liner visual indicator for the tool call
-                if let Some(last) = self.messages.last_mut() {
+                if let Some(last) = self.chat.messages.last_mut() {
                     if last.is_streaming {
                         let tool_line = format_tool_call_oneliner(&name, &args);
-                        // Use double newline for proper markdown paragraph break
                         last.content.push_str(&format!("\n\n{}", tool_line));
-                        // Mark that we just added a tool call
                         last.last_was_tool_call = true;
                         last.update_parsed_items();
                     }
                 }
-                self.scroll_to_bottom_if_needed()
+                self.push_scroll_if_needed(&mut commands);
             }
 
-            Message::ToolResult { name: _, result: _ } => {
-                // Don't count tool results - they're local execution, not LLM output
-                // Don't display tool results - keep the UI clean
-                Task::none()
-            }
+            Message::ToolResult { name: _, result: _ } => {}
 
             Message::ToolApprovalRequested { id, name, args } => {
-                self.pending_approvals.push_back(ToolApprovalPrompt { id, name, args });
-                if self.active_approval.is_none() {
-                    self.active_approval = self.pending_approvals.pop_front();
+                self.chat.pending_approvals.push_back(ToolApprovalPrompt { id, name, args });
+                if self.chat.active_approval.is_none() {
+                    self.chat.active_approval = self.chat.pending_approvals.pop_front();
                 }
-                Task::none()
             }
 
             Message::ToolApprovalDecision { id, approved } => {
-                if let Some(tx) = &self.approval_tx {
+                if let Some(tx) = &self.chat.approval_tx {
                     let _ = tx.send(ticca_core::tools::ToolApprovalDecision { id, approved });
                 }
-                self.active_approval = self.pending_approvals.pop_front();
-                Task::none()
+                self.chat.active_approval = self.chat.pending_approvals.pop_front();
             }
 
             Message::SelectWorkingDirectory => {
-                // Open native directory picker dialog
-                Task::perform(
-                    async {
-                        let dialog = rfd::AsyncFileDialog::new()
-                            .set_title("Select Working Directory")
-                            .pick_folder()
-                            .await;
-
-                        dialog.map(|handle| handle.path().to_path_buf())
-                    },
-                    |result| {
-                        match result {
-                            Some(path) => Message::WorkingDirectoryChanged(path),
-                            None => Message::DismissError, // User cancelled, do nothing
-                        }
-                    }
-                )
+                commands.push(AppCommand::PickWorkingDirectory);
             }
 
             Message::WorkingDirectoryChanged(path) => {
-                self.working_directory = path;
-                Task::none()
+                self.chat.working_directory = path;
             }
 
             Message::SelectImageFile => {
-                // Open native file picker for images (Wayland-compatible via xdg-portal)
-                Task::perform(
-                    async {
-                        let dialog = rfd::AsyncFileDialog::new()
-                            .set_title("Select Image")
-                            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
-                            .pick_file()
-                            .await;
-
-                        match dialog {
-                            Some(handle) => {
-                                let path = handle.path().to_path_buf();
-                                image_handler::load_image_from_path(&path).await
-                            }
-                            None => Err("No file selected".to_string()),
-                        }
-                    },
-                    Message::ImageLoaded
-                )
+                commands.push(AppCommand::PickImageFile);
             }
 
             Message::FileDropped(path) => {
-                // Load image from dropped file (X11 only - Wayland DnD not implemented in winit)
-                Task::perform(
-                    async move {
-                        image_handler::load_image_from_path(&path).await
-                    },
-                    Message::ImageLoaded
-                )
+                commands.push(AppCommand::LoadImage(path));
             }
 
             Message::ImageLoaded(result) => {
                 match result {
                     Ok(attachment) => {
-                        self.pending_attachments.push(attachment);
+                        self.chat.pending_attachments.push(attachment);
                     }
                     Err(e) => {
-                        // Don't show error for cancelled file dialog
                         if !e.contains("No file selected") {
                             self.error_message = Some(format!("Failed to load image: {}", e));
                         }
                     }
                 }
-                Task::none()
             }
 
             Message::PasteImage => {
-                // Try to paste image from clipboard
-                Task::perform(
-                    async {
-                        image_handler::paste_image_from_clipboard().await
-                    },
-                    Message::ImagePasted
-                )
+                commands.push(AppCommand::PasteImage);
             }
 
             Message::ImagePasted(result) => {
                 match result {
                     Ok(attachment) => {
-                        self.pending_attachments.push(attachment);
+                        self.chat.pending_attachments.push(attachment);
                     }
                     Err(e) => {
-                        // Silently ignore if no image in clipboard (user might have pressed Ctrl+V for text)
                         if !e.contains("No image") {
                             self.error_message = Some(format!("Failed to paste image: {}", e));
                         }
                     }
                 }
-                Task::none()
             }
 
             Message::RemoveAttachment(index) => {
-                if index < self.pending_attachments.len() {
-                    self.pending_attachments.remove(index);
+                if index < self.chat.pending_attachments.len() {
+                    self.chat.pending_attachments.remove(index);
                 }
-                Task::none()
             }
 
             Message::LinkClicked(url) => {
-                // Open the URL in the default browser
-                if let Err(e) = open::that(url.as_str()) {
-                    tracing::warn!("Failed to open URL {}: {}", url, e);
-                }
-                Task::none()
+                commands.push(AppCommand::OpenUrl(url.as_str().to_string()));
             }
 
             Message::DismissError => {
                 self.error_message = None;
-                Task::none()
             }
+        }
+
+        self.execute_commands(commands)
+    }
+
+    fn execute_commands(&self, commands: Vec<AppCommand>) -> Task<Message> {
+        let tasks: Vec<Task<Message>> = commands
+            .into_iter()
+            .map(|command| self.command_task(command))
+            .collect();
+
+        Task::batch(tasks)
+    }
+
+    fn command_task(&self, command: AppCommand) -> Task<Message> {
+        match command {
+            AppCommand::RunStream {
+                system_prompt,
+                user_message,
+                model_name,
+                working_directory,
+                max_tool_rounds,
+                history,
+                image_data,
+                yolo_mode_enabled,
+                approval_rx,
+                cancel_rx,
+            } => Task::run(
+                llm_stream::run_rig_agent_stream(
+                    system_prompt,
+                    user_message,
+                    model_name,
+                    working_directory,
+                    max_tool_rounds,
+                    history,
+                    image_data,
+                    yolo_mode_enabled,
+                    approval_rx,
+                    cancel_rx,
+                ),
+                |event| event,
+            ),
+            AppCommand::ScrollToBottom => widget::operation::scroll_to(
+                widget::Id::new(CHAT_SCROLLABLE_ID),
+                AbsoluteOffset { x: 0.0, y: f32::MAX },
+            ),
+            AppCommand::StartOAuth(provider) => Task::perform(
+                oauth_handler::start_oauth(provider),
+                move |result| Message::OAuthComplete(provider, result),
+            ),
+            AppCommand::RefreshModels => Task::perform(
+                async move { ticca_core::llm::ModelService::fetch_all().await },
+                Message::ModelsLoaded,
+            ),
+            AppCommand::RefreshModelsForProvider(provider) => Task::perform(
+                async move { ticca_core::llm::ModelService::fetch_for(provider).await },
+                Message::ModelsLoaded,
+            ),
+            AppCommand::CopyToClipboard(content) => Task::perform(
+                async move {
+                    use arboard::Clipboard;
+                    match Clipboard::new() {
+                        Ok(mut clipboard) => {
+                            if let Err(e) = clipboard.set_text(&content) {
+                                tracing::error!("Failed to copy to clipboard: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to access clipboard: {}", e);
+                        }
+                    }
+                },
+                |_| Message::Noop,
+            ),
+            AppCommand::PickWorkingDirectory => Task::perform(
+                async {
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title("Select Working Directory")
+                        .pick_folder()
+                        .await;
+
+                    dialog.map(|handle| handle.path().to_path_buf())
+                },
+                |result| match result {
+                    Some(path) => Message::WorkingDirectoryChanged(path),
+                    None => Message::Noop,
+                },
+            ),
+            AppCommand::PickImageFile => Task::perform(
+                async {
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title("Select Image")
+                        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+                        .pick_file()
+                        .await;
+
+                    match dialog {
+                        Some(handle) => {
+                            let path = handle.path().to_path_buf();
+                            image_handler::load_image_from_path(&path).await
+                        }
+                        None => Err("No file selected".to_string()),
+                    }
+                },
+                Message::ImageLoaded,
+            ),
+            AppCommand::LoadImage(path) => Task::perform(
+                async move { image_handler::load_image_from_path(&path).await },
+                Message::ImageLoaded,
+            ),
+            AppCommand::PasteImage => Task::perform(
+                async { image_handler::paste_image_from_clipboard().await },
+                Message::ImagePasted,
+            ),
+            AppCommand::OpenUrl(url) => Task::perform(
+                async move {
+                    if let Err(e) = open::that(&url) {
+                        tracing::warn!("Failed to open URL {}: {}", url, e);
+                    }
+                },
+                |_| Message::Noop,
+            ),
+        }
+    }
+
+    fn push_scroll_if_needed(&self, commands: &mut Vec<AppCommand>) {
+        if self.chat.user_at_bottom {
+            commands.push(AppCommand::ScrollToBottom);
         }
     }
 
@@ -916,7 +930,7 @@ impl TiccaApp {
             main.into()
         };
 
-        if let Some(prompt) = &self.active_approval {
+        if let Some(prompt) = &self.chat.active_approval {
             let overlay = self.view_approval_modal(prompt);
             iced::widget::stack![base, overlay].into()
         } else {
@@ -936,13 +950,13 @@ impl TiccaApp {
         let keybindings = crate::keybindings::subscription();
 
         // Add timer subscriptions while streaming
-        if self.is_streaming {
+        if self.chat.is_streaming {
             // Stats polling every 1 second
             let stats_timer = time::every(std::time::Duration::from_secs(1))
                 .map(|_| Message::PollStreamStats);
 
             // Fast animation timer (~60 FPS) for smooth spinner when waiting
-            let is_waiting = self.last_bytes_time
+            let is_waiting = self.chat.last_bytes_time
                 .map(|t| t.elapsed().as_secs() >= 2)
                 .unwrap_or(false);
 
@@ -961,48 +975,36 @@ impl TiccaApp {
     /// Render the chat view
     fn view_chat(&self) -> Element<'_, Message> {
         // Calculate seconds since last bytes received (for "waiting" indicator)
-        let secs_since_bytes = self.last_bytes_time
+        let secs_since_bytes = self.chat.last_bytes_time
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
 
         crate::views::chat::view(
-            self.current_agent,
-            &self.working_directory,
-            &self.messages,
-            &self.pending_attachments,
-            &self.input_value,
-            self.is_streaming,
+            self.chat.current_agent,
+            &self.chat.working_directory,
+            &self.chat.messages,
+            &self.chat.pending_attachments,
+            &self.chat.input_value,
+            self.chat.is_streaming,
             self.theme,
-            &self.raw_view_messages,
-            &self.raw_view_editors,
-            self.stream_chars_received,
-            self.current_tps,
-            self.stream_pulse,
+            &self.chat.raw_view_messages,
+            &self.chat.raw_view_editors,
+            self.chat.stream_chars_received,
+            self.chat.current_tps,
+            self.chat.stream_pulse,
             secs_since_bytes,
-            self.spinner_frame,
+            self.chat.spinner_frame,
         )
-    }
-
-    /// Scroll to bottom of chat if user was at bottom
-    fn scroll_to_bottom_if_needed(&self) -> Task<Message> {
-        if self.user_at_bottom {
-            widget::operation::scroll_to(
-                widget::Id::new(CHAT_SCROLLABLE_ID),
-                AbsoluteOffset { x: 0.0, y: f32::MAX },
-            )
-        } else {
-            Task::none()
-        }
     }
 
     /// Save the current session to the database
     fn save_current_session(&mut self) {
         if let Some(session) = session_manager::save_session(
-            self.current_session.as_ref(),
-            &self.messages,
-            self.current_agent,
+            self.chat.current_session.as_ref(),
+            &self.chat.messages,
+            self.chat.current_agent,
         ) {
-            self.current_session = Some(session);
+            self.chat.current_session = Some(session);
         }
     }
     
@@ -1010,13 +1012,13 @@ impl TiccaApp {
     fn view_settings(&self) -> Element<'_, Message> {
         crate::views::config::view(
             self.theme,
-            &self.available_models,
-            self.default_model.as_deref(),
-            &self.agent_pinned_models,
-            self.is_loading_models,
-            &self.provider_auth_status,
-            self.yolo_mode_enabled,
-            self.settings_tab,
+            &self.chat.available_models,
+            self.chat.default_model.as_deref(),
+            &self.chat.agent_pinned_models,
+            self.chat.is_loading_models,
+            &self.settings.provider_auth_status,
+            self.chat.yolo_mode_enabled,
+            self.settings.settings_tab,
         )
     }
 

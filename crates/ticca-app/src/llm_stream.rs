@@ -17,7 +17,7 @@ use ticca_core::llm::providers::GeminiCodeAssistRigClient;
 use ticca_core::llm::ClaudeOAuthClient;
 use ticca_core::llm::{ProviderId, ProviderRegistry};
 use ticca_core::session::MessageRole;
-use ticca_core::tools::{ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext};
+use ticca_core::tools::{ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy};
 
 use rig::agent::AgentBuilder;
 
@@ -129,6 +129,107 @@ fn prepend_system_to_first_user_message(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::stream;
+    use rig::completion::{CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage};
+    use rig::message::AssistantContent;
+    use rig::one_or_many::OneOrMany;
+    use rig::streaming::{RawStreamingChoice, StreamingCompletionResponse};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    struct MockModel;
+
+    impl CompletionModel for MockModel {
+        type Response = ();
+        type StreamingResponse = ();
+        type Client = ();
+
+        fn make(_client: &Self::Client, _model: impl Into<String>) -> Self {
+            Self
+        }
+
+        fn completion(
+            &self,
+            _request: CompletionRequest,
+        ) -> impl std::future::Future<Output = Result<CompletionResponse<Self::Response>, CompletionError>>
+        + Send {
+            async move {
+                Ok(CompletionResponse {
+                    choice: OneOrMany::one(AssistantContent::text("mock response")),
+                    usage: Usage::new(),
+                    raw_response: (),
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _request: CompletionRequest,
+        ) -> impl std::future::Future<
+            Output = Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>,
+        > + Send {
+            async move {
+                let events = vec![
+                    Ok(RawStreamingChoice::Message("mock stream".to_string())),
+                    Ok(RawStreamingChoice::FinalResponse(())),
+                ];
+                let stream = stream::iter(events);
+                Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_stream_smoke_test() {
+        let tool_context = Arc::new(ToolContext::default());
+        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+            ticca_core::tools::create_tools(tool_context);
+
+        let history = build_chat_history(Vec::new());
+        let user_msg = build_user_message("hello", Vec::new());
+        let mut full_history = history;
+        full_history.push(user_msg);
+
+        let agent = AgentBuilder::new(MockModel)
+            .preamble("test system")
+            .tool(shell)
+            .tool(read_file)
+            .tool(list_files)
+            .tool(edit_file)
+            .tool(delete_file)
+            .tool(grep)
+            .tool(write_file)
+            .temperature(0.1)
+            .max_tokens(64)
+            .build();
+
+        use rig::agent::MultiTurnStreamItem;
+        use rig::streaming::StreamingPrompt;
+        use rig::streaming::StreamedAssistantContent;
+
+        let mut stream = agent
+            .stream_prompt("")
+            .with_history(full_history)
+            .multi_turn(1)
+            .await;
+
+        let mut collected = String::new();
+        while let Some(chunk_result) = stream.next().await {
+            if let Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(text_chunk),
+            )) = chunk_result
+            {
+                collected.push_str(&text_chunk.text);
+            }
+        }
+
+        assert!(collected.contains("mock stream"));
+    }
+}
+
 /// Run the Rig agent with streaming response and tools (ReAct loop)
 ///
 /// Routes to Claude, ChatGPT/Codex, or Gemini based on model name.
@@ -145,6 +246,7 @@ pub fn run_rig_agent_stream(
     image_data: Vec<(String, String)>,
     yolo_mode_enabled: bool,
     mut approval_decision_rx: mpsc::UnboundedReceiver<ToolApprovalDecision>,
+    mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Message>();
@@ -155,6 +257,7 @@ pub fn run_rig_agent_stream(
             working_directory: working_directory.clone(),
             approval_gate: Some(approval_gate),
             yolo_mode_enabled,
+            policy: ToolPolicy::allow_root(working_directory.clone()),
         });
 
         let mut pending_approvals: HashMap<u64, tokio::sync::oneshot::Sender<bool>> = HashMap::new();
@@ -185,7 +288,7 @@ pub fn run_rig_agent_stream(
         let tool_context_worker = tool_context.clone();
 
         tokio::spawn(async move {
-            let result = run_agent_stream(
+            let mut worker = tokio::spawn(run_agent_stream(
                 event_tx_for_worker.clone(),
                 tool_context_worker,
                 system_prompt,
@@ -194,11 +297,24 @@ pub fn run_rig_agent_stream(
                 max_tool_rounds,
                 chat_history,
                 image_data,
-            )
-            .await;
+            ));
 
-            if let Err(error) = result {
-                let _ = event_tx_for_worker.send(Message::StreamError(error));
+            tokio::select! {
+                _ = &mut cancel_rx => {
+                    worker.abort();
+                    let _ = event_tx_for_worker.send(Message::StreamStopped);
+                }
+                result = &mut worker => {
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            let _ = event_tx_for_worker.send(Message::StreamError(error));
+                        }
+                        Err(error) => {
+                            let _ = event_tx_for_worker.send(Message::StreamError(format!("Stream task error: {}", error)));
+                        }
+                    }
+                }
             }
 
             let _ = event_tx_for_worker.send(Message::StreamComplete);

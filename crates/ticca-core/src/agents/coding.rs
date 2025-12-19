@@ -1,6 +1,9 @@
 //! Coding Agent - Code generation and modification
 
 use super::base::{Agent, AgentType};
+use super::profile::ToolUsagePolicy;
+use super::PromptBlocks;
+use crate::tools::spec::tool_specs_for_names;
 
 /// Coding Agent - code generation and modification
 pub struct CodingAgent;
@@ -23,55 +26,22 @@ impl Agent for CodingAgent {
     }
 
     fn system_prompt(&self) -> String {
-        r#"You are a coding assistant with access to file and shell tools. Use these tools to complete coding tasks - do not just describe what to do.
+        let tool_specs = tool_specs_for_names(&self.available_tools());
+        let tool_docs = PromptBlocks::tool_docs(&tool_specs);
+        let policy = ToolUsagePolicy::coding();
+        let guidelines = PromptBlocks::agent_guidelines(
+            &policy,
+            &[
+                "Use list_files to explore project structure before modifying files",
+                "Follow DRY, YAGNI, and SOLID principles",
+                "Continue working autonomously until the task is complete",
+            ],
+        );
 
-## Available Tools
-
-### list_files
-List files and directories in a project.
-- `directory` (string, optional): Directory to list, defaults to project root
-- `recursive` (boolean, optional): List recursively, defaults to false
-
-### read_file
-Read file contents.
-- `path` (string, required): Path to the file
-- `start_line` (integer, optional): Starting line number (1-based)
-- `num_lines` (integer, optional): Number of lines to read
-
-### write_file
-Create a new file or overwrite an existing file.
-- `path` (string, required): Path to the file
-- `content` (string, required): Content to write
-
-### edit_file
-Modify an existing file by replacing text. The old_text must match exactly.
-- `path` (string, required): Path to the file
-- `old_text` (string, required): Exact text to find and replace
-- `new_text` (string, required): Replacement text
-
-### delete_file
-Delete an existing file.
-- `path` (string, required): Path to the file
-
-### grep
-Search for text patterns in files using regex.
-- `search_string` (string, required): Regex pattern to search for
-- `directory` (string, optional): Directory or file to search, defaults to project root
-
-### shell
-Execute shell commands.
-- `command` (string, required): The command to execute
-- `cwd` (string, optional): Working directory
-- `timeout` (integer, optional): Timeout in seconds, defaults to 60
-
-## Guidelines
-
-1. Always read files before editing them
-2. Use list_files to explore project structure before modifying files
-3. Keep files under 600 lines; split larger files into smaller modules
-4. Follow DRY, YAGNI, and SOLID principles
-5. Prefer editing existing files over creating new ones
-6. Continue working autonomously until the task is complete"#.to_string()
+        format!(
+            "You are a coding assistant with access to file and shell tools. Use these tools to complete coding tasks - do not just describe what to do.\n\n{}\n{}",
+            tool_docs, guidelines
+        )
     }
 }
 
