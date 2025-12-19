@@ -165,6 +165,9 @@ pub fn run_rig_agent_stream(
     image_data: Vec<(String, String)>,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
+        let mut stats_window_start = std::time::Instant::now();
+        let mut stats_window_chars: usize = 0;
+
         // Use provided model or fetch from API
         let model_name = match model_name {
             Some(name) => {
@@ -272,8 +275,20 @@ pub fn run_rig_agent_stream(
                         StreamedAssistantContent::Text(text_chunk),
                     )) => {
                         if !text_chunk.text.is_empty() {
+                            let chunk_len = text_chunk.text.len();
                             tracing::trace!("ChatGPT text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
                             yield Message::StreamChunk(text_chunk.text);
+                            stats_window_chars += chunk_len;
+                            let elapsed = stats_window_start.elapsed();
+                            if elapsed >= std::time::Duration::from_secs(1) {
+                                let window_ms = elapsed.as_millis() as u64;
+                                yield Message::StreamStats {
+                                    chars_in_window: stats_window_chars,
+                                    window_ms,
+                                };
+                                stats_window_chars = 0;
+                                stats_window_start = std::time::Instant::now();
+                            }
                         }
                     }
                     Ok(MultiTurnStreamItem::StreamAssistantItem(
@@ -381,8 +396,20 @@ pub fn run_rig_agent_stream(
                 match chunk_result {
                     Ok(text) => {
                         if !text.is_empty() {
+                            let chunk_len = text.len();
                             tracing::debug!("Gemini Code Assist UI chunk: {} chars", text.len());
                             yield Message::StreamChunk(text);
+                            stats_window_chars += chunk_len;
+                            let elapsed = stats_window_start.elapsed();
+                            if elapsed >= std::time::Duration::from_secs(1) {
+                                let window_ms = elapsed.as_millis() as u64;
+                                yield Message::StreamStats {
+                                    chars_in_window: stats_window_chars,
+                                    window_ms,
+                                };
+                                stats_window_chars = 0;
+                                stats_window_start = std::time::Instant::now();
+                            }
                         }
                     }
                     Err(e) => {
@@ -490,8 +517,20 @@ pub fn run_rig_agent_stream(
                         StreamedAssistantContent::Text(text_chunk),
                     )) => {
                         if !text_chunk.text.is_empty() {
+                            let chunk_len = text_chunk.text.len();
                             tracing::trace!("Claude text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
                             yield Message::StreamChunk(text_chunk.text);
+                            stats_window_chars += chunk_len;
+                            let elapsed = stats_window_start.elapsed();
+                            if elapsed >= std::time::Duration::from_secs(1) {
+                                let window_ms = elapsed.as_millis() as u64;
+                                yield Message::StreamStats {
+                                    chars_in_window: stats_window_chars,
+                                    window_ms,
+                                };
+                                stats_window_chars = 0;
+                                stats_window_start = std::time::Instant::now();
+                            }
                         }
                     }
                     Ok(MultiTurnStreamItem::StreamAssistantItem(

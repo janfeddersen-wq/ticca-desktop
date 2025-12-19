@@ -341,6 +341,7 @@ impl TiccaApp {
             Message::StreamChunk(chunk) => {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
+                        self.last_bytes_time = Some(std::time::Instant::now());
                         // If previous content was a tool call, prefix with lightbulb
                         if last.last_was_tool_call && !chunk.trim().is_empty() {
                             last.content.push_str("\n\n💡 ");
@@ -357,6 +358,7 @@ impl TiccaApp {
             Message::Reasoning(reasoning) => {
                 if let Some(last) = self.messages.last_mut() {
                     if last.is_streaming {
+                        self.last_bytes_time = Some(std::time::Instant::now());
                         // Append to existing reasoning or create new
                         if let Some(ref mut existing) = last.reasoning {
                             existing.push_str(&reasoning);

@@ -246,7 +246,7 @@ mod tests {
         let result = shell_impl("pwd", Some(&temp_str), 10).await.unwrap();
         assert!(result.success);
         let normalized = temp_str.replace('\\', "/");
-        assert!(result.content.contains(&normalized) || result.content.contains(&temp_str));
+        assert!(result.content.contains(&normalized) || result.content.contains(temp_str.as_ref()));
     }
 
     #[tokio::test]
