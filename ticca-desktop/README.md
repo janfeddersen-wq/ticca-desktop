@@ -35,7 +35,7 @@ All tools are implemented in Rust for maximum performance:
 ### 🔐 OAuth Authentication
 Native OAuth support for multiple providers:
 - **Claude** (Anthropic) - Public PKCE flow
-- **Gemini** (Google) - OAuth client credentials
+- **Gemini** (Google) - Public PKCE flow (using gemini-cli credentials)
 - **ChatGPT** (OpenAI) - Public PKCE flow
 
 ### 💾 Session Management

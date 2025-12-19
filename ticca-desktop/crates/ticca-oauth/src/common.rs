@@ -83,10 +83,15 @@ impl TokenResponse {
             chrono::Utc::now() + chrono::Duration::seconds(secs as i64)
         })
     }
-    
+
     /// Convert to RFC3339 expiration string
     pub fn expires_at_rfc3339(&self) -> Option<String> {
         self.expires_at().map(|dt| dt.to_rfc3339())
+    }
+
+    /// Get id_token if present (used by OpenAI/ChatGPT)
+    pub fn id_token(&self) -> Option<&str> {
+        self.extra.get("id_token").and_then(|v| v.as_str())
     }
 }
 

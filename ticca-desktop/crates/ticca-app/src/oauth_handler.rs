@@ -4,7 +4,7 @@
 
 use ticca_core::config::ConfigDatabase;
 use ticca_core::OAuthToken;
-use ticca_oauth::{ClaudeOAuth, ChatGptOAuth};
+use ticca_oauth::{ClaudeOAuth, ChatGptOAuth, GeminiOAuth};
 
 use crate::messages::OAuthProvider;
 
@@ -37,8 +37,25 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                 }
             }
             OAuthProvider::Gemini => {
-                // Gemini requires user's own credentials
-                Err("Gemini OAuth requires setting GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables. Please set these and restart.".to_string())
+                let oauth = GeminiOAuth::new();
+                match oauth.authorize() {
+                    Ok(token_response) => {
+                        if let Ok(db) = ConfigDatabase::open() {
+                            let expires_at_str = token_response.expires_at()
+                                .map(|t| t.to_rfc3339())
+                                .unwrap_or_default();
+                            let refresh = token_response.refresh_token
+                                .clone()
+                                .unwrap_or_default();
+                            let token = OAuthToken::new("gemini", &token_response.access_token)
+                                .with_refresh_token(refresh)
+                                .with_expires_at(expires_at_str);
+                            let _ = db.upsert_oauth_token(&token);
+                        }
+                        Ok(())
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
             }
             OAuthProvider::ChatGpt => {
                 let oauth = ChatGptOAuth::new();
@@ -51,9 +68,15 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                             let refresh = token_response.refresh_token
                                 .clone()
                                 .unwrap_or_default();
-                            let token = OAuthToken::new("chatgpt", &token_response.access_token)
+                            // Store id_token in extra_json for later use (needed for ChatGPT API)
+                            let extra = token_response.id_token()
+                                .map(|id_token| serde_json::json!({"id_token": id_token}).to_string());
+                            let mut token = OAuthToken::new("chatgpt", &token_response.access_token)
                                 .with_refresh_token(refresh)
                                 .with_expires_at(expires_at_str);
+                            if let Some(extra_json) = extra {
+                                token = token.with_extra(extra_json);
+                            }
                             let _ = db.upsert_oauth_token(&token);
                         }
                         Ok(())

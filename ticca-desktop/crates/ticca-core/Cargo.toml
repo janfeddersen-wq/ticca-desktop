@@ -23,6 +23,8 @@ chrono.workspace = true
 reqwest.workspace = true
 futures = "0.3"
 bytes.workspace = true
+http = "1"
+base64.workspace = true
 
 # ripgrep
 grep-regex.workspace = true

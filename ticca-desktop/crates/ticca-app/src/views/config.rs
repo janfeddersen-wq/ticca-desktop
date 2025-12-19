@@ -17,6 +17,14 @@ fn horizontal_space() -> Space {
     Space::new().width(Length::Fill)
 }
 
+/// Provider authentication status
+#[derive(Debug, Clone, Default)]
+pub struct ProviderAuthStatus {
+    pub claude: bool,
+    pub gemini: bool,
+    pub chatgpt: bool,
+}
+
 /// Render the settings view
 pub fn view<'a>(
     theme: AppTheme,
@@ -24,6 +32,7 @@ pub fn view<'a>(
     default_model: Option<&'a str>,
     agent_pinned_models: &'a HashMap<AgentType, String>,
     is_loading_models: bool,
+    auth_status: &ProviderAuthStatus,
 ) -> Element<'a, Message> {
     let header = row![
         button(
@@ -80,40 +89,37 @@ pub fn view<'a>(
     .padding(20)
     .style(styles::card_container);
 
+    // Helper to create OAuth button with auth status indicator
+    let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
+        let auth_icon = if is_authenticated {
+            icons::CHECK_CIRCLE
+        } else {
+            icons::VPN_KEY
+        };
+        let style_fn = if is_authenticated {
+            styles::success_button
+        } else {
+            styles::secondary_button
+        };
+        button(
+            row![
+                icon(auth_icon).size(16),
+                text(format!(" {}", label)).size(14),
+            ]
+            .spacing(4)
+        )
+        .on_press(Message::StartOAuth(provider))
+        .style(style_fn)
+        .padding([8, 12])
+    };
+
     let oauth_settings = container(
         column![
             text("Authentication").size(18),
             row![
-                button(
-                    row![
-                        icon(icons::VPN_KEY).size(16),
-                        text(" Claude").size(14),
-                    ]
-                    .spacing(4)
-                )
-                .on_press(Message::StartOAuth(OAuthProvider::Claude))
-                .style(styles::secondary_button)
-                .padding([8, 12]),
-                button(
-                    row![
-                        icon(icons::VPN_KEY).size(16),
-                        text(" Gemini").size(14),
-                    ]
-                    .spacing(4)
-                )
-                .on_press(Message::StartOAuth(OAuthProvider::Gemini))
-                .style(styles::secondary_button)
-                .padding([8, 12]),
-                button(
-                    row![
-                        icon(icons::VPN_KEY).size(16),
-                        text(" ChatGPT").size(14),
-                    ]
-                    .spacing(4)
-                )
-                .on_press(Message::StartOAuth(OAuthProvider::ChatGpt))
-                .style(styles::secondary_button)
-                .padding([8, 12]),
+                oauth_button(OAuthProvider::Claude, "Claude", auth_status.claude),
+                oauth_button(OAuthProvider::Gemini, "Gemini", auth_status.gemini),
+                oauth_button(OAuthProvider::ChatGpt, "ChatGPT", auth_status.chatgpt),
             ]
             .spacing(8),
         ]

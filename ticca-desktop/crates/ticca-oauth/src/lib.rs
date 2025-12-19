@@ -2,7 +2,7 @@
 //!
 //! This crate provides OAuth authentication flows for:
 //! - **Claude Code** (Anthropic) - Uses public PKCE flow
-//! - **Gemini** (Google) - Requires OAuth client credentials
+//! - **Gemini** (Google) - Uses public PKCE flow (with gemini-cli credentials)
 //! - **ChatGPT** (OpenAI) - Uses public PKCE flow
 //!
 //! ## Example

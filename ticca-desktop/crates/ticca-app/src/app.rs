@@ -20,10 +20,11 @@ use crate::app_config::load_config;
 use crate::chat_message::ChatMessage;
 use crate::helpers::format_tool_call_oneliner;
 use crate::image_handler;
-use crate::llm_stream::{self, get_claude_auth_token};
+use crate::llm_stream::{self, get_claude_auth_token, get_gemini_auth_token, get_chatgpt_auth_token, get_chatgpt_id_token};
 use crate::messages::{Message, ImageAttachment};
 use crate::theme::AppTheme;
 use crate::views::chat::CHAT_SCROLLABLE_ID;
+use crate::views::config::ProviderAuthStatus;
 
 /// Main application state
 pub struct TiccaApp {
@@ -66,6 +67,9 @@ pub struct TiccaApp {
     // Error display
     error_message: Option<String>,
 
+    // Provider authentication status
+    provider_auth_status: ProviderAuthStatus,
+
     // Auto-scroll tracking: true if user is at/near bottom of chat
     user_at_bottom: bool,
 
@@ -89,6 +93,15 @@ pub enum View {
     #[default]
     Chat,
     Settings,
+}
+
+/// Check if all providers have valid (non-expired) tokens
+fn check_provider_auth_status() -> ProviderAuthStatus {
+    ProviderAuthStatus {
+        claude: get_claude_auth_token().is_some(),
+        gemini: get_gemini_auth_token().is_some(),
+        chatgpt: get_chatgpt_auth_token().is_some(),
+    }
 }
 
 impl TiccaApp {
@@ -121,6 +134,7 @@ impl TiccaApp {
             raw_view_messages: HashSet::new(),
             raw_view_editors: HashMap::new(),
             error_message: None,
+            provider_auth_status: check_provider_auth_status(),
             user_at_bottom: true, // Start at bottom
             stream_start_time: None,
             stream_chars_received: 0,
@@ -386,35 +400,9 @@ impl TiccaApp {
             }
 
             Message::PollStreamStats => {
-                // Poll the global byte counter from rig (set in llm_stream)
-                // This runs every second via iced subscription while streaming
-
-                if let Some(counter) = rig::get_active_counter() {
-                    // Get bytes received since last poll and reset counter
-                    let bytes_in_window = counter.reset();
-                    self.stream_chars_received = bytes_in_window;
-                    self.stream_pulse = !self.stream_pulse;
-
-                    // Track when we last received actual bytes
-                    if bytes_in_window > 0 {
-                        self.last_bytes_time = Some(std::time::Instant::now());
-
-                        // Calculate chars per second for this 1-second window
-                        let sample_cps = bytes_in_window as f64;
-
-                        // Add to rolling window (keep last 60 samples = ~1 minute)
-                        self.tps_samples.push_back(sample_cps);
-                        while self.tps_samples.len() > 60 {
-                            self.tps_samples.pop_front();
-                        }
-
-                        // Calculate rolling average
-                        if !self.tps_samples.is_empty() {
-                            let sum: f64 = self.tps_samples.iter().sum();
-                            self.current_tps = sum / self.tps_samples.len() as f64;
-                        }
-                    }
-                }
+                // Stream stats polling (formerly used fork-specific byte counter)
+                // TODO: Could be reimplemented with custom byte tracking if needed
+                self.stream_pulse = !self.stream_pulse;
                 Task::none()
             }
 
@@ -501,10 +489,14 @@ impl TiccaApp {
                 )
             }
             
-            Message::OAuthComplete(_provider, result) => {
+            Message::OAuthComplete(provider, result) => {
                 match result {
                     Ok(()) => {
                         self.error_message = None;
+                        // Update auth status after successful OAuth
+                        self.provider_auth_status = check_provider_auth_status();
+                        // Trigger model loading for the provider that just authenticated
+                        return Task::done(Message::RefreshModelsForProvider(provider));
                     }
                     Err(e) => {
                         self.error_message = Some(e);
@@ -551,24 +543,166 @@ impl TiccaApp {
                 }
                 self.is_loading_models = true;
 
-                // Get auth token
-                let auth_token = match get_claude_auth_token() {
-                    Some(token) => token,
-                    None => {
-                        self.is_loading_models = false;
-                        return Task::none();
-                    }
-                };
+                // Get all available auth tokens
+                let claude_token = get_claude_auth_token();
+                let gemini_token = get_gemini_auth_token();
+                let chatgpt_token = get_chatgpt_auth_token();
+                let chatgpt_id_token = get_chatgpt_id_token();
 
-                // Fetch models async
+                if claude_token.is_none() && gemini_token.is_none() && chatgpt_token.is_none() {
+                    self.is_loading_models = false;
+                    return Task::none();
+                }
+
+                // Fetch models from all authenticated providers
                 Task::perform(
                     async move {
-                        let client = llm::ClaudeClient::new(auth_token);
-                        client.fetch_latest_models().await
-                            .map_err(|e| e.to_string())
+                        let mut all_models: Vec<String> = Vec::new();
+
+                        // Fetch Claude models
+                        if let Some(token) = claude_token {
+                            let client = llm::ClaudeClient::new(token);
+                            if let Ok(models) = client.fetch_latest_models().await {
+                                all_models.extend(models);
+                            }
+                        }
+
+                        // Fetch Gemini models
+                        if let Some(token) = gemini_token {
+                            use ticca_oauth::GeminiOAuth;
+                            let oauth = GeminiOAuth::new();
+                            match oauth.fetch_models(&token, None).await {
+                                Ok(models) => all_models.extend(models.into_iter().map(|m| m.name)),
+                                Err(e) => {
+                                    tracing::warn!("Could not fetch Gemini models: {}", e);
+                                    // Add default Gemini models
+                                    all_models.extend(vec![
+                                        "gemini-2.0-flash-exp".to_string(),
+                                        "gemini-1.5-pro".to_string(),
+                                        "gemini-1.5-flash".to_string(),
+                                    ]);
+                                }
+                            }
+                        }
+
+                        // Fetch ChatGPT models
+                        if let Some(token) = chatgpt_token {
+                            use ticca_oauth::ChatGptOAuth;
+                            let oauth = ChatGptOAuth::new();
+                            match oauth.fetch_models(&token, chatgpt_id_token.as_deref()).await {
+                                Ok(models) => all_models.extend(models.into_iter().map(|m| m.id)),
+                                Err(e) => {
+                                    tracing::warn!("Could not fetch ChatGPT models: {}", e);
+                                    // Add default ChatGPT models
+                                    all_models.extend(vec![
+                                        "gpt-4o".to_string(),
+                                        "gpt-4o-mini".to_string(),
+                                        "o1-preview".to_string(),
+                                    ]);
+                                }
+                            }
+                        }
+
+                        if all_models.is_empty() {
+                            Err("No models found from any provider".to_string())
+                        } else {
+                            Ok(all_models)
+                        }
                     },
                     Message::ModelsLoaded
                 )
+            }
+
+            Message::RefreshModelsForProvider(provider) => {
+                use crate::messages::OAuthProvider;
+
+                if self.is_loading_models {
+                    return Task::none();
+                }
+                self.is_loading_models = true;
+
+                match provider {
+                    OAuthProvider::Claude => {
+                        let auth_token = match get_claude_auth_token() {
+                            Some(token) => token,
+                            None => {
+                                self.is_loading_models = false;
+                                return Task::none();
+                            }
+                        };
+                        Task::perform(
+                            async move {
+                                let client = llm::ClaudeClient::new(auth_token);
+                                client.fetch_latest_models().await
+                                    .map_err(|e| e.to_string())
+                            },
+                            Message::ModelsLoaded
+                        )
+                    }
+                    OAuthProvider::Gemini => {
+                        let auth_token = match get_gemini_auth_token() {
+                            Some(token) => token,
+                            None => {
+                                self.is_loading_models = false;
+                                return Task::none();
+                            }
+                        };
+                        Task::perform(
+                            async move {
+                                use ticca_oauth::GeminiOAuth;
+                                let oauth = GeminiOAuth::new();
+                                match oauth.fetch_models(&auth_token, None).await {
+                                    Ok(models) => Ok(models.into_iter().map(|m| m.name).collect()),
+                                    Err(e) => {
+                                        // Fall back to hardcoded list of popular Gemini models
+                                        tracing::warn!("Could not fetch Gemini models ({}), using defaults", e);
+                                        Ok(vec![
+                                            "gemini-2.0-flash-exp".to_string(),
+                                            "gemini-1.5-pro".to_string(),
+                                            "gemini-1.5-flash".to_string(),
+                                            "gemini-1.0-pro".to_string(),
+                                        ])
+                                    }
+                                }
+                            },
+                            Message::ModelsLoaded
+                        )
+                    }
+                    OAuthProvider::ChatGpt => {
+                        let auth_token = match get_chatgpt_auth_token() {
+                            Some(token) => token,
+                            None => {
+                                self.is_loading_models = false;
+                                return Task::none();
+                            }
+                        };
+                        let id_token = get_chatgpt_id_token();
+                        Task::perform(
+                            async move {
+                                use ticca_oauth::ChatGptOAuth;
+                                let oauth = ChatGptOAuth::new();
+                                match oauth.fetch_models(&auth_token, id_token.as_deref()).await {
+                                    Ok(models) => Ok(models.into_iter().map(|m| m.id).collect()),
+                                    Err(e) => {
+                                        // OAuth token may not have model listing permissions
+                                        // Fall back to hardcoded list of popular models
+                                        tracing::warn!("Could not fetch ChatGPT models ({}), using defaults", e);
+                                        Ok(vec![
+                                            "gpt-4o".to_string(),
+                                            "gpt-4o-mini".to_string(),
+                                            "gpt-4-turbo".to_string(),
+                                            "gpt-4".to_string(),
+                                            "gpt-3.5-turbo".to_string(),
+                                            "o1-preview".to_string(),
+                                            "o1-mini".to_string(),
+                                        ])
+                                    }
+                                }
+                            },
+                            Message::ModelsLoaded
+                        )
+                    }
+                }
             }
 
             Message::ModelsLoaded(result) => {
@@ -884,6 +1018,7 @@ impl TiccaApp {
             self.default_model.as_deref(),
             &self.agent_pinned_models,
             self.is_loading_models,
+            &self.provider_auth_status,
         )
     }
 }

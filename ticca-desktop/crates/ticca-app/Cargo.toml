@@ -54,3 +54,6 @@ regex = "1"
 
 # Open URLs in browser
 open.workspace = true
+
+# HTTP types for custom headers
+http = "1"

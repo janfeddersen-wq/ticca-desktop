@@ -90,6 +90,7 @@ pub enum Message {
 
     // Model selection
     RefreshModels,
+    RefreshModelsForProvider(OAuthProvider),
     ModelsLoaded(Result<Vec<String>, String>),
     SetDefaultModel(String),
     SetAgentModel(AgentType, Option<String>),

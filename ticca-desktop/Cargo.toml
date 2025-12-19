@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Jan"]
 license = "MIT"
@@ -42,9 +42,9 @@ material-icons = "0.2"
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
-# LLM Framework (rig fork with OAuth support and streaming stats)
-# Aliased as "rig" so code can use `use rig::...`
-rig = { git = "https://github.com/janfeddersen-wq/rig.git", branch = "main", package = "rig-core" }
+# LLM Framework - upstream rig-core
+# We use custom OAuth providers in ticca-core/src/llm/providers/ instead of forked features
+rig = { version = "0.27", package = "rig-core", features = ["derive"] }
 
 # Markdown & syntax highlighting
 pulldown-cmark = "0.11"
@@ -78,6 +78,9 @@ url = "2.5"
 # Internal crates
 ticca-core = { path = "crates/ticca-core" }
 ticca-oauth = { path = "crates/ticca-oauth" }
+
+[patch.crates-io]
+rig-core = { path = "vendor/rig-core" }
 
 [profile.release]
 lto = true

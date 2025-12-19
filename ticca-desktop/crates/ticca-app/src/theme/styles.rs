@@ -409,6 +409,42 @@ pub fn send_button(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// Success button - authenticated/completed state
+pub fn success_button(theme: &Theme, status: button::Status) -> button::Style {
+    // Use green tones for success
+    let success = Color::from_rgb(0.22, 0.65, 0.38); // A pleasant green
+    let success_hover = Color::from_rgb(0.18, 0.55, 0.32);
+    let success_pressed = Color::from_rgb(0.16, 0.48, 0.28);
+
+    let base = button::Style {
+        background: Some(success.into()),
+        text_color: Color::WHITE,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..button::Style::default()
+    };
+
+    match status {
+        button::Status::Active => base,
+        button::Status::Hovered => button::Style {
+            background: Some(success_hover.into()),
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(success_pressed.into()),
+            ..base
+        },
+        button::Status::Disabled => button::Style {
+            background: Some(bg_elevated(theme).into()),
+            text_color: text_muted(theme),
+            ..base
+        },
+    }
+}
+
 /// Remove attachment button
 pub fn remove_attachment_button(theme: &Theme, status: button::Status) -> button::Style {
     let base = button::Style {
