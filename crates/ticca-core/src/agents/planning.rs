@@ -18,6 +18,8 @@ impl Agent for PlanningAgent {
             "list_files",
             "read_file",
             "grep",
+            "list_agents",
+            "invoke_agent",
         ]
     }
 
@@ -97,6 +99,8 @@ mod tests {
         assert!(agent.can_use_tool("list_files"));
         assert!(agent.can_use_tool("read_file"));
         assert!(agent.can_use_tool("grep"));
+        assert!(agent.can_use_tool("list_agents"));
+        assert!(agent.can_use_tool("invoke_agent"));
         assert!(!agent.can_use_tool("edit_file")); // Planning can't edit
         assert!(!agent.can_use_tool("write_file"));
     }
@@ -120,9 +124,11 @@ mod tests {
         assert!(tools.contains(&"list_files"));
         assert!(tools.contains(&"read_file"));
         assert!(tools.contains(&"grep"));
+        assert!(tools.contains(&"list_agents"));
+        assert!(tools.contains(&"invoke_agent"));
         assert!(!tools.contains(&"edit_file"));
         assert!(!tools.contains(&"write_file"));
         assert!(!tools.contains(&"shell"));
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 5);
     }
 }

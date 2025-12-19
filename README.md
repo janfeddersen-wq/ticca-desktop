@@ -4,12 +4,14 @@ A sleek, Iced-based desktop application for AI-assisted coding. Ticca provides a
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)
+![Version](https://img.shields.io/badge/version-0.7.0-green.svg)
 
 ## Features
 
 ### 🤖 AI Agents
 - **Coding Agent** - Writes, modifies, and executes code with full tool access
 - **Planning Agent** - Breaks down complex tasks into actionable steps and creates execution roadmaps
+- **Agent Invocation** - Agents can invoke other agents via the `invoke_agent` tool for multi-agent workflows
 
 ### 🛠️ Native Tools
 All tools are implemented in Rust for maximum performance:
@@ -20,6 +22,8 @@ All tools are implemented in Rust for maximum performance:
 - **delete_file** - Delete files with diff generation
 - **grep** - Search for text patterns using ripgrep libraries
 - **shell** - Execute shell commands with timeout support
+- **list_agents** - List all available agents with their identifiers and descriptions
+- **invoke_agent** - Invoke another agent with its own isolated message history
 
 ### 🎨 Theming
 11 built-in themes including:
@@ -36,6 +40,7 @@ All tools are implemented in Rust for maximum performance:
 Native OAuth support for multiple providers:
 - **Claude** (Anthropic) - Public PKCE flow
 - **Gemini** (Google) - Public PKCE flow (using gemini-cli credentials)
+- **Gemini Code Assist** (Google) - Enterprise code assistance provider
 - **ChatGPT** (OpenAI) - Public PKCE flow
 
 ### 💾 Session Management
@@ -63,6 +68,7 @@ ticca-desktop/
 │   │   │   ├── keybindings.rs   # Keyboard shortcuts
 │   │   │   ├── session_manager.rs # Session persistence
 │   │   │   ├── image_handler.rs # Image clipboard/drag-drop
+│   │   │   ├── agent_graph.rs   # Agent invocation graph visualization
 │   │   │   └── ...
 │   │   └── assets/
 │   │       └── fonts/           # Noto Sans font family
@@ -78,7 +84,10 @@ ticca-desktop/
 │   │       │   └── shell.rs     # Shell command execution
 │   │       ├── config/          # SQLite configuration database
 │   │       ├── session/         # Session storage
-│   │       └── llm/             # LLM client (Claude API)
+│   │       └── llm/             # LLM providers and clients
+│   │           ├── model_service.rs    # Model selection and management
+│   │           ├── provider_registry.rs # LLM provider registry
+│   │           └── providers/          # Claude, Gemini, ChatGPT providers
 │   │
 │   └── ticca-oauth/        # OAuth implementations
 │       └── src/
@@ -88,8 +97,12 @@ ticca-desktop/
 │           ├── pkce.rs          # PKCE utilities
 │           └── callback_server.rs # Local OAuth callback server
 │
+├── vendor/
+│   └── rig-core/          # Patched rig-core dependency
+│
 ├── Cargo.toml              # Workspace configuration
 ├── LICENSE                 # MIT License
+├── AGENTS.md               # Agent configuration guidance
 └── README.md
 ```
 
@@ -185,7 +198,7 @@ The Coding Agent has access to all native tools. Example prompts:
 ### Key Dependencies
 
 - **[Iced](https://iced.rs/)** - Cross-platform GUI framework (v0.14)
-- **[rig-core](https://github.com/0xPlaygrounds/rig)** - LLM framework with tool support
+- **[rig-core](https://github.com/0xPlaygrounds/rig)** - LLM framework with tool support (v0.27)
 - **[rusqlite](https://github.com/rusqlite/rusqlite)** - SQLite bindings
 - **[tokio](https://tokio.rs/)** - Async runtime
 - **[ripgrep libraries](https://github.com/BurntSushi/ripgrep)** - Fast text search (grep-regex, grep-searcher, ignore)

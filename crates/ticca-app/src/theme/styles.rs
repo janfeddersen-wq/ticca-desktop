@@ -504,6 +504,20 @@ pub fn dir_bar_container(theme: &Theme) -> container::Style {
     }
 }
 
+/// Agent flow panel container
+pub fn flow_panel_container(theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(bg_surface(theme).into()),
+        text_color: Some(text_primary(theme)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 /// Message bubble
 pub fn message_bubble(theme: &Theme, is_user: bool) -> container::Style {
     if is_user {

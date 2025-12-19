@@ -18,6 +18,8 @@ impl Agent for CodingAgent {
             "list_files",
             "read_file",
             "grep",
+            "list_agents",
+            "invoke_agent",
             "edit_file",
             "delete_file",
             "write_file",
@@ -61,6 +63,8 @@ mod tests {
         assert!(agent.can_use_tool("delete_file"));
         assert!(agent.can_use_tool("write_file"));
         assert!(agent.can_use_tool("shell"));
+        assert!(agent.can_use_tool("list_agents"));
+        assert!(agent.can_use_tool("invoke_agent"));
     }
 
     #[test]
@@ -92,11 +96,13 @@ mod tests {
         assert!(tools.contains(&"list_files"));
         assert!(tools.contains(&"read_file"));
         assert!(tools.contains(&"grep"));
+        assert!(tools.contains(&"list_agents"));
+        assert!(tools.contains(&"invoke_agent"));
         assert!(tools.contains(&"edit_file"));
         assert!(tools.contains(&"delete_file"));
         assert!(tools.contains(&"write_file"));
         assert!(tools.contains(&"shell"));
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 9);
     }
 
     #[test]
@@ -112,5 +118,7 @@ mod tests {
         assert!(prompt.contains("### delete_file"));
         assert!(prompt.contains("### grep"));
         assert!(prompt.contains("### shell"));
+        assert!(prompt.contains("### list_agents"));
+        assert!(prompt.contains("### invoke_agent"));
     }
 }

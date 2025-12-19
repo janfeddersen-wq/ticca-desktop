@@ -1,6 +1,7 @@
 //! Iced Application state and main loop
 
 use iced::widget::{button, column, container, row, text, text_editor};
+use iced::widget::pane_grid;
 use iced::widget::scrollable::AbsoluteOffset;
 use iced::{Element, Length, Subscription, Task, Theme, widget, Color};
 
@@ -17,6 +18,7 @@ use ticca_core::session::Session;
 use crate::oauth_handler;
 use crate::session_manager;
 
+use crate::agent_graph::AgentCallGraph;
 use crate::app_config::{load_config, AppConfig};
 use crate::chat_message::ChatMessage;
 use crate::helpers::format_tool_call_oneliner;
@@ -37,6 +39,12 @@ pub struct TiccaApp {
     chat: ChatState,
     settings: SettingsState,
     error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChatPane {
+    Chat,
+    Flow,
 }
 
 #[derive(Debug, Clone)]
@@ -75,10 +83,21 @@ struct ChatState {
     tps_samples: VecDeque<f64>,
     last_bytes_time: Option<std::time::Instant>,
     spinner_frame: usize,
+    call_graph: AgentCallGraph,
+    subagent_message_indices: HashMap<usize, usize>,
+    panes: iced::widget::pane_grid::State<ChatPane>,
+    chat_pane: iced::widget::pane_grid::Pane,
+    flow_pane: Option<iced::widget::pane_grid::Pane>,
 }
 
 impl ChatState {
     fn new(config: &AppConfig, working_directory: PathBuf) -> Self {
+        let (mut panes, chat_pane) = iced::widget::pane_grid::State::new(ChatPane::Chat);
+        let (flow_pane, split) = panes
+            .split(iced::widget::pane_grid::Axis::Vertical, chat_pane, ChatPane::Flow)
+            .expect("initial pane split should succeed");
+        panes.resize(split, 0.75);
+
         Self {
             input_value: String::new(),
             messages: vec![ChatMessage::assistant(
@@ -110,6 +129,11 @@ impl ChatState {
             tps_samples: VecDeque::with_capacity(60),
             last_bytes_time: None,
             spinner_frame: 0,
+            call_graph: AgentCallGraph::new(AgentType::Coding),
+            subagent_message_indices: HashMap::new(),
+            panes,
+            chat_pane,
+            flow_pane: Some(flow_pane),
         }
     }
 }
@@ -147,6 +171,7 @@ enum AppCommand {
         history: Vec<ChatMessage>,
         image_data: Vec<(String, String)>,
         yolo_mode_enabled: bool,
+        current_agent: AgentType,
         approval_rx: mpsc::UnboundedReceiver<ticca_core::tools::ToolApprovalDecision>,
         cancel_rx: tokio::sync::oneshot::Receiver<()>,
     },
@@ -214,6 +239,10 @@ impl TiccaApp {
                 self.chat.input_value = value;
             }
 
+            Message::PaneResized(event) => {
+                self.chat.panes.resize(event.split, event.ratio);
+            }
+
             Message::ChatScrolled(viewport) => {
                 // Check if user is at or near the bottom of the chat
                 // We consider "at bottom" if within 50 pixels of the end
@@ -256,6 +285,8 @@ impl TiccaApp {
 
                 self.chat.messages.push(ChatMessage::user(&display_message));
                 self.chat.user_at_bottom = true;
+                self.chat.call_graph.reset(self.chat.current_agent);
+                self.chat.subagent_message_indices.clear();
 
                 let profile = AgentProfile::for_type(self.chat.current_agent, self.chat.max_tool_rounds);
                 let model_name = profile.resolve_model(ModelSelectionContext {
@@ -323,6 +354,7 @@ impl TiccaApp {
                     history,
                     image_data,
                     yolo_mode_enabled: self.chat.yolo_mode_enabled,
+                    current_agent: self.chat.current_agent,
                     approval_rx,
                     cancel_rx,
                 });
@@ -526,6 +558,29 @@ impl TiccaApp {
             Message::SwitchAgent(agent_type) => {
                 self.chat.current_agent = agent_type;
                 self.chat.agent_config = CoreAgentConfig::new(agent_type);
+                self.chat.call_graph.reset(agent_type);
+                self.chat.subagent_message_indices.clear();
+            }
+
+            Message::ToggleFlowPanel => {
+                if let Some(flow_pane) = self.chat.flow_pane.take() {
+                    if let Some((_state, remaining)) = self.chat.panes.close(flow_pane) {
+                        self.chat.chat_pane = remaining;
+                    }
+                } else {
+                    if let Some((new_pane, split)) = self
+                        .chat
+                        .panes
+                    .split(
+                        iced::widget::pane_grid::Axis::Vertical,
+                        self.chat.chat_pane,
+                        ChatPane::Flow,
+                    )
+                    {
+                        self.chat.panes.resize(split, 0.75);
+                        self.chat.flow_pane = Some(new_pane);
+                    }
+                }
             }
 
             Message::StartOAuth(provider) => {
@@ -586,6 +641,8 @@ impl TiccaApp {
                     "New session started. How can I help you?",
                 ));
                 self.chat.current_session = None;
+                self.chat.call_graph.reset(self.chat.current_agent);
+                self.chat.subagent_message_indices.clear();
             }
 
             Message::LoadSession(session_id) => {
@@ -604,6 +661,8 @@ impl TiccaApp {
 
                     tracing::info!("Loaded session with {} messages", self.chat.messages.len());
                 }
+                self.chat.call_graph.reset(self.chat.current_agent);
+                self.chat.subagent_message_indices.clear();
                 self.current_view = View::Chat;
             }
 
@@ -686,6 +745,68 @@ impl TiccaApp {
                     }
                 }
                 self.push_scroll_if_needed(&mut commands);
+            }
+
+            Message::AgentCall(event) => {
+                self.chat.call_graph.record_call(&event);
+            }
+
+            Message::SubagentStream(event) => {
+                use ticca_core::tools::AgentStreamEvent;
+
+                match event {
+                    AgentStreamEvent::Start { node_id, agent_type } => {
+                        let label = format!("{} - {}", agent_type.display_name(), node_id);
+                        self.chat.messages.push(ChatMessage::assistant_streaming_named(label));
+                        let index = self.chat.messages.len().saturating_sub(1);
+                        self.chat.subagent_message_indices.insert(node_id, index);
+                        self.chat.user_at_bottom = true;
+                    }
+                    AgentStreamEvent::Chunk { node_id, text } => {
+                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
+                            if let Some(msg) = self.chat.messages.get_mut(index) {
+                                if msg.last_was_tool_call && !text.trim().is_empty() {
+                                    msg.content.push_str("\n\n💡 ");
+                                    msg.last_was_tool_call = false;
+                                }
+                                msg.content.push_str(&text);
+                                msg.update_parsed_items();
+                            }
+                        }
+                        self.push_scroll_if_needed(&mut commands);
+                    }
+                    AgentStreamEvent::Reasoning { node_id, text } => {
+                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
+                            if let Some(msg) = self.chat.messages.get_mut(index) {
+                                if let Some(ref mut existing) = msg.reasoning {
+                                    existing.push_str(&text);
+                                } else {
+                                    msg.reasoning = Some(text);
+                                }
+                            }
+                        }
+                        self.push_scroll_if_needed(&mut commands);
+                    }
+                    AgentStreamEvent::ToolCall { node_id, name, args } => {
+                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
+                            if let Some(msg) = self.chat.messages.get_mut(index) {
+                                let tool_line = format_tool_call_oneliner(&name, &args);
+                                msg.content.push_str(&format!("\n\n{}", tool_line));
+                                msg.last_was_tool_call = true;
+                                msg.update_parsed_items();
+                            }
+                        }
+                        self.push_scroll_if_needed(&mut commands);
+                    }
+                    AgentStreamEvent::Complete { node_id } => {
+                        if let Some(index) = self.chat.subagent_message_indices.remove(&node_id) {
+                            if let Some(msg) = self.chat.messages.get_mut(index) {
+                                msg.is_streaming = false;
+                                msg.update_parsed_items();
+                            }
+                        }
+                    }
+                }
             }
 
             Message::ToolResult { name: _, result: _ } => {}
@@ -788,6 +909,7 @@ impl TiccaApp {
                 history,
                 image_data,
                 yolo_mode_enabled,
+                current_agent,
                 approval_rx,
                 cancel_rx,
             } => Task::run(
@@ -800,6 +922,7 @@ impl TiccaApp {
                     history,
                     image_data,
                     yolo_mode_enabled,
+                    current_agent,
                     approval_rx,
                     cancel_rx,
                 ),
@@ -979,22 +1102,31 @@ impl TiccaApp {
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
 
-        crate::views::chat::view(
-            self.chat.current_agent,
-            &self.chat.working_directory,
-            &self.chat.messages,
-            &self.chat.pending_attachments,
-            &self.chat.input_value,
-            self.chat.is_streaming,
-            self.theme,
-            &self.chat.raw_view_messages,
-            &self.chat.raw_view_editors,
-            self.chat.stream_chars_received,
-            self.chat.current_tps,
-            self.chat.stream_pulse,
-            secs_since_bytes,
-            self.chat.spinner_frame,
-        )
+        pane_grid(&self.chat.panes, |_pane, pane_state, _| {
+            let content = match pane_state {
+                ChatPane::Chat => crate::views::chat::view(
+                    self.chat.current_agent,
+                    &self.chat.working_directory,
+                    &self.chat.messages,
+                    &self.chat.pending_attachments,
+                    &self.chat.input_value,
+                    self.chat.is_streaming,
+                    self.theme,
+                    &self.chat.raw_view_messages,
+                    &self.chat.raw_view_editors,
+                    self.chat.stream_chars_received,
+                    self.chat.current_tps,
+                    self.chat.stream_pulse,
+                    secs_since_bytes,
+                    self.chat.spinner_frame,
+                    self.chat.flow_pane.is_some(),
+                ),
+                ChatPane::Flow => crate::views::agent_flow::view(&self.chat.call_graph, self.theme),
+            };
+            iced::widget::pane_grid::Content::new(content)
+        })
+        .on_resize(10, Message::PaneResized)
+        .into()
     }
 
     /// Save the current session to the database

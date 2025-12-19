@@ -41,6 +41,7 @@ pub fn view<'a>(
     stream_pulse: bool,
     secs_since_bytes: u64,
     spinner_frame: usize,
+    flow_panel_visible: bool,
 ) -> Element<'a, Message> {
     let is_coding = current_agent == AgentType::Coding;
     let is_planning = current_agent == AgentType::Planning;
@@ -78,6 +79,10 @@ pub fn view<'a>(
 
             // Actions
             row![
+                button(icon(if flow_panel_visible { icons::CLOSE } else { icons::MENU }).size(18))
+                    .on_press(Message::ToggleFlowPanel)
+                    .style(styles::icon_button)
+                    .padding(8),
                 button(icon(icons::CONTRAST).size(18))
                     .on_press(Message::ThemeToggle)
                     .style(styles::icon_button)
@@ -256,13 +261,18 @@ pub fn view<'a>(
     .padding(12)
     .style(styles::input_area_container);
 
-    column![
-        header,
-        dir_bar,
-        messages_view,
-        input,
-    ]
-    .into()
+    let chat_column: Element<'_, Message> = container(
+        column![
+            header,
+            dir_bar,
+            messages_view,
+            input,
+        ]
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+    chat_column
 }
 
 /// Build the attachment preview bar
@@ -339,12 +349,13 @@ fn render_message<'a>(
     let is_dark = theme.is_dark();
     let is_raw_view = raw_view_messages.contains(&index);
 
-    let label = match msg.role {
+    let default_label = match msg.role {
         MessageRole::User => "You",
         MessageRole::Assistant => "Assistant",
         MessageRole::System => "System",
         MessageRole::Tool => "Tool",
     };
+    let label = msg.author_label.as_deref().unwrap_or(default_label);
 
     let content: Element<Message> = if msg.is_streaming && msg.content.is_empty() {
         row![

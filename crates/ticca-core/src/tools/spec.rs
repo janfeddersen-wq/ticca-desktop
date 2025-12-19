@@ -229,6 +229,45 @@ pub fn write_file_spec() -> ToolSpec {
     }
 }
 
+pub fn list_agents_spec() -> ToolSpec {
+    ToolSpec {
+        name: "list_agents",
+        description: "List all available agents with their identifiers and descriptions.",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+        registry_parameters: ToolParameterSchema::object(std::collections::HashMap::new(), vec![]),
+    }
+}
+
+pub fn invoke_agent_spec() -> ToolSpec {
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "agent".to_string(),
+        ToolParameterSchema::string("Agent identifier to invoke (e.g., 'coding' or 'planning')."),
+    );
+    params.insert(
+        "prompt".to_string(),
+        ToolParameterSchema::string("Prompt to send to the invoked agent."),
+    );
+
+    ToolSpec {
+        name: "invoke_agent",
+        description: "Invoke another agent with its own isolated message history.",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {
+                "agent": { "type": "string", "description": "Agent identifier to invoke (e.g., 'coding' or 'planning')" },
+                "prompt": { "type": "string", "description": "Prompt to send to the invoked agent" }
+            },
+            "required": ["agent", "prompt"]
+        }),
+        registry_parameters: ToolParameterSchema::object(params, vec!["agent".to_string(), "prompt".to_string()]),
+    }
+}
+
 pub fn tool_specs_for_names(names: &[&str]) -> Vec<ToolSpec> {
     names
         .iter()
@@ -240,6 +279,8 @@ pub fn tool_specs_for_names(names: &[&str]) -> Vec<ToolSpec> {
             "grep" => Some(grep_spec(200)),
             "shell" => Some(shell_spec(60, 256)),
             "write_file" => Some(write_file_spec()),
+            "list_agents" => Some(list_agents_spec()),
+            "invoke_agent" => Some(invoke_agent_spec()),
             _ => None,
         })
         .collect()

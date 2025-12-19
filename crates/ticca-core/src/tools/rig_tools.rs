@@ -6,9 +6,42 @@ use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use crate::agents::{AgentType, get_all_agents};
 use super::policy::ToolPolicy;
+
+#[derive(Debug, Clone)]
+pub struct AgentCallEvent {
+    pub parent_id: usize,
+    pub child_id: usize,
+    pub parent: AgentType,
+    pub child: AgentType,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum AgentStreamEvent {
+    Start { node_id: usize, agent_type: AgentType },
+    Chunk { node_id: usize, text: String },
+    Reasoning { node_id: usize, text: String },
+    ToolCall { node_id: usize, name: String, args: String },
+    Complete { node_id: usize },
+}
+
+#[derive(Clone)]
+pub struct AgentInvokeRequest {
+    pub agent_type: AgentType,
+    pub prompt: String,
+    pub parent_context: Arc<ToolContext>,
+    pub node_id: usize,
+}
+
+pub type AgentInvoker = dyn Fn(AgentInvokeRequest) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync;
 
 /// Shared context for all tools - primarily the working directory
 #[derive(Clone)]
@@ -17,6 +50,14 @@ pub struct ToolContext {
     pub approval_gate: Option<Arc<super::approval::ToolApprovalGate>>,
     pub yolo_mode_enabled: bool,
     pub policy: ToolPolicy,
+    pub current_agent: AgentType,
+    pub current_model: Option<String>,
+    pub max_tool_rounds: u32,
+    pub call_graph_tx: Option<mpsc::UnboundedSender<AgentCallEvent>>,
+    pub agent_stream_tx: Option<mpsc::UnboundedSender<AgentStreamEvent>>,
+    pub call_graph_counter: Option<Arc<AtomicUsize>>,
+    pub node_id: usize,
+    pub agent_invoker: Option<Arc<AgentInvoker>>,
 }
 
 impl Default for ToolContext {
@@ -28,6 +69,14 @@ impl Default for ToolContext {
             working_directory,
             approval_gate: None,
             yolo_mode_enabled: true,
+            current_agent: AgentType::Coding,
+            current_model: None,
+            max_tool_rounds: 0,
+            call_graph_tx: None,
+            agent_stream_tx: None,
+            call_graph_counter: None,
+            node_id: 0,
+            agent_invoker: None,
         }
     }
 }
@@ -681,6 +730,151 @@ impl Tool for WriteFileTool {
     }
 }
 
+// ============================================================================
+// List Agents Tool
+// ============================================================================
+
+#[derive(Debug, thiserror::Error)]
+#[error("List agents error: {0}")]
+pub struct ListAgentsError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListAgentsArgs {}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ListAgentsTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl ListAgentsTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for ListAgentsTool {
+    const NAME: &'static str = "list_agents";
+
+    type Error = ListAgentsError;
+    type Args = ListAgentsArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::list_agents_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let mut lines = Vec::new();
+        for agent in get_all_agents() {
+            lines.push(format!(
+                "- {}: {} - {}",
+                agent.agent_type().as_str(),
+                agent.display_name(),
+                agent.description()
+            ));
+        }
+
+        if lines.is_empty() {
+            lines.push("No agents available.".to_string());
+        }
+
+        Ok(lines.join("\n"))
+    }
+}
+
+// ============================================================================
+// Invoke Agent Tool
+// ============================================================================
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invoke agent error: {0}")]
+pub struct InvokeAgentError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InvokeAgentArgs {
+    pub agent: String,
+    pub prompt: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct InvokeAgentTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl InvokeAgentTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for InvokeAgentTool {
+    const NAME: &'static str = "invoke_agent";
+
+    type Error = InvokeAgentError;
+    type Args = InvokeAgentArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::invoke_agent_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let context = self
+            .context
+            .as_ref()
+            .ok_or_else(|| InvokeAgentError("Tool context not available".to_string()))?;
+
+        let agent_type = AgentType::from_str(&args.agent)
+            .ok_or_else(|| InvokeAgentError(format!("Unknown agent: {}", args.agent)))?;
+
+        let child_id = context
+            .call_graph_counter
+            .as_ref()
+            .map(|counter| counter.fetch_add(1, Ordering::SeqCst))
+            .unwrap_or(0);
+
+        if let Some(tx) = &context.call_graph_tx {
+            let _ = tx.send(AgentCallEvent {
+                parent_id: context.node_id,
+                child_id,
+                parent: context.current_agent,
+                child: agent_type,
+                prompt: args.prompt.clone(),
+            });
+        }
+
+        let invoker = context
+            .agent_invoker
+            .as_ref()
+            .ok_or_else(|| InvokeAgentError("Agent invocation is not configured".to_string()))?;
+
+        invoker(AgentInvokeRequest {
+            agent_type,
+            prompt: args.prompt,
+            parent_context: context.clone(),
+            node_id: child_id,
+        })
+        .await
+        .map_err(InvokeAgentError)
+    }
+}
+
 /// Create all tools with the given context
 pub fn create_tools(context: Arc<ToolContext>) -> (
     ShellTool,
@@ -690,6 +884,8 @@ pub fn create_tools(context: Arc<ToolContext>) -> (
     DeleteFileTool,
     GrepTool,
     WriteFileTool,
+    ListAgentsTool,
+    InvokeAgentTool,
 ) {
     (
         ShellTool::new(context.clone()),
@@ -698,7 +894,9 @@ pub fn create_tools(context: Arc<ToolContext>) -> (
         EditFileTool::new(context.clone()),
         DeleteFileTool::new(context.clone()),
         GrepTool::new(context.clone()),
-        WriteFileTool::new(context),
+        WriteFileTool::new(context.clone()),
+        ListAgentsTool::new(context.clone()),
+        InvokeAgentTool::new(context),
     )
 }
 

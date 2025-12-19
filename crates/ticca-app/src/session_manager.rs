@@ -33,6 +33,7 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
                 role: m.role.clone(),
                 content: m.content.clone(),
                 is_streaming: false,
+                author_label: None,
                 reasoning: None,
                 parsed_items,
                 last_was_tool_call: false,

@@ -2,6 +2,7 @@
 
 use crate::theme::AppTheme;
 use ticca_core::agents::AgentType;
+use ticca_core::tools::{AgentCallEvent, AgentStreamEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,6 +38,9 @@ pub enum Message {
     /// Handle text editor actions in raw view (for selection/copy)
     RawViewEditorAction(usize, iced::widget::text_editor::Action),
 
+    /// Pane grid resize event
+    PaneResized(iced::widget::pane_grid::ResizeEvent),
+
     /// Streaming chunk received from LLM
     StreamChunk(String),
 
@@ -51,6 +55,12 @@ pub enum Message {
 
     /// Tool call started
     ToolCall { name: String, args: String },
+
+    /// Agent invocation event for the call graph
+    AgentCall(AgentCallEvent),
+
+    /// Streaming output from an invoked agent
+    SubagentStream(AgentStreamEvent),
 
     /// Tool result received
     ToolResult { name: String, result: String },
@@ -94,6 +104,9 @@ pub enum Message {
 
     // Agent selection
     SwitchAgent(AgentType),
+
+    // UI layout
+    ToggleFlowPanel,
 
     // Working directory
     SelectWorkingDirectory,

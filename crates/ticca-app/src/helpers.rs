@@ -76,6 +76,26 @@ pub fn format_tool_call_oneliner(name: &str, args: &str) -> String {
                 display
             }
         }
+        "invoke_agent" => {
+            let agent = parsed.get("agent").and_then(|v| v.as_str()).unwrap_or("");
+            let prompt = parsed.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+            let mut display = if agent.is_empty() {
+                String::new()
+            } else {
+                format!("Agent: {}", agent)
+            };
+
+            if !prompt.is_empty() {
+                let preview: String = prompt.chars().take(60).collect();
+                let suffix = if prompt.chars().count() > 60 { "..." } else { "" };
+                if !display.is_empty() {
+                    display.push_str(" • ");
+                }
+                display.push_str(&format!("Prompt: \"{}{}\"", preview, suffix));
+            }
+            display
+        }
+        "list_agents" => "Show available agents".to_string(),
         _ => {
             // Generic: show first key-value pair, limited
             if let Some(obj) = parsed.as_object() {

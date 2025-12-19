@@ -7,6 +7,8 @@
 //! - `delete_file`: Delete files with diff generation
 //! - `grep`: Search for text patterns using ripgrep
 //! - `shell`: Execute shell commands with timeout support
+//! - `list_agents`: List available agents
+//! - `invoke_agent`: Invoke another agent with its own history
 
 pub mod registry;
 pub mod file_ops;
@@ -38,6 +40,7 @@ pub use shell::shell_impl;
 pub use rig_tools::{
     ToolContext,
     ShellTool, ReadFileTool, ListFilesTool, EditFileTool, DeleteFileTool, GrepTool, WriteFileTool,
+    ListAgentsTool, InvokeAgentTool, AgentCallEvent, AgentStreamEvent, AgentInvokeRequest, AgentInvoker,
     create_tools,
 };
 pub use approval::{ToolApprovalGate, ToolApprovalRequest, ToolApprovalDecision};

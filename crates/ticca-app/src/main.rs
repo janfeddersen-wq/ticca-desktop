@@ -4,6 +4,7 @@
 
 mod app;
 mod app_config;
+mod agent_graph;
 mod chat_message;
 mod helpers;
 mod icons;

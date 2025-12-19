@@ -17,7 +17,12 @@ use ticca_core::llm::providers::GeminiCodeAssistRigClient;
 use ticca_core::llm::ClaudeOAuthClient;
 use ticca_core::llm::{ProviderId, ProviderRegistry};
 use ticca_core::session::MessageRole;
-use ticca_core::tools::{ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy};
+use ticca_core::agents::{AgentProfile, AgentType};
+use ticca_core::config::{ConfigDatabase, setting_keys};
+use ticca_core::tools::{
+    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent,
+    ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy,
+};
 
 use rig::agent::AgentBuilder;
 
@@ -25,6 +30,7 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -53,6 +59,26 @@ pub async fn fetch_best_model(auth_token: &AuthToken) -> Result<String, String> 
         .into_iter()
         .next()
         .ok_or_else(|| "No models available from Claude API".to_string())
+}
+
+async fn resolve_model_name(model_name: Option<String>) -> Result<String, String> {
+    match model_name {
+        Some(name) => {
+            tracing::info!("Using configured model: {}", name);
+            Ok(name)
+        }
+        None => {
+            let claude_token = auth::select_token(providers::CLAUDE)
+                .ok_or_else(|| "Claude authentication required to auto-select a model".to_string())?;
+            match fetch_best_model(&claude_token).await {
+                Ok(name) => {
+                    tracing::info!("Using auto-detected model: {}", name);
+                    Ok(name)
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
 }
 
 /// Build chat history from ChatMessage list
@@ -185,7 +211,7 @@ mod tests {
     #[tokio::test]
     async fn mock_stream_smoke_test() {
         let tool_context = Arc::new(ToolContext::default());
-        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
             ticca_core::tools::create_tools(tool_context);
 
         let history = build_chat_history(Vec::new());
@@ -202,6 +228,8 @@ mod tests {
             .tool(delete_file)
             .tool(grep)
             .tool(write_file)
+            .tool(list_agents)
+            .tool(invoke_agent)
             .temperature(0.1)
             .max_tokens(64)
             .build();
@@ -245,6 +273,7 @@ pub fn run_rig_agent_stream(
     chat_history: Vec<ChatMessage>,
     image_data: Vec<(String, String)>,
     yolo_mode_enabled: bool,
+    current_agent: AgentType,
     mut approval_decision_rx: mpsc::UnboundedReceiver<ToolApprovalDecision>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> impl futures::Stream<Item = Message> {
@@ -253,11 +282,50 @@ pub fn run_rig_agent_stream(
         let (approval_request_tx, mut approval_request_rx) = mpsc::unbounded_channel::<ToolApprovalRequest>();
         let approval_gate = Arc::new(ToolApprovalGate::new(approval_request_tx));
 
+        let resolved_model = match resolve_model_name(model_name).await {
+            Ok(name) => name,
+            Err(error) => {
+                let _ = event_tx.send(Message::StreamError(error));
+                let _ = event_tx.send(Message::StreamComplete);
+                return;
+            }
+        };
+
+        let (call_graph_tx, mut call_graph_rx) = mpsc::unbounded_channel::<AgentCallEvent>();
+        let (agent_stream_tx, mut agent_stream_rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
+        let call_graph_counter = Arc::new(AtomicUsize::new(1));
+
+        let event_tx_for_graph = event_tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = call_graph_rx.recv().await {
+                let _ = event_tx_for_graph.send(Message::AgentCall(event));
+            }
+        });
+
+        let event_tx_for_stream = event_tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = agent_stream_rx.recv().await {
+                let _ = event_tx_for_stream.send(Message::SubagentStream(event));
+            }
+        });
+
+        let agent_invoker: Arc<AgentInvoker> = Arc::new(|request: AgentInvokeRequest| {
+            Box::pin(invoke_agent(request))
+        });
+
         let tool_context = Arc::new(ToolContext {
             working_directory: working_directory.clone(),
             approval_gate: Some(approval_gate),
             yolo_mode_enabled,
             policy: ToolPolicy::allow_root(working_directory.clone()),
+            current_agent,
+            current_model: Some(resolved_model.clone()),
+            max_tool_rounds,
+            call_graph_tx: Some(call_graph_tx),
+            agent_stream_tx: Some(agent_stream_tx),
+            call_graph_counter: Some(call_graph_counter),
+            node_id: 0,
+            agent_invoker: Some(agent_invoker),
         });
 
         let mut pending_approvals: HashMap<u64, tokio::sync::oneshot::Sender<bool>> = HashMap::new();
@@ -293,7 +361,7 @@ pub fn run_rig_agent_stream(
                 tool_context_worker,
                 system_prompt,
                 user_message,
-                model_name,
+                resolved_model.clone(),
                 max_tool_rounds,
                 chat_history,
                 image_data,
@@ -330,12 +398,272 @@ pub fn run_rig_agent_stream(
     }
 }
 
+fn resolve_invocation_model(agent_type: AgentType, parent_context: &ToolContext) -> Result<String, String> {
+    if let Ok(db) = ConfigDatabase::open() {
+        if let Ok(Some(model)) = db.get_agent_pinned_model(agent_type.as_str()) {
+            if !model.trim().is_empty() {
+                return Ok(model);
+            }
+        }
+
+        if let Ok(Some(setting)) = db.get_setting(setting_keys::DEFAULT_MODEL) {
+            if !setting.value.trim().is_empty() {
+                return Ok(setting.value);
+            }
+        }
+    }
+
+    parent_context
+        .current_model
+        .clone()
+        .ok_or_else(|| "No model configured for invoke_agent".to_string())
+}
+
+async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
+    let parent_context = request.parent_context;
+    let agent_type = request.agent_type;
+    let model_name = resolve_invocation_model(agent_type, &parent_context)?;
+    let max_tool_rounds = parent_context.max_tool_rounds.max(1);
+
+    let profile = AgentProfile::for_type(agent_type, max_tool_rounds);
+    if let Some(tx) = &parent_context.agent_stream_tx {
+        let _ = tx.send(AgentStreamEvent::Start {
+            node_id: request.node_id,
+            agent_type,
+        });
+    }
+    let tool_context = Arc::new(ToolContext {
+        working_directory: parent_context.working_directory.clone(),
+        approval_gate: parent_context.approval_gate.clone(),
+        yolo_mode_enabled: parent_context.yolo_mode_enabled,
+        policy: parent_context.policy.clone(),
+        current_agent: agent_type,
+        current_model: Some(model_name.clone()),
+        max_tool_rounds,
+        call_graph_tx: parent_context.call_graph_tx.clone(),
+        agent_stream_tx: parent_context.agent_stream_tx.clone(),
+        call_graph_counter: parent_context.call_graph_counter.clone(),
+        node_id: request.node_id,
+        agent_invoker: parent_context.agent_invoker.clone(),
+    });
+
+    let user_msg = build_user_message(&request.prompt, Vec::new());
+    let mut history = vec![user_msg];
+
+    let result = match ProviderRegistry::resolve_provider(&model_name) {
+        ProviderId::ChatGpt => {
+            let token = auth::select_token(providers::CHATGPT)
+                .ok_or_else(|| "ChatGPT authentication required. Please authenticate in Settings.".to_string())?;
+            let id_token = token
+                .id_token
+                .ok_or_else(|| "ChatGPT id_token not found. Please re-authenticate in Settings.".to_string())?;
+
+            let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
+                .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
+
+            let model = client.completion_model(&model_name);
+            let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent_tool) =
+                ticca_core::tools::create_tools(tool_context);
+
+            let agent = AgentBuilder::new(model)
+                .preamble(&profile.system_prompt)
+                .tool(shell)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(invoke_agent_tool)
+                .temperature(0.7)
+                .max_tokens(8192)
+                .additional_params(ChatGptOAuthClient::codex_params())
+                .build();
+
+            stream_invoked_agent(
+                request.node_id,
+                &parent_context,
+                agent,
+                history,
+                max_tool_rounds,
+                "ChatGPT",
+            )
+            .await
+        }
+        ProviderId::Gemini => {
+            let token = auth::select_token(providers::GEMINI)
+                .ok_or_else(|| "Gemini authentication required. Please authenticate in Settings.".to_string())?;
+
+            let client = GeminiCodeAssistRigClient::new(token.access_token);
+            let model = client.completion_model(&model_name);
+            let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent_tool) =
+                ticca_core::tools::create_tools(tool_context);
+
+            let agent = AgentBuilder::new(model)
+                .preamble(&profile.system_prompt)
+                .tool(shell)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(invoke_agent_tool)
+                .temperature(0.7)
+                .max_tokens(8192)
+                .build();
+
+            stream_invoked_agent(
+                request.node_id,
+                &parent_context,
+                agent,
+                history,
+                max_tool_rounds,
+                "Gemini",
+            )
+            .await
+        }
+        ProviderId::Claude => {
+            let token = auth::select_token(providers::CLAUDE)
+                .ok_or_else(|| "Claude authentication required. Please authenticate in Settings.".to_string())?;
+
+            let client = ClaudeOAuthClient::new(token.access_token)
+                .map_err(|e| format!("Failed to create Claude client: {}", e))?;
+
+            let model = client.completion_model(&model_name);
+            let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent_tool) =
+                ticca_core::tools::create_tools(tool_context);
+
+            let mut claude_history = history;
+            prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
+
+            let agent = AgentBuilder::new(model)
+                .preamble(CLAUDE_CODE_INSTRUCTIONS)
+                .tool(shell)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(invoke_agent_tool)
+                .temperature(0.7)
+                .max_tokens(8192)
+                .build();
+
+            stream_invoked_agent(
+                request.node_id,
+                &parent_context,
+                agent,
+                claude_history,
+                max_tool_rounds,
+                "Claude",
+            )
+            .await
+        }
+    };
+
+    if let Some(tx) = &parent_context.agent_stream_tx {
+        let _ = tx.send(AgentStreamEvent::Complete {
+            node_id: request.node_id,
+        });
+    }
+
+    result
+}
+
+async fn stream_invoked_agent<M>(
+    node_id: usize,
+    parent_context: &ToolContext,
+    agent: rig::agent::Agent<M>,
+    history: Vec<rig::message::Message>,
+    max_tool_rounds: u32,
+    provider_label: &str,
+) -> Result<String, String>
+where
+    M: rig::completion::CompletionModel + 'static,
+    M::StreamingResponse: rig::completion::GetTokenUsage,
+{
+    use rig::agent::MultiTurnStreamItem;
+    use rig::streaming::StreamingPrompt;
+    use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+
+    let mut stream = agent
+        .stream_prompt("")
+        .with_history(history)
+        .multi_turn(max_tool_rounds as usize)
+        .await;
+
+    let mut collected = String::new();
+
+    while let Some(chunk_result) = stream.next().await {
+        match chunk_result {
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(text_chunk),
+            )) => {
+                if !text_chunk.text.is_empty() {
+                    collected.push_str(&text_chunk.text);
+                    if let Some(tx) = &parent_context.agent_stream_tx {
+                        let _ = tx.send(AgentStreamEvent::Chunk {
+                            node_id,
+                            text: text_chunk.text,
+                        });
+                    }
+                }
+            }
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Reasoning(reasoning),
+            )) => {
+                let text = reasoning.reasoning.join("");
+                if !text.is_empty() {
+                    if let Some(tx) = &parent_context.agent_stream_tx {
+                        let _ = tx.send(AgentStreamEvent::Reasoning {
+                            node_id,
+                            text,
+                        });
+                    }
+                }
+            }
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::ToolCall(tool_call),
+            )) => {
+                if let Some(tx) = &parent_context.agent_stream_tx {
+                    let name = tool_call.function.name;
+                    let args = tool_call.function.arguments.to_string();
+                    let _ = tx.send(AgentStreamEvent::ToolCall {
+                        node_id,
+                        name,
+                        args,
+                    });
+                }
+            }
+            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
+            Ok(_) => {}
+            Err(e) => {
+                let error_msg = format!("{} invoke error: {}", provider_label, e);
+                if let Some(tx) = &parent_context.agent_stream_tx {
+                    let _ = tx.send(AgentStreamEvent::Chunk {
+                        node_id,
+                        text: format!("❌ {}", error_msg),
+                    });
+                }
+                return Err(error_msg);
+            }
+        }
+    }
+
+    Ok(collected)
+}
+
 async fn run_agent_stream(
     event_tx: mpsc::UnboundedSender<Message>,
     tool_context: Arc<ToolContext>,
     system_prompt: String,
     user_message: String,
-    model_name: Option<String>,
+    model_name: String,
     max_tool_rounds: u32,
     chat_history: Vec<ChatMessage>,
     image_data: Vec<(String, String)>,
@@ -364,24 +692,6 @@ async fn run_agent_stream(
         })
     };
 
-    let model_name = match model_name {
-        Some(name) => {
-            tracing::info!("Using configured model: {}", name);
-            name
-        }
-        None => {
-            let claude_token = auth::select_token(providers::CLAUDE)
-                .ok_or_else(|| "Claude authentication required to auto-select a model".to_string())?;
-            match fetch_best_model(&claude_token).await {
-                Ok(name) => {
-                    tracing::info!("Using auto-detected model: {}", name);
-                    name
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    };
-
     let history = build_chat_history(chat_history);
     let user_msg = build_user_message(&user_message, image_data);
     let mut full_history = history;
@@ -401,7 +711,7 @@ async fn run_agent_stream(
             .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
 
         let model = client.completion_model(&model_name);
-        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
             ticca_core::tools::create_tools(tool_context);
 
         let agent = AgentBuilder::new(model)
@@ -413,6 +723,8 @@ async fn run_agent_stream(
             .tool(delete_file)
             .tool(grep)
             .tool(write_file)
+            .tool(list_agents)
+            .tool(invoke_agent)
             .temperature(0.7)
             .max_tokens(8192)
             .additional_params(ChatGptOAuthClient::codex_params())
@@ -486,7 +798,7 @@ async fn run_agent_stream(
         let client = GeminiCodeAssistRigClient::new(token.access_token);
 
         let model = client.completion_model(&model_name);
-        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
             ticca_core::tools::create_tools(tool_context);
 
         let agent = AgentBuilder::new(model)
@@ -498,6 +810,8 @@ async fn run_agent_stream(
             .tool(delete_file)
             .tool(grep)
             .tool(write_file)
+            .tool(list_agents)
+            .tool(invoke_agent)
             .temperature(0.7)
             .max_tokens(8192)
             .build();
@@ -571,7 +885,7 @@ async fn run_agent_stream(
         .map_err(|e| format!("Failed to create Claude client: {}", e))?;
 
     let model = client.completion_model(&model_name);
-    let (shell, read_file, list_files, edit_file, delete_file, grep, write_file) =
+    let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
         ticca_core::tools::create_tools(tool_context);
 
     let mut claude_history = full_history;
@@ -586,6 +900,8 @@ async fn run_agent_stream(
         .tool(delete_file)
         .tool(grep)
         .tool(write_file)
+        .tool(list_agents)
+        .tool(invoke_agent)
         .temperature(0.7)
         .max_tokens(8192)
         .build();

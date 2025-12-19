@@ -9,6 +9,7 @@ pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
     pub is_streaming: bool,
+    pub author_label: Option<String>,
     /// Reasoning/thinking content (collapsible)
     pub reasoning: Option<String>,
     /// Parsed markdown items (cached for rendering)
@@ -25,6 +26,7 @@ impl ChatMessage {
             role: MessageRole::User,
             content,
             is_streaming: false,
+            author_label: None,
             reasoning: None,
             parsed_items,
             last_was_tool_call: false,
@@ -38,6 +40,7 @@ impl ChatMessage {
             role: MessageRole::Assistant,
             content,
             is_streaming: false,
+            author_label: None,
             reasoning: None,
             parsed_items,
             last_was_tool_call: false,
@@ -49,6 +52,19 @@ impl ChatMessage {
             role: MessageRole::Assistant,
             content: String::new(),
             is_streaming: true,
+            author_label: None,
+            reasoning: None,
+            parsed_items: Vec::new(),
+            last_was_tool_call: false,
+        }
+    }
+
+    pub fn assistant_streaming_named(label: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            is_streaming: true,
+            author_label: Some(label.into()),
             reasoning: None,
             parsed_items: Vec::new(),
             last_was_tool_call: false,
