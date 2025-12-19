@@ -18,17 +18,6 @@
 //! - **Generative Language API** (`generativelanguage.googleapis.com`) - requires `generative-language` scope
 //!   which is NOT registered for the gemini-cli OAuth client ID
 //!
-//! ## For users who want to use Gemini:
-//!
-//! 1. **Option A (Recommended)**: Use a Gemini API key from https://aistudio.google.com/
-//!    - Works with the standard Generative Language API
-//!    - No OAuth required
-//!
-//! 2. **Option B**: Use Claude or ChatGPT which have full OAuth support
-//!
-//! 3. **Option C (Future)**: We could implement Cloud Code Assist API support,
-//!    but this would require significant changes to the LLM client layer.
-//!
 //! ## Why this limitation exists:
 //!
 //! Google's OAuth client registration controls which scopes a client can request.
@@ -62,20 +51,12 @@ const GEMINI_CLIENT_SECRET: &str = "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";
 /// - `cloud-platform` - Access to Cloud Code Assist API
 /// - `userinfo.email` - User email for identification
 /// - `userinfo.profile` - Basic user profile info
-///
-/// NOT available (not registered):
-/// - `generative-language` - Required for generativelanguage.googleapis.com API
-///
-/// This means OAuth tokens from this flow can ONLY be used with:
-/// - Cloud Code Assist API (`cloudcode-pa.googleapis.com`)
-///
-/// For the standard Generative Language API, users must use an API key instead.
 const GEMINI_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 const GEMINI_REDIRECT_PATH: &str = "callback";
 const DEFAULT_PORT_RANGE: (u16, u16) = (52501, 52600);
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
-/// Hardcoded Gemini models for OAuth (match LLXPRT/Gemini CLI behavior)
+/// Hardcoded Gemini models for OAuth (fallback list)
 const GEMINI_MODELS: &[&str] = &[
     "gemini-2.5-pro",
     "gemini-2.5-flash",
@@ -305,9 +286,8 @@ impl GeminiOAuth {
     }
     
     /// Fetch available Gemini models
-    /// 
-    /// For OAuth, Gemini CLI only supports Code Assist; use the fixed model list
-    /// (llxprt behavior). Dynamic listing is for API key / Vertex providers.
+    ///
+    /// For OAuth, use a fixed model list. Dynamic listing is for API key / Vertex providers.
     pub async fn fetch_models(&self, access_token: &str, project_id: Option<&str>) -> OAuthResult<Vec<GeminiModel>> {
         let _ = access_token;
         let _ = project_id;

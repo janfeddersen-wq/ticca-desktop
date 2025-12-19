@@ -8,10 +8,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-defaults:
-  run:
-    working-directory: ticca-desktop
-
 jobs:
   build-release:
     strategy:
@@ -64,8 +60,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ticca-desktop/target
-          key: ${{ matrix.target }}-cargo-release-${{ hashFiles('ticca-desktop/Cargo.lock') }}
+            target
+          key: ${{ matrix.target }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ matrix.target }}-cargo-release-
 
@@ -76,14 +72,13 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czvf ../../../../ticca-${{ matrix.name }}.tar.gz ${{ matrix.artifact }}
+          tar -czvf ../../../ticca-${{ matrix.name }}.tar.gz ${{ matrix.artifact }}
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          7z a ../../../../ticca-${{ matrix.name }}.zip ${{ matrix.artifact }}
+          7z a ../../../ticca-${{ matrix.name }}.zip ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -110,10 +105,9 @@ jobs:
 
       - name: Display structure of downloaded files
         run: ls -R artifacts
-        working-directory: .
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v1
         with:
           files: |
             artifacts/ticca-linux-x86_64/ticca-linux-x86_64.tar.gz

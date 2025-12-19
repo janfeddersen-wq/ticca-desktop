@@ -387,8 +387,8 @@ impl Tool for EditFileTool {
         let params = json!({
             "file_path": path_str,
             "replacements": [{
-                "old_text": args.old_text,
-                "new_text": args.new_text
+                "old_str": args.old_text,
+                "new_str": args.new_text
             }]
         });
 

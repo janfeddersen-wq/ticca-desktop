@@ -9,10 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-defaults:
-  run:
-    working-directory: ticca-desktop
-
 jobs:
   build:
     strategy:
@@ -61,8 +57,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ticca-desktop/target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('ticca-desktop/Cargo.lock') }}
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ matrix.target }}-cargo-
 
@@ -78,8 +74,8 @@ jobs:
         with:
           name: ticca-${{ matrix.name }}
           path: |
-            ticca-desktop/target/${{ matrix.target }}/release/ticca
-            ticca-desktop/target/${{ matrix.target }}/release/ticca.exe
+            target/${{ matrix.target }}/release/ticca
+            target/${{ matrix.target }}/release/ticca.exe
           if-no-files-found: ignore
 
   lint:
@@ -106,8 +102,6 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all -- --check
-        working-directory: ticca-desktop
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-        working-directory: ticca-desktop

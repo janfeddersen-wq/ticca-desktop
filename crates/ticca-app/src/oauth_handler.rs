@@ -29,6 +29,10 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                             let token = OAuthToken::new("claude", &token_response.access_token)
                                 .with_refresh_token(refresh)
                                 .with_expires_at(expires_at_str);
+                            let token = match token_response.scope.clone() {
+                                Some(scope) => token.with_scope(scope),
+                                None => token,
+                            };
                             let _ = db.upsert_oauth_token(&token);
                         }
                         Ok(())
@@ -50,6 +54,10 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                             let token = OAuthToken::new("gemini", &token_response.access_token)
                                 .with_refresh_token(refresh)
                                 .with_expires_at(expires_at_str);
+                            let token = match token_response.scope.clone() {
+                                Some(scope) => token.with_scope(scope),
+                                None => token,
+                            };
                             let _ = db.upsert_oauth_token(&token);
                         }
                         Ok(())
@@ -74,6 +82,9 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                             let mut token = OAuthToken::new("chatgpt", &token_response.access_token)
                                 .with_refresh_token(refresh)
                                 .with_expires_at(expires_at_str);
+                            if let Some(scope) = token_response.scope.clone() {
+                                token = token.with_scope(scope);
+                            }
                             if let Some(extra_json) = extra {
                                 token = token.with_extra(extra_json);
                             }

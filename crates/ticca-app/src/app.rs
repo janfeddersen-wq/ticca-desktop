@@ -763,9 +763,10 @@ impl TiccaApp {
                         last.content.push_str(&format!("\n\n{}", tool_line));
                         // Mark that we just added a tool call
                         last.last_was_tool_call = true;
+                        last.update_parsed_items();
                     }
                 }
-                Task::none()
+                self.scroll_to_bottom_if_needed()
             }
 
             Message::ToolResult { name: _, result: _ } => {

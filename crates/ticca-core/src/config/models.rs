@@ -90,6 +90,11 @@ impl OAuthToken {
         self.expires_at = Some(expires.into());
         self
     }
+
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
+        self
+    }
     
     pub fn with_extra(mut self, extra: impl Into<String>) -> Self {
         self.extra_json = Some(extra.into());

@@ -14,7 +14,7 @@ use ticca_core::config::models::providers;
 use ticca_core::llm;
 use ticca_core::llm::providers::chatgpt::{is_gpt_model, ChatGptOAuthClient};
 use ticca_core::llm::providers::gemini::is_gemini_model;
-use ticca_core::llm::providers::{CodeAssistContent, GeminiCodeAssistClient};
+use ticca_core::llm::providers::GeminiCodeAssistRigClient;
 use ticca_core::llm::ClaudeOAuthClient;
 use ticca_core::session::MessageRole;
 use ticca_core::tools::ToolContext;
@@ -24,6 +24,7 @@ use rig::agent::AgentBuilder;
 use futures::StreamExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Get the Claude OAuth token if available and valid
 pub fn get_claude_auth_token() -> Option<String> {
@@ -165,8 +166,29 @@ pub fn run_rig_agent_stream(
     image_data: Vec<(String, String)>,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
-        let mut stats_window_start = std::time::Instant::now();
+        let mut stats_window_start = Instant::now();
         let mut stats_window_chars: usize = 0;
+        const STATS_WINDOW_MIN_MS: u64 = 200;
+
+        let mut emit_stream_stats = |stats_window_chars: &mut usize,
+                                     stats_window_start: &mut Instant|
+         -> Option<Message> {
+            if *stats_window_chars == 0 {
+                return None;
+            }
+            let elapsed = stats_window_start.elapsed();
+            let window_ms = elapsed.as_millis() as u64;
+            if window_ms < STATS_WINDOW_MIN_MS {
+                return None;
+            }
+            let chars = *stats_window_chars;
+            *stats_window_chars = 0;
+            *stats_window_start = Instant::now();
+            Some(Message::StreamStats {
+                chars_in_window: chars,
+                window_ms,
+            })
+        };
 
         // Use provided model or fetch from API
         let model_name = match model_name {
@@ -189,7 +211,6 @@ pub fn run_rig_agent_stream(
         };
 
         // Build history and user message
-        let gemini_history = chat_history.clone();
         let history = build_chat_history(chat_history);
         let user_msg = build_user_message(&user_message, image_data);
         let mut full_history = history;
@@ -279,15 +300,10 @@ pub fn run_rig_agent_stream(
                             tracing::trace!("ChatGPT text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
                             yield Message::StreamChunk(text_chunk.text);
                             stats_window_chars += chunk_len;
-                            let elapsed = stats_window_start.elapsed();
-                            if elapsed >= std::time::Duration::from_secs(1) {
-                                let window_ms = elapsed.as_millis() as u64;
-                                yield Message::StreamStats {
-                                    chars_in_window: stats_window_chars,
-                                    window_ms,
-                                };
-                                stats_window_chars = 0;
-                                stats_window_start = std::time::Instant::now();
+                            if let Some(stats) =
+                                emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
+                            {
+                                yield stats;
                             }
                         }
                     }
@@ -344,7 +360,7 @@ pub fn run_rig_agent_stream(
             }
             tracing::debug!("ChatGPT stream finished after {} chunks", chunk_count);
         } else if is_gemini_model(&model_name) {
-            tracing::info!("Using Gemini Code Assist backend for model: {}", model_name);
+            tracing::info!("Using Gemini backend for model: {}", model_name);
 
             let gemini_token = match get_gemini_auth_token() {
                 Some(token) => token,
@@ -356,70 +372,105 @@ pub fn run_rig_agent_stream(
                 }
             };
 
-            let client = GeminiCodeAssistClient::new(&gemini_token);
+            let client = GeminiCodeAssistRigClient::new(&gemini_token);
+            let model = client.completion_model(&model_name);
 
-            let mut contents: Vec<CodeAssistContent> = Vec::new();
-            if !system_prompt.is_empty() {
-                let system_prefix = format!(
-                    "<system>\n{}\n</system>\n\nUser provided conversation begins here:",
-                    system_prompt
-                );
-                contents.push(CodeAssistContent::user(&system_prefix));
-            }
-            for msg in gemini_history {
-                match msg.role {
-                    MessageRole::User => contents.push(CodeAssistContent::user(&msg.content)),
-                    MessageRole::Assistant => contents.push(CodeAssistContent::model(&msg.content)),
-                    _ => {}
-                }
-            }
-            contents.push(CodeAssistContent::user(&user_message));
-            tracing::debug!(
-                "Gemini Code Assist payload: system_prompt_len={}, contents_len={}",
-                system_prompt.len(),
-                contents.len()
-            );
+            let (shell, read_file, list_files, edit_file, grep, write_file) =
+                ticca_core::tools::create_tools(tool_context);
 
-            let stream = match client
-                .stream_generate_content(&model_name, &system_prompt, &contents)
-                .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    yield Message::StreamError(format!("Gemini Code Assist error: {}", e));
-                    return;
-                }
-            };
+            let agent = AgentBuilder::new(model)
+                .preamble(&system_prompt)
+                .tool(shell)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(grep)
+                .tool(write_file)
+                .temperature(0.7)
+                .max_tokens(8192)
+                .build();
 
-            futures::pin_mut!(stream);
+            use rig::agent::MultiTurnStreamItem;
+            use rig::streaming::StreamingPrompt;
+            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+
+            let mut stream = agent
+                .stream_prompt("")
+                .with_history(full_history.clone())
+                .multi_turn(max_tool_rounds as usize)
+                .await;
+
+            let mut chunk_count = 0u32;
             while let Some(chunk_result) = stream.next().await {
+                chunk_count += 1;
                 match chunk_result {
-                    Ok(text) => {
-                        if !text.is_empty() {
-                            let chunk_len = text.len();
-                            tracing::debug!("Gemini Code Assist UI chunk: {} chars", text.len());
-                            yield Message::StreamChunk(text);
+                    Ok(MultiTurnStreamItem::StreamAssistantItem(
+                        StreamedAssistantContent::Text(text_chunk),
+                    )) => {
+                        if !text_chunk.text.is_empty() {
+                            let chunk_len = text_chunk.text.len();
+                            tracing::trace!("Gemini text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
+                            yield Message::StreamChunk(text_chunk.text);
                             stats_window_chars += chunk_len;
-                            let elapsed = stats_window_start.elapsed();
-                            if elapsed >= std::time::Duration::from_secs(1) {
-                                let window_ms = elapsed.as_millis() as u64;
-                                yield Message::StreamStats {
-                                    chars_in_window: stats_window_chars,
-                                    window_ms,
-                                };
-                                stats_window_chars = 0;
-                                stats_window_start = std::time::Instant::now();
+                            if let Some(stats) =
+                                emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
+                            {
+                                yield stats;
                             }
                         }
                     }
+                    Ok(MultiTurnStreamItem::StreamAssistantItem(
+                        StreamedAssistantContent::Reasoning(reasoning),
+                    )) => {
+                        let text = reasoning.reasoning.join("");
+                        if !text.is_empty() {
+                            tracing::debug!("Gemini reasoning chunk #{}: {} chars", chunk_count, text.len());
+                            yield Message::Reasoning(text);
+                        }
+                    }
+                    Ok(MultiTurnStreamItem::StreamAssistantItem(
+                        StreamedAssistantContent::ToolCall(tool_call),
+                    )) => {
+                        tracing::debug!("Gemini tool call #{}: {}", chunk_count, tool_call.function.name);
+                        let args_str = serde_json::to_string_pretty(&tool_call.function.arguments)
+                            .unwrap_or_else(|_| format!("{:?}", tool_call.function.arguments));
+                        yield Message::ToolCall {
+                            name: tool_call.function.name.clone(),
+                            args: args_str,
+                        };
+                    }
+                    Ok(MultiTurnStreamItem::StreamUserItem(
+                        StreamedUserContent::ToolResult(tool_result),
+                    )) => {
+                        tracing::debug!("Gemini tool result #{}: {}", chunk_count, tool_result.id);
+                        let result_text = tool_result
+                            .content
+                            .iter()
+                            .map(|c| match c {
+                                rig::message::ToolResultContent::Text(t) => t.text.clone(),
+                                _ => "[non-text content]".to_string(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        yield Message::ToolResult {
+                            name: tool_result.id.clone(),
+                            result: result_text,
+                        };
+                    }
+                    Ok(MultiTurnStreamItem::FinalResponse(_)) => {
+                        tracing::debug!("Gemini received FinalResponse #{}", chunk_count);
+                    }
+                    Ok(other) => {
+                        tracing::debug!("Gemini other stream item #{}: {:?}", chunk_count, std::any::type_name_of_val(&other));
+                    }
                     Err(e) => {
-                        tracing::error!("Gemini Code Assist stream error: {}", e);
-                        yield Message::StreamError(format!("Gemini Code Assist stream error: {}", e));
+                        tracing::error!("Gemini stream error #{}: {}", chunk_count, e);
+                        yield Message::StreamError(format!("Gemini stream error: {}", e));
                         return;
                     }
                 }
             }
-            tracing::debug!("Gemini Code Assist stream finished");
+            tracing::debug!("Gemini stream finished after {} chunks", chunk_count);
         } else {
             // Use Claude/Anthropic backend (default)
             tracing::info!("Using Claude backend for model: {}", model_name);
@@ -521,15 +572,10 @@ pub fn run_rig_agent_stream(
                             tracing::trace!("Claude text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
                             yield Message::StreamChunk(text_chunk.text);
                             stats_window_chars += chunk_len;
-                            let elapsed = stats_window_start.elapsed();
-                            if elapsed >= std::time::Duration::from_secs(1) {
-                                let window_ms = elapsed.as_millis() as u64;
-                                yield Message::StreamStats {
-                                    chars_in_window: stats_window_chars,
-                                    window_ms,
-                                };
-                                stats_window_chars = 0;
-                                stats_window_start = std::time::Instant::now();
+                            if let Some(stats) =
+                                emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
+                            {
+                                yield stats;
                             }
                         }
                     }
@@ -585,6 +631,16 @@ pub fn run_rig_agent_stream(
                 }
             }
             tracing::debug!("Claude stream finished after {} chunks", chunk_count);
+        }
+
+        if stats_window_chars > 0 {
+            let elapsed = stats_window_start.elapsed();
+            if elapsed.as_millis() > 0 {
+                yield Message::StreamStats {
+                    chars_in_window: stats_window_chars,
+                    window_ms: elapsed.as_millis() as u64,
+                };
+            }
         }
 
         yield Message::StreamComplete;

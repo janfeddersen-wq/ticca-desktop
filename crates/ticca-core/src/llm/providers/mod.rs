@@ -20,6 +20,9 @@ pub mod http_wrapper;
 pub use claude::ClaudeOAuthClient;
 pub use chatgpt::ChatGptOAuthClient;
 pub use gemini::GeminiOAuthClient;
-pub use gemini_code_assist::{CodeAssistContent, GeminiCodeAssistClient};
+pub use gemini_code_assist::{
+    CodeAssistContent, GeminiCodeAssistClient, GeminiCodeAssistCompletionModel,
+    GeminiCodeAssistRigClient,
+};
 pub use common::{OAuthProviderError, ProviderConfig};
 pub use http_wrapper::{OAuthHttpClient, CodexHttpClient};
