@@ -102,8 +102,14 @@ mod tests {
 
     #[test]
     fn resolves_chatgpt_models() {
-        assert_eq!(ProviderRegistry::resolve_provider("gpt-4o"), ProviderId::ChatGpt);
-        assert_eq!(ProviderRegistry::resolve_provider("chatgpt-4o-latest"), ProviderId::ChatGpt);
+        assert_eq!(
+            ProviderRegistry::resolve_provider("gpt-4o"),
+            ProviderId::ChatGpt
+        );
+        assert_eq!(
+            ProviderRegistry::resolve_provider("chatgpt-4o-latest"),
+            ProviderId::ChatGpt
+        );
     }
 
     #[test]
@@ -120,6 +126,9 @@ mod tests {
             ProviderRegistry::resolve_provider("claude-3-5-sonnet"),
             ProviderId::Claude
         );
-        assert_eq!(ProviderRegistry::resolve_provider("unknown-model"), ProviderId::Claude);
+        assert_eq!(
+            ProviderRegistry::resolve_provider("unknown-model"),
+            ProviderId::Claude
+        );
     }
 }

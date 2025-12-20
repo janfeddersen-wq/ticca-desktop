@@ -3,9 +3,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AccountRotationPolicy, ConfigDatabase, TypedSettings};
-use crate::config::models::providers as provider_names;
 use crate::config::OAuthAccount;
+use crate::config::models::providers as provider_names;
+use crate::config::{AccountRotationPolicy, ConfigDatabase, TypedSettings};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthToken {
@@ -23,25 +23,15 @@ fn parse_time(value: &Option<String>) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-fn is_cooling(account: &OAuthAccount) -> bool {
-    match parse_time(&account.cooldown_until) {
-        Some(until) => until > Utc::now(),
-        None => false,
-    }
-}
-
-fn is_expired(account: &OAuthAccount) -> bool {
-    match parse_time(&account.expires_at) {
-        Some(expires) => expires < Utc::now(),
-        None => false,
-    }
-}
-
 fn extract_id_token(extra_json: &Option<String>) -> Option<String> {
     extra_json.as_ref().and_then(|json_str| {
         serde_json::from_str::<serde_json::Value>(json_str)
             .ok()
-            .and_then(|v| v.get("id_token").and_then(|t| t.as_str()).map(|s| s.to_string()))
+            .and_then(|v| {
+                v.get("id_token")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            })
     })
 }
 
@@ -51,7 +41,8 @@ pub fn list_accounts(provider: &str) -> Vec<OAuthAccount> {
         Err(_) => return Vec::new(),
     };
 
-    db.list_oauth_accounts(Some(provider)).unwrap_or_default()
+    db.list_oauth_accounts_pruned(Some(provider))
+        .unwrap_or_default()
 }
 
 pub fn select_token(provider: &str) -> Option<AuthToken> {
@@ -60,8 +51,8 @@ pub fn select_token(provider: &str) -> Option<AuthToken> {
     let mut eligible: Vec<OAuthAccount> = accounts
         .into_iter()
         .filter(|a| a.is_active)
-        .filter(|a| !is_expired(a))
-        .filter(|a| !is_cooling(a))
+        .filter(|a| !a.is_expired())
+        .filter(|a| !a.is_cooling())
         .collect();
 
     let rotation_policy = ConfigDatabase::open()

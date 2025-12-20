@@ -2,10 +2,10 @@
 //!
 //! Handles OAuth flows for various LLM providers.
 
+use ticca_core::OAuthToken;
 use ticca_core::config::ConfigDatabase;
 use ticca_core::config::OAuthAccount;
-use ticca_core::OAuthToken;
-use ticca_oauth::{ClaudeOAuth, ChatGptOAuth, GeminiOAuth};
+use ticca_oauth::{ChatGptOAuth, ClaudeOAuth, GeminiOAuth};
 use uuid::Uuid;
 
 use crate::messages::OAuthProvider;
@@ -22,34 +22,40 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                     Ok(token_response) => {
                         // Save token to database
                         if let Ok(db) = ConfigDatabase::open() {
-                            let expires_at_str = token_response.expires_at()
-                                .map(|t| t.to_rfc3339())
-                                .unwrap_or_default();
-                            let refresh = token_response.refresh_token
+                            let mut token = OAuthToken::new("claude", &token_response.access_token);
+                            if let Some(refresh_token) = token_response
+                                .refresh_token
                                 .clone()
-                                .unwrap_or_default();
-                            let token = OAuthToken::new("claude", &token_response.access_token)
-                                .with_refresh_token(refresh)
-                                .with_expires_at(expires_at_str);
-                            let token = match token_response.scope.clone() {
-                                Some(scope) => token.with_scope(scope),
-                                None => token,
-                            };
+                                .filter(|token| !token.trim().is_empty())
+                            {
+                                token = token.with_refresh_token(refresh_token);
+                            }
+                            if let Some(expires_at) = token_response.expires_at_rfc3339() {
+                                token = token.with_expires_at(expires_at);
+                            }
+                            if let Some(scope) = token_response.scope.clone() {
+                                token = token.with_scope(scope);
+                            }
                             let _ = db.upsert_oauth_token(&token);
 
                             let mut account = OAuthAccount::new(
                                 Uuid::new_v4().to_string(),
                                 "claude",
                                 &token_response.access_token,
-                            )
-                            .with_refresh_token(token_response.refresh_token.clone().unwrap_or_default());
+                            );
+                            if let Some(refresh_token) = token_response
+                                .refresh_token
+                                .clone()
+                                .filter(|token| !token.trim().is_empty())
+                            {
+                                account = account.with_refresh_token(refresh_token);
+                            }
                             if let Some(expires_at) = token_response.expires_at_rfc3339() {
                                 account = account.with_expires_at(expires_at);
                             }
-                            let account = match token_response.scope.clone() {
-                                Some(scope) => account.with_scope(scope),
-                                None => account,
-                            };
+                            if let Some(scope) = token_response.scope.clone() {
+                                account = account.with_scope(scope);
+                            }
                             let _ = db.upsert_oauth_account(&account);
                         }
                         Ok(())
@@ -62,34 +68,40 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                 match oauth.authorize() {
                     Ok(token_response) => {
                         if let Ok(db) = ConfigDatabase::open() {
-                            let expires_at_str = token_response.expires_at()
-                                .map(|t| t.to_rfc3339())
-                                .unwrap_or_default();
-                            let refresh = token_response.refresh_token
+                            let mut token = OAuthToken::new("gemini", &token_response.access_token);
+                            if let Some(refresh_token) = token_response
+                                .refresh_token
                                 .clone()
-                                .unwrap_or_default();
-                            let token = OAuthToken::new("gemini", &token_response.access_token)
-                                .with_refresh_token(refresh)
-                                .with_expires_at(expires_at_str);
-                            let token = match token_response.scope.clone() {
-                                Some(scope) => token.with_scope(scope),
-                                None => token,
-                            };
+                                .filter(|token| !token.trim().is_empty())
+                            {
+                                token = token.with_refresh_token(refresh_token);
+                            }
+                            if let Some(expires_at) = token_response.expires_at_rfc3339() {
+                                token = token.with_expires_at(expires_at);
+                            }
+                            if let Some(scope) = token_response.scope.clone() {
+                                token = token.with_scope(scope);
+                            }
                             let _ = db.upsert_oauth_token(&token);
 
                             let mut account = OAuthAccount::new(
                                 Uuid::new_v4().to_string(),
                                 "gemini",
                                 &token_response.access_token,
-                            )
-                            .with_refresh_token(token_response.refresh_token.clone().unwrap_or_default());
+                            );
+                            if let Some(refresh_token) = token_response
+                                .refresh_token
+                                .clone()
+                                .filter(|token| !token.trim().is_empty())
+                            {
+                                account = account.with_refresh_token(refresh_token);
+                            }
                             if let Some(expires_at) = token_response.expires_at_rfc3339() {
                                 account = account.with_expires_at(expires_at);
                             }
-                            let account = match token_response.scope.clone() {
-                                Some(scope) => account.with_scope(scope),
-                                None => account,
-                            };
+                            if let Some(scope) = token_response.scope.clone() {
+                                account = account.with_scope(scope);
+                            }
                             let _ = db.upsert_oauth_account(&account);
                         }
                         Ok(())
@@ -102,18 +114,22 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                 match oauth.authorize() {
                     Ok(token_response) => {
                         if let Ok(db) = ConfigDatabase::open() {
-                            let expires_at_str = token_response.expires_at()
-                                .map(|t| t.to_rfc3339())
-                                .unwrap_or_default();
-                            let refresh = token_response.refresh_token
-                                .clone()
-                                .unwrap_or_default();
                             // Store id_token in extra_json for later use (needed for ChatGPT API)
-                            let extra = token_response.id_token()
-                                .map(|id_token| serde_json::json!({"id_token": id_token}).to_string());
-                            let mut token = OAuthToken::new("chatgpt", &token_response.access_token)
-                                .with_refresh_token(refresh)
-                                .with_expires_at(expires_at_str);
+                            let extra = token_response.id_token().map(|id_token| {
+                                serde_json::json!({"id_token": id_token}).to_string()
+                            });
+                            let mut token =
+                                OAuthToken::new("chatgpt", &token_response.access_token);
+                            if let Some(refresh_token) = token_response
+                                .refresh_token
+                                .clone()
+                                .filter(|token| !token.trim().is_empty())
+                            {
+                                token = token.with_refresh_token(refresh_token);
+                            }
+                            if let Some(expires_at) = token_response.expires_at_rfc3339() {
+                                token = token.with_expires_at(expires_at);
+                            }
                             if let Some(scope) = token_response.scope.clone() {
                                 token = token.with_scope(scope);
                             }
@@ -126,8 +142,14 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                                 Uuid::new_v4().to_string(),
                                 "chatgpt",
                                 &token_response.access_token,
-                            )
-                            .with_refresh_token(token_response.refresh_token.clone().unwrap_or_default());
+                            );
+                            if let Some(refresh_token) = token_response
+                                .refresh_token
+                                .clone()
+                                .filter(|token| !token.trim().is_empty())
+                            {
+                                account = account.with_refresh_token(refresh_token);
+                            }
                             if let Some(expires_at) = token_response.expires_at_rfc3339() {
                                 account = account.with_expires_at(expires_at);
                             }
@@ -135,7 +157,8 @@ pub async fn start_oauth(provider: OAuthProvider) -> Result<(), String> {
                                 account = account.with_scope(scope);
                             }
                             if let Some(extra_json) = token_response.id_token() {
-                                let extra_json = serde_json::json!({"id_token": extra_json}).to_string();
+                                let extra_json =
+                                    serde_json::json!({"id_token": extra_json}).to_string();
                                 account = account.with_extra(extra_json);
                             }
                             let _ = db.upsert_oauth_account(&account);

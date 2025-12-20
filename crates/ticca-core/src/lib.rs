@@ -8,14 +8,16 @@
 //! - LLM integration (Claude, etc.)
 
 pub mod agents;
-pub mod tools;
 pub mod config;
-pub mod session;
 pub mod llm;
+pub mod session;
+pub mod tools;
 
 // Re-export commonly used types
-pub use agents::{Agent, AgentConfig, AgentType, CodingAgent, PlanningAgent, get_agent, get_all_agents};
+pub use agents::{
+    Agent, AgentConfig, AgentType, CodingAgent, PlanningAgent, get_agent, get_all_agents,
+};
 pub use config::{ConfigDatabase, ModelConfig, OAuthToken, Setting};
-pub use session::{SessionDatabase, Session, SessionMessage, MessageRole};
-pub use tools::{ToolRegistry, ToolResult, ToolDefinition, create_default_registry};
 pub use llm::{ClaudeClient, get_claude_client, has_claude_credentials};
+pub use session::{MessageRole, Session, SessionDatabase, SessionMessage};
+pub use tools::{ToolDefinition, ToolRegistry, ToolResult, create_default_registry};

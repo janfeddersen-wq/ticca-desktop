@@ -1,11 +1,11 @@
 //! Configuration database operations
 
+use crate::config::migrations;
+use crate::config::models::{ModelConfig, OAuthAccount, OAuthToken, Setting};
 use anyhow::Result;
+use directories::ProjectDirs;
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
-use directories::ProjectDirs;
-use crate::config::models::{Setting, ModelConfig, OAuthToken, OAuthAccount};
-use crate::config::migrations;
 
 /// Configuration database manager
 pub struct ConfigDatabase {
@@ -16,38 +16,38 @@ impl ConfigDatabase {
     /// Open or create the configuration database
     pub fn open() -> Result<Self> {
         let db_path = Self::get_db_path()?;
-        
+
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         let conn = Connection::open(&db_path)?;
         let db = Self { conn };
         db.initialize()?;
         Ok(db)
     }
-    
+
     /// Get the database file path
     pub fn get_db_path() -> Result<PathBuf> {
         let proj_dirs = ProjectDirs::from("", "", "ticca-desktop")
             .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
-        
+
         let data_dir = proj_dirs.data_dir();
         Ok(data_dir.join("config.db"))
     }
-    
+
     /// Initialize database schema
     fn initialize(&self) -> Result<()> {
         migrations::run_config_migrations(&self.conn)
     }
-    
+
     // Settings CRUD
     pub fn get_setting(&self, key: &str) -> Result<Option<Setting>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT key, value, updated_at FROM settings WHERE key = ?"
-        )?;
-        
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value, updated_at FROM settings WHERE key = ?")?;
+
         let result = stmt.query_row(params![key], |row| {
             Ok(Setting {
                 key: row.get(0)?,
@@ -55,14 +55,14 @@ impl ConfigDatabase {
                 updated_at: row.get(2)?,
             })
         });
-        
+
         match result {
             Ok(setting) => Ok(Some(setting)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
-    
+
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
@@ -71,12 +71,12 @@ impl ConfigDatabase {
         )?;
         Ok(())
     }
-    
+
     pub fn get_all_settings(&self) -> Result<Vec<Setting>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT key, value, updated_at FROM settings ORDER BY key"
-        )?;
-        
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value, updated_at FROM settings ORDER BY key")?;
+
         let rows = stmt.query_map([], |row| {
             Ok(Setting {
                 key: row.get(0)?,
@@ -84,25 +84,24 @@ impl ConfigDatabase {
                 updated_at: row.get(2)?,
             })
         })?;
-        
+
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
-    
+
     pub fn delete_setting(&self, key: &str) -> Result<bool> {
-        let changes = self.conn.execute(
-            "DELETE FROM settings WHERE key = ?",
-            params![key],
-        )?;
+        let changes = self
+            .conn
+            .execute("DELETE FROM settings WHERE key = ?", params![key])?;
         Ok(changes > 0)
     }
-    
+
     // Model configurations CRUD
     pub fn get_model(&self, id: &str) -> Result<Option<ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, model_type, endpoint_url, context_length, is_default, config_json, created_at 
              FROM models WHERE id = ?"
         )?;
-        
+
         let result = stmt.query_row(params![id], |row| {
             Ok(ModelConfig {
                 id: row.get(0)?,
@@ -115,20 +114,20 @@ impl ConfigDatabase {
                 created_at: row.get(7)?,
             })
         });
-        
+
         match result {
             Ok(model) => Ok(Some(model)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
-    
+
     pub fn get_all_models(&self) -> Result<Vec<ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, model_type, endpoint_url, context_length, is_default, config_json, created_at 
              FROM models ORDER BY name"
         )?;
-        
+
         let rows = stmt.query_map([], |row| {
             Ok(ModelConfig {
                 id: row.get(0)?,
@@ -141,16 +140,16 @@ impl ConfigDatabase {
                 created_at: row.get(7)?,
             })
         })?;
-        
+
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
-    
+
     pub fn get_default_model(&self) -> Result<Option<ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, model_type, endpoint_url, context_length, is_default, config_json, created_at 
              FROM models WHERE is_default = 1 LIMIT 1"
         )?;
-        
+
         let result = stmt.query_row([], |row| {
             Ok(ModelConfig {
                 id: row.get(0)?,
@@ -163,20 +162,20 @@ impl ConfigDatabase {
                 created_at: row.get(7)?,
             })
         });
-        
+
         match result {
             Ok(model) => Ok(Some(model)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
-    
+
     pub fn upsert_model(&self, model: &ModelConfig) -> Result<()> {
         // If this model is default, clear other defaults first
         if model.is_default {
             self.conn.execute("UPDATE models SET is_default = 0", [])?;
         }
-        
+
         self.conn.execute(
             "INSERT INTO models (id, name, model_type, endpoint_url, context_length, is_default, config_json, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
@@ -200,22 +199,21 @@ impl ConfigDatabase {
         )?;
         Ok(())
     }
-    
+
     pub fn delete_model(&self, id: &str) -> Result<bool> {
-        let changes = self.conn.execute(
-            "DELETE FROM models WHERE id = ?",
-            params![id],
-        )?;
+        let changes = self
+            .conn
+            .execute("DELETE FROM models WHERE id = ?", params![id])?;
         Ok(changes > 0)
     }
-    
+
     // OAuth tokens CRUD
     pub fn get_oauth_token(&self, provider: &str) -> Result<Option<OAuthToken>> {
         let mut stmt = self.conn.prepare(
             "SELECT provider, access_token, refresh_token, expires_at, token_type, scope, extra_json, updated_at 
              FROM oauth_tokens WHERE provider = ?"
         )?;
-        
+
         let result = stmt.query_row(params![provider], |row| {
             Ok(OAuthToken {
                 provider: row.get(0)?,
@@ -228,14 +226,14 @@ impl ConfigDatabase {
                 updated_at: row.get(7)?,
             })
         });
-        
+
         match result {
             Ok(token) => Ok(Some(token)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
-    
+
     pub fn upsert_oauth_token(&self, token: &OAuthToken) -> Result<()> {
         self.conn.execute(
             "INSERT INTO oauth_tokens (provider, access_token, refresh_token, expires_at, token_type, scope, extra_json, updated_at)
@@ -344,6 +342,21 @@ impl ConfigDatabase {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn list_oauth_accounts_pruned(&self, provider: Option<&str>) -> Result<Vec<OAuthAccount>> {
+        let accounts = self.list_oauth_accounts(provider)?;
+
+        let mut kept = Vec::with_capacity(accounts.len());
+        for account in accounts {
+            if account.is_expired() && !account.has_refresh_token() {
+                let _ = self.delete_oauth_account(&account.id);
+                continue;
+            }
+            kept.push(account);
+        }
+
+        Ok(kept)
+    }
+
     pub fn upsert_oauth_account(&self, account: &OAuthAccount) -> Result<()> {
         self.conn.execute(
             "INSERT INTO oauth_accounts (
@@ -389,10 +402,9 @@ impl ConfigDatabase {
     }
 
     pub fn delete_oauth_account(&self, id: &str) -> Result<bool> {
-        let changes = self.conn.execute(
-            "DELETE FROM oauth_accounts WHERE id = ?",
-            params![id],
-        )?;
+        let changes = self
+            .conn
+            .execute("DELETE FROM oauth_accounts WHERE id = ?", params![id])?;
         Ok(changes > 0)
     }
 
@@ -445,7 +457,7 @@ impl ConfigDatabase {
         )?;
         Ok(changes > 0)
     }
-    
+
     pub fn delete_oauth_token(&self, provider: &str) -> Result<bool> {
         let changes = self.conn.execute(
             "DELETE FROM oauth_tokens WHERE provider = ?",
@@ -453,13 +465,13 @@ impl ConfigDatabase {
         )?;
         Ok(changes > 0)
     }
-    
+
     pub fn get_all_oauth_tokens(&self) -> Result<Vec<OAuthToken>> {
         let mut stmt = self.conn.prepare(
             "SELECT provider, access_token, refresh_token, expires_at, token_type, scope, extra_json, updated_at 
              FROM oauth_tokens ORDER BY provider"
         )?;
-        
+
         let rows = stmt.query_map([], |row| {
             Ok(OAuthToken {
                 provider: row.get(0)?,
@@ -472,12 +484,12 @@ impl ConfigDatabase {
                 updated_at: row.get(7)?,
             })
         })?;
-        
+
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
-    
+
     // Agent model pinning
-    
+
     /// Get the pinned model for a specific agent
     pub fn get_agent_pinned_model(&self, agent_type: &str) -> Result<Option<String>> {
         let key = format!("agent_pinned_model.{}", agent_type);
@@ -486,33 +498,33 @@ impl ConfigDatabase {
             _ => Ok(None),
         }
     }
-    
+
     /// Set the pinned model for a specific agent
     pub fn set_agent_pinned_model(&self, agent_type: &str, model_name: &str) -> Result<()> {
         let key = format!("agent_pinned_model.{}", agent_type);
         self.set_setting(&key, model_name)
     }
-    
+
     /// Clear the pinned model for a specific agent
     pub fn clear_agent_pinned_model(&self, agent_type: &str) -> Result<()> {
         let key = format!("agent_pinned_model.{}", agent_type);
         self.delete_setting(&key)?;
         Ok(())
     }
-    
+
     /// Get all agent-model pinnings
     pub fn get_all_agent_pinned_models(&self) -> Result<std::collections::HashMap<String, String>> {
         let settings = self.get_all_settings()?;
         let mut pinnings = std::collections::HashMap::new();
-        
+
         for setting in settings {
-            if let Some(agent_type) = setting.key.strip_prefix("agent_pinned_model.") {
-                if !setting.value.is_empty() {
-                    pinnings.insert(agent_type.to_string(), setting.value);
-                }
+            if let Some(agent_type) = setting.key.strip_prefix("agent_pinned_model.")
+                && !setting.value.is_empty()
+            {
+                pinnings.insert(agent_type.to_string(), setting.value);
             }
         }
-        
+
         Ok(pinnings)
     }
 }
@@ -520,6 +532,7 @@ impl ConfigDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Duration, Utc};
     use tempfile::TempDir;
 
     struct TestDb {
@@ -540,22 +553,22 @@ mod tests {
     fn test_settings_crud() {
         let test = test_db();
         let db = &test.db;
-        
+
         // Get default settings (theme is set by migrations)
         let theme = db.get_setting("theme").unwrap();
         assert!(theme.is_some());
         assert_eq!(theme.unwrap().value, "dark");
-        
+
         // Set custom setting
         db.set_setting("test_key", "test_value").unwrap();
         let setting = db.get_setting("test_key").unwrap().unwrap();
         assert_eq!(setting.value, "test_value");
-        
+
         // Update setting
         db.set_setting("test_key", "updated_value").unwrap();
         let setting = db.get_setting("test_key").unwrap().unwrap();
         assert_eq!(setting.value, "updated_value");
-        
+
         // Delete setting
         assert!(db.delete_setting("test_key").unwrap());
         assert!(db.get_setting("test_key").unwrap().is_none());
@@ -565,23 +578,23 @@ mod tests {
     fn test_models_crud() {
         let test = test_db();
         let db = &test.db;
-        
+
         // Create model
         let model = ModelConfig::new("claude-3", "Claude 3 Sonnet", "anthropic")
             .with_context_length(200000)
             .as_default();
         db.upsert_model(&model).unwrap();
-        
+
         // Read model
         let retrieved = db.get_model("claude-3").unwrap().unwrap();
         assert_eq!(retrieved.name, "Claude 3 Sonnet");
         assert_eq!(retrieved.context_length, 200000);
         assert!(retrieved.is_default);
-        
+
         // Get default model
         let default = db.get_default_model().unwrap().unwrap();
         assert_eq!(default.id, "claude-3");
-        
+
         // Delete model
         assert!(db.delete_model("claude-3").unwrap());
         assert!(db.get_model("claude-3").unwrap().is_none());
@@ -591,19 +604,53 @@ mod tests {
     fn test_oauth_tokens_crud() {
         let test = test_db();
         let db = &test.db;
-        
+
         // Create token
-        let token = OAuthToken::new("claude", "access_token_123")
-            .with_refresh_token("refresh_456");
+        let token = OAuthToken::new("claude", "access_token_123").with_refresh_token("refresh_456");
         db.upsert_oauth_token(&token).unwrap();
-        
+
         // Read token
         let retrieved = db.get_oauth_token("claude").unwrap().unwrap();
         assert_eq!(retrieved.access_token, "access_token_123");
         assert_eq!(retrieved.refresh_token, Some("refresh_456".to_string()));
-        
+
         // Delete token
         assert!(db.delete_oauth_token("claude").unwrap());
         assert!(db.get_oauth_token("claude").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_oauth_accounts_prune_expired_without_refresh_token() {
+        let test = test_db();
+        let db = &test.db;
+
+        let mut expired = OAuthAccount::new("expired", "claude", "access_token");
+        expired.expires_at = Some((Utc::now() - Duration::seconds(60)).to_rfc3339());
+        expired.refresh_token = None;
+        db.upsert_oauth_account(&expired).unwrap();
+
+        let mut expired_empty_refresh =
+            OAuthAccount::new("expired_empty", "claude", "access_token");
+        expired_empty_refresh.expires_at = Some((Utc::now() - Duration::seconds(60)).to_rfc3339());
+        expired_empty_refresh.refresh_token = Some("".to_string());
+        db.upsert_oauth_account(&expired_empty_refresh).unwrap();
+
+        let mut expired_with_refresh =
+            OAuthAccount::new("expired_with_refresh", "claude", "access_token");
+        expired_with_refresh.expires_at = Some((Utc::now() - Duration::seconds(60)).to_rfc3339());
+        expired_with_refresh.refresh_token = Some("refresh_token".to_string());
+        db.upsert_oauth_account(&expired_with_refresh).unwrap();
+
+        let listed = db.list_oauth_accounts_pruned(Some("claude")).unwrap();
+        let ids: Vec<String> = listed.into_iter().map(|a| a.id).collect();
+        assert_eq!(ids, vec!["expired_with_refresh".to_string()]);
+
+        assert!(db.get_oauth_account("expired").unwrap().is_none());
+        assert!(db.get_oauth_account("expired_empty").unwrap().is_none());
+        assert!(
+            db.get_oauth_account("expired_with_refresh")
+                .unwrap()
+                .is_some()
+        );
     }
 }

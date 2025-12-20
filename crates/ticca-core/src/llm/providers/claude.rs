@@ -154,7 +154,7 @@ impl ClaudeOAuthClient {
 }
 
 /// Build the OAuth headers for Claude API
-/// 
+///
 /// These headers are required for Claude Code OAuth to work properly.
 fn build_oauth_headers(access_token: &str) -> ProviderResult<HeaderMap> {
     let mut headers = HeaderMap::new();
@@ -190,8 +190,10 @@ fn build_oauth_headers(access_token: &str) -> ProviderResult<HeaderMap> {
         HeaderValue::from_static(USER_AGENT),
     );
 
-    tracing::debug!("Built OAuth headers for Claude (token: {}... chars)", 
-        std::cmp::min(access_token.len(), 8));
+    tracing::debug!(
+        "Built OAuth headers for Claude (token: {}... chars)",
+        std::cmp::min(access_token.len(), 8)
+    );
 
     Ok(headers)
 }

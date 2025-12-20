@@ -1,6 +1,6 @@
 //! Agent profile abstraction
 
-use super::{get_agent, AgentType};
+use super::{AgentType, get_agent};
 use crate::llm::{ProviderId, ProviderRegistry};
 
 #[derive(Debug, Clone)]
@@ -38,7 +38,9 @@ impl AccountSelectionPolicy {
     pub fn for_agent(agent_type: AgentType) -> Self {
         let provider_order = match agent_type {
             AgentType::Coding => vec![ProviderId::Claude, ProviderId::ChatGpt, ProviderId::Gemini],
-            AgentType::Planning => vec![ProviderId::Claude, ProviderId::Gemini, ProviderId::ChatGpt],
+            AgentType::Planning => {
+                vec![ProviderId::Claude, ProviderId::Gemini, ProviderId::ChatGpt]
+            }
         };
 
         Self {
@@ -203,7 +205,10 @@ mod tests {
             available_models: &models,
         };
 
-        assert_eq!(strategy.resolve(context), Some("claude-3-sonnet".to_string()));
+        assert_eq!(
+            strategy.resolve(context),
+            Some("claude-3-sonnet".to_string())
+        );
     }
 
     #[test]

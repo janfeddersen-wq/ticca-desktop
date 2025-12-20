@@ -20,29 +20,29 @@ pub struct AppConfig {
 pub fn load_config() -> AppConfig {
     let db = match ConfigDatabase::open() {
         Ok(db) => db,
-        Err(_) => return AppConfig {
-            theme: AppTheme::Dark,
-            default_model: None,
-            agent_pinned_models: HashMap::new(),
-            max_tool_rounds: ticca_core::config::defaults::MAX_TOOL_ROUNDS,
-            yolo_mode_enabled: ticca_core::config::defaults::YOLO_MODE,
-        },
+        Err(_) => {
+            return AppConfig {
+                theme: AppTheme::Dark,
+                default_model: None,
+                agent_pinned_models: HashMap::new(),
+                max_tool_rounds: ticca_core::config::defaults::MAX_TOOL_ROUNDS,
+                yolo_mode_enabled: ticca_core::config::defaults::YOLO_MODE,
+            };
+        }
     };
 
     let settings = TypedSettings::load(&db);
-    let theme = AppTheme::from_str(&settings.theme);
+    let theme = AppTheme::parse(&settings.theme);
     let default_model = settings.default_model;
     let max_tool_rounds = settings.max_tool_rounds;
     let yolo_mode_enabled = settings.yolo_mode_enabled;
 
     // Load agent pinned models
-    let pinned_map = db.get_all_agent_pinned_models()
-        .ok()
-        .unwrap_or_default();
+    let pinned_map = db.get_all_agent_pinned_models().ok().unwrap_or_default();
 
     let mut agent_pinned_models = HashMap::new();
     for (agent_str, model) in pinned_map {
-        if let Some(agent_type) = AgentType::from_str(&agent_str) {
+        if let Some(agent_type) = AgentType::parse(&agent_str) {
             agent_pinned_models.insert(agent_type, model);
         }
     }

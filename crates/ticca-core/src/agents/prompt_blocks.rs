@@ -1,7 +1,7 @@
 //! Shared prompt building blocks for agents
 
-use crate::tools::spec::ToolSpec;
 use crate::tools::ToolParameterSchema;
+use crate::tools::spec::ToolSpec;
 
 use super::profile::ToolUsagePolicy;
 
@@ -55,7 +55,7 @@ impl PromptBlocks {
         let mut keys: Vec<&String> = props.keys().collect();
         keys.sort();
 
-        let required = schema.required.as_ref().map(Vec::as_slice).unwrap_or(&[]);
+        let required = schema.required.as_deref().unwrap_or(&[]);
         let mut out = String::new();
 
         for key in keys {
@@ -71,10 +71,10 @@ impl PromptBlocks {
                 key, param.param_type, required_label, description
             );
 
-            if let Some(default) = &param.default {
-                if !default.is_null() {
-                    line.push_str(&format!(" Default: {}.", default));
-                }
+            if let Some(default) = &param.default
+                && !default.is_null()
+            {
+                line.push_str(&format!(" Default: {}.", default));
             }
 
             out.push_str(&line);

@@ -40,11 +40,13 @@ pub use approval::{ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest};
 pub use policy::ToolPolicy;
 pub use rig_tools::{
     AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, DeleteFileTool,
-    EditFileTool, GrepTool, InvokeAgentTool, ListAgentsTool, ListFilesTool, ReadFileTool,
-    ExecuteShellTool, KillProcessTool, ListProcessesTool, ReadProcessOutputTool, ToolContext,
+    EditFileTool, ExecuteShellTool, GrepTool, InvokeAgentTool, KillProcessTool, ListAgentsTool,
+    ListFilesTool, ListProcessesTool, ReadFileTool, ReadProcessOutputTool, ToolContext,
     WriteFileTool, create_tools,
 };
-pub use system_exec::{ProcessKind, ProcessSnapshot, SystemExecRequest, SystemExecResponse, SystemExecStore};
+pub use system_exec::{
+    ProcessKind, ProcessSnapshot, SystemExecRequest, SystemExecResponse, SystemExecStore,
+};
 pub use todo::{TodoItem, TodoListEvent, TodoListState, TodoStatus, TodoStore};
 
 /// Create a tool registry with all available tools registered
@@ -75,10 +77,22 @@ pub fn create_default_registry() -> ToolRegistry {
     registry.register(grep::grep_definition(), grep::grep_executor());
 
     // System executions (UI-backed)
-    registry.register(system_exec::execute_shell_definition(), system_exec::execute_shell_executor());
-    registry.register(system_exec::list_processes_definition(), system_exec::list_processes_executor());
-    registry.register(system_exec::read_process_output_definition(), system_exec::read_process_output_executor());
-    registry.register(system_exec::kill_process_definition(), system_exec::kill_process_executor());
+    registry.register(
+        system_exec::execute_shell_definition(),
+        system_exec::execute_shell_executor(),
+    );
+    registry.register(
+        system_exec::list_processes_definition(),
+        system_exec::list_processes_executor(),
+    );
+    registry.register(
+        system_exec::read_process_output_definition(),
+        system_exec::read_process_output_executor(),
+    );
+    registry.register(
+        system_exec::kill_process_definition(),
+        system_exec::kill_process_executor(),
+    );
 
     registry
 }

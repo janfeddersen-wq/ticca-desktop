@@ -8,17 +8,11 @@ use std::f32::consts::PI;
 /// A smooth animated spinner widget
 pub struct Spinner {
     frame: usize,
-    size: f32,
 }
 
 impl Spinner {
     pub fn new(frame: usize) -> Self {
-        Self { frame, size: 16.0 }
-    }
-
-    pub fn size(mut self, size: f32) -> Self {
-        self.size = size;
-        self
+        Self { frame }
     }
 }
 
@@ -58,7 +52,6 @@ impl<Message> canvas::Program<Message> for Spinner {
         // Draw an arc that spans about 90 degrees
         let arc_length = PI / 2.0; // 90 degrees
         let start_angle = rotation;
-        let end_angle = rotation + arc_length;
 
         // Create arc path
         let arc = Path::new(|builder| {
@@ -79,23 +72,11 @@ impl<Message> canvas::Program<Message> for Spinner {
                 // Control points for cubic bezier approximation of arc
                 let k = 4.0 / 3.0 * ((a2 - a1) / 4.0).tan();
 
-                let p1 = Point::new(
-                    center.x + radius * a1.cos(),
-                    center.y + radius * a1.sin(),
-                );
-                let p2 = Point::new(
-                    center.x + radius * a2.cos(),
-                    center.y + radius * a2.sin(),
-                );
+                let p1 = Point::new(center.x + radius * a1.cos(), center.y + radius * a1.sin());
+                let p2 = Point::new(center.x + radius * a2.cos(), center.y + radius * a2.sin());
 
-                let c1 = Point::new(
-                    p1.x - k * radius * a1.sin(),
-                    p1.y + k * radius * a1.cos(),
-                );
-                let c2 = Point::new(
-                    p2.x + k * radius * a2.sin(),
-                    p2.y - k * radius * a2.cos(),
-                );
+                let c1 = Point::new(p1.x - k * radius * a1.sin(), p1.y + k * radius * a1.cos());
+                let c2 = Point::new(p2.x + k * radius * a2.sin(), p2.y - k * radius * a2.cos());
 
                 builder.bezier_curve_to(c1, c2, p2);
             }
@@ -118,13 +99,5 @@ pub fn spinner<'a, Message: 'a>(frame: usize) -> Element<'a, Message> {
     Canvas::new(Spinner::new(frame))
         .width(Length::Fixed(16.0))
         .height(Length::Fixed(16.0))
-        .into()
-}
-
-/// Create a spinner element with custom size
-pub fn spinner_sized<'a, Message: 'a>(frame: usize, size: f32) -> Element<'a, Message> {
-    Canvas::new(Spinner::new(frame).size(size))
-        .width(Length::Fixed(size))
-        .height(Length::Fixed(size))
         .into()
 }

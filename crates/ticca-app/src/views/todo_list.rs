@@ -32,9 +32,12 @@ pub fn contents<'a>(state: Option<&TodoListState>, _theme: AppTheme) -> Element<
         .spacing(6)
         .align_y(iced::Alignment::Center)
     } else {
-        row![icon(icons::WARNING).size(16), text("Not confirmed").size(11),]
-            .spacing(6)
-            .align_y(iced::Alignment::Center)
+        row![
+            icon(icons::WARNING).size(16),
+            text("Not confirmed").size(11),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
     };
 
     let summary = text(format!(
@@ -85,4 +88,3 @@ pub fn contents<'a>(state: Option<&TodoListState>, _theme: AppTheme) -> Element<
         .height(Length::Fill)
         .into()
 }
-

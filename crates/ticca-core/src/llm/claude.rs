@@ -27,7 +27,7 @@ impl Message {
             content: content.into(),
         }
     }
-    
+
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: "assistant".to_string(),
@@ -70,13 +70,19 @@ pub enum StreamEvent {
     #[serde(rename = "message_start")]
     MessageStart { message: serde_json::Value },
     #[serde(rename = "content_block_start")]
-    ContentBlockStart { index: u32, content_block: serde_json::Value },
+    ContentBlockStart {
+        index: u32,
+        content_block: serde_json::Value,
+    },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: u32, delta: Delta },
     #[serde(rename = "content_block_stop")]
     ContentBlockStop { index: u32 },
     #[serde(rename = "message_delta")]
-    MessageDelta { delta: serde_json::Value, usage: Option<serde_json::Value> },
+    MessageDelta {
+        delta: serde_json::Value,
+        usage: Option<serde_json::Value>,
+    },
     #[serde(rename = "message_stop")]
     MessageStop,
     #[serde(rename = "ping")]
@@ -117,7 +123,7 @@ impl ClaudeClient {
             model: DEFAULT_MODEL.to_string(),
         }
     }
-    
+
     /// Create a new Claude client with a specific model
     pub fn with_model(access_token: String, model: impl Into<String>) -> Self {
         Self {
@@ -126,17 +132,17 @@ impl ClaudeClient {
             model: model.into(),
         }
     }
-    
+
     /// Get the current model
     pub fn model(&self) -> &str {
         &self.model
     }
-    
+
     /// Set the model to use
     pub fn set_model(&mut self, model: impl Into<String>) {
         self.model = model.into();
     }
-    
+
     /// Send a chat message and get a non-streaming response
     pub async fn chat(
         &self,
@@ -150,43 +156,48 @@ impl ClaudeClient {
             system: system_prompt.map(|s| s.to_string()),
             stream: false,
         };
-        
+
         tracing::debug!("Sending chat request to Claude API (model: {})", self.model);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .post(CLAUDE_API_URL)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("anthropic-beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14")
+            .header(
+                "anthropic-beta",
+                "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+            )
             .header("x-app", "cli")
             .header("User-Agent", "claude-cli/2.0.61 (external, cli)")
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             tracing::error!("Claude API error {}: {}", status, body);
             anyhow::bail!("Claude API error {}: {}", status, body);
         }
-        
+
         let chat_response: ChatResponse = response.json().await?;
-        
+
         // Extract text from content blocks
-        let text = chat_response.content
+        let text = chat_response
+            .content
             .iter()
             .filter_map(|block| block.text.as_ref())
             .cloned()
             .collect::<Vec<_>>()
             .join("");
-        
+
         tracing::debug!("Received response from Claude ({} chars)", text.len());
-        
+
         Ok(text)
     }
-    
+
     /// Send a chat message and stream the response
     /// Returns a stream of text chunks
     pub async fn chat_stream(
@@ -201,52 +212,60 @@ impl ClaudeClient {
             system: system_prompt.map(|s| s.to_string()),
             stream: true,
         };
-        
-        tracing::debug!("Sending streaming chat request to Claude API (model: {})", self.model);
-        
-        let response = self.client
+
+        tracing::debug!(
+            "Sending streaming chat request to Claude API (model: {})",
+            self.model
+        );
+
+        let response = self
+            .client
             .post(CLAUDE_API_URL)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("anthropic-beta", "oauth-2025-04-20,interleaved-thinking-2025-05-14")
+            .header(
+                "anthropic-beta",
+                "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+            )
             .header("x-app", "cli")
             .header("User-Agent", "claude-cli/2.0.61 (external, cli)")
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             tracing::error!("Claude API error {}: {}", status, body);
             anyhow::bail!("Claude API error {}: {}", status, body);
         }
-        
+
         let byte_stream = response.bytes_stream();
-        
+
         // Convert bytes stream to string chunks, parsing SSE events
         let stream = byte_stream
-            .map(|result: std::result::Result<bytes::Bytes, reqwest::Error>| -> Result<String> {
-                match result {
-                    Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
-                    Err(e) => Err(anyhow::anyhow!("Stream error: {}", e)),
-                }
-            })
+            .map(
+                |result: std::result::Result<bytes::Bytes, reqwest::Error>| -> Result<String> {
+                    match result {
+                        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
+                        Err(e) => Err(anyhow::anyhow!("Stream error: {}", e)),
+                    }
+                },
+            )
             .scan(String::new(), |buffer, result| {
                 // Use a synchronous closure that returns a ready future
                 let output = match result {
                     Ok(chunk) => {
                         buffer.push_str(&chunk);
-                        
+
                         // Process complete lines
                         let mut texts = Vec::new();
                         while let Some(pos) = buffer.find('\n') {
                             let line = buffer[..pos].to_string();
                             *buffer = buffer[pos + 1..].to_string();
-                            
-                            if line.starts_with("data: ") {
-                                let data = &line[6..];
+
+                            if let Some(data) = line.strip_prefix("data: ") {
                                 if data == "[DONE]" {
                                     continue;
                                 }
@@ -258,14 +277,18 @@ impl ClaudeClient {
                                             }
                                         }
                                         StreamEvent::Error { error } => {
-                                            tracing::error!("Stream error: {} - {}", error.error_type, error.message);
+                                            tracing::error!(
+                                                "Stream error: {} - {}",
+                                                error.error_type,
+                                                error.message
+                                            );
                                         }
                                         _ => {}
                                     }
                                 }
                             }
                         }
-                        
+
                         if texts.is_empty() {
                             Some(Ok(String::new()))
                         } else {
@@ -282,10 +305,10 @@ impl ClaudeClient {
                     Err(_) => true,
                 })
             });
-        
+
         Ok(Box::pin(stream))
     }
-    
+
     /// Simple helper to send a single user message
     pub async fn send_message(&self, message: &str, system_prompt: Option<&str>) -> Result<String> {
         self.chat(vec![Message::user(message)], system_prompt).await
@@ -295,7 +318,8 @@ impl ClaudeClient {
     pub async fn fetch_models(&self) -> Result<Vec<String>> {
         tracing::debug!("Fetching available models from Claude API");
 
-        let response = self.client
+        let response = self
+            .client
             .get(CLAUDE_MODELS_URL)
             .header("Authorization", format!("Bearer {}", self.access_token))
             .header("anthropic-version", ANTHROPIC_VERSION)
@@ -312,7 +336,8 @@ impl ClaudeClient {
         }
 
         let data: ModelsResponse = response.json().await?;
-        let models: Vec<String> = data.data
+        let models: Vec<String> = data
+            .data
             .into_iter()
             .filter_map(|m| m.id.or(m.name))
             .collect();
@@ -325,7 +350,11 @@ impl ClaudeClient {
     pub async fn fetch_latest_models(&self) -> Result<Vec<String>> {
         let all_models = self.fetch_models().await?;
         let filtered = filter_latest_claude_models(&all_models);
-        tracing::info!("Filtered to {} latest models: {:?}", filtered.len(), filtered);
+        tracing::info!(
+            "Filtered to {} latest models: {:?}",
+            filtered.len(),
+            filtered
+        );
         Ok(filtered)
     }
 }
@@ -348,8 +377,8 @@ struct ModelInfo {
 /// Parses model names in the format `claude-{family}-{major}-{minor}-{date}`
 /// and returns only the latest version of each family.
 pub fn filter_latest_claude_models(models: &[String]) -> Vec<String> {
-    use std::collections::HashMap;
     use regex::Regex;
+    use std::collections::HashMap;
 
     // Dictionary to store the latest model for each family
     // family -> (model_name, major, minor, date)
@@ -361,7 +390,8 @@ pub fn filter_latest_claude_models(models: &[String]) -> Vec<String> {
     let pattern2 = Regex::new(r"claude-(haiku|sonnet|opus)-(\d+)\.(\d+)-(\d+)").unwrap();
 
     for model_name in models {
-        let captures = pattern1.captures(model_name)
+        let captures = pattern1
+            .captures(model_name)
             .or_else(|| pattern2.captures(model_name));
 
         if let Some(caps) = captures {
@@ -381,7 +411,8 @@ pub fn filter_latest_claude_models(models: &[String]) -> Vec<String> {
     }
 
     // Return only the model names
-    latest_models.values()
+    latest_models
+        .values()
         .map(|(name, _, _, _)| name.clone())
         .collect()
 }
@@ -389,23 +420,23 @@ pub fn filter_latest_claude_models(models: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_message_creation() {
         let user_msg = Message::user("Hello");
         assert_eq!(user_msg.role, "user");
         assert_eq!(user_msg.content, "Hello");
-        
+
         let assistant_msg = Message::assistant("Hi there!");
         assert_eq!(assistant_msg.role, "assistant");
         assert_eq!(assistant_msg.content, "Hi there!");
     }
-    
+
     #[test]
     fn test_client_creation() {
         let client = ClaudeClient::new("test-token".to_string());
         assert_eq!(client.model(), DEFAULT_MODEL);
-        
+
         let client = ClaudeClient::with_model("test-token".to_string(), "claude-3-haiku-20240307");
         assert_eq!(client.model(), "claude-3-haiku-20240307");
     }

@@ -26,6 +26,7 @@ pub fn contents<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Mess
         .into()
 }
 
+#[allow(dead_code)]
 pub fn view<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Message> {
     container(contents(graph, theme))
         .width(Length::Fixed(280.0))

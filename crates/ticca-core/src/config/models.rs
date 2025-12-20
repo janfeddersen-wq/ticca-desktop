@@ -1,7 +1,7 @@
 //! Configuration data models
 
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 /// A key-value setting
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,16 +16,20 @@ pub struct Setting {
 pub struct ModelConfig {
     pub id: String,
     pub name: String,
-    pub model_type: String,  // "anthropic", "openai", "gemini", etc.
+    pub model_type: String, // "anthropic", "openai", "gemini", etc.
     pub endpoint_url: Option<String>,
     pub context_length: i64,
     pub is_default: bool,
-    pub config_json: Option<String>,  // Additional config as JSON
+    pub config_json: Option<String>, // Additional config as JSON
     pub created_at: Option<String>,
 }
 
 impl ModelConfig {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, model_type: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        model_type: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -37,17 +41,17 @@ impl ModelConfig {
             created_at: None,
         }
     }
-    
+
     pub fn with_endpoint(mut self, url: impl Into<String>) -> Self {
         self.endpoint_url = Some(url.into());
         self
     }
-    
+
     pub fn with_context_length(mut self, length: i64) -> Self {
         self.context_length = length;
         self
     }
-    
+
     pub fn as_default(mut self) -> Self {
         self.is_default = true;
         self
@@ -57,13 +61,13 @@ impl ModelConfig {
 /// OAuth token storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
-    pub provider: String,  // "claude", "gemini", "chatgpt"
+    pub provider: String, // "claude", "gemini", "chatgpt"
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at: Option<String>,
     pub token_type: Option<String>,
     pub scope: Option<String>,
-    pub extra_json: Option<String>,  // Provider-specific data (project_id, etc.)
+    pub extra_json: Option<String>, // Provider-specific data (project_id, etc.)
     pub updated_at: Option<String>,
 }
 
@@ -80,12 +84,12 @@ impl OAuthToken {
             updated_at: None,
         }
     }
-    
+
     pub fn with_refresh_token(mut self, token: impl Into<String>) -> Self {
         self.refresh_token = Some(token.into());
         self
     }
-    
+
     pub fn with_expires_at(mut self, expires: impl Into<String>) -> Self {
         self.expires_at = Some(expires.into());
         self
@@ -95,20 +99,28 @@ impl OAuthToken {
         self.scope = Some(scope.into());
         self
     }
-    
+
     pub fn with_extra(mut self, extra: impl Into<String>) -> Self {
         self.extra_json = Some(extra.into());
         self
     }
-    
+
     /// Check if the token is expired
     pub fn is_expired(&self) -> bool {
-        if let Some(expires_at) = &self.expires_at {
-            if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-                return expires < Utc::now();
-            }
+        let Some(expires_at) = &self.expires_at else {
+            return false;
+        };
+
+        match chrono::DateTime::parse_from_rfc3339(expires_at) {
+            Ok(expires) => expires < Utc::now(),
+            Err(_) => true,
         }
-        false
+    }
+
+    pub fn has_refresh_token(&self) -> bool {
+        self.refresh_token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
     }
 }
 
@@ -135,7 +147,11 @@ pub struct OAuthAccount {
 }
 
 impl OAuthAccount {
-    pub fn new(id: impl Into<String>, provider: impl Into<String>, access_token: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        provider: impl Into<String>,
+        access_token: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             provider: provider.into(),
@@ -188,21 +204,29 @@ impl OAuthAccount {
     }
 
     pub fn is_expired(&self) -> bool {
-        if let Some(expires_at) = &self.expires_at {
-            if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-                return expires < Utc::now();
-            }
+        let Some(expires_at) = &self.expires_at else {
+            return false;
+        };
+
+        match chrono::DateTime::parse_from_rfc3339(expires_at) {
+            Ok(expires) => expires < Utc::now(),
+            Err(_) => true,
+        }
+    }
+
+    pub fn is_cooling(&self) -> bool {
+        if let Some(cooldown_until) = &self.cooldown_until
+            && let Ok(until) = chrono::DateTime::parse_from_rfc3339(cooldown_until)
+        {
+            return until > Utc::now();
         }
         false
     }
 
-    pub fn is_cooling(&self) -> bool {
-        if let Some(cooldown_until) = &self.cooldown_until {
-            if let Ok(until) = chrono::DateTime::parse_from_rfc3339(cooldown_until) {
-                return until > Utc::now();
-            }
-        }
-        false
+    pub fn has_refresh_token(&self) -> bool {
+        self.refresh_token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
     }
 }
 

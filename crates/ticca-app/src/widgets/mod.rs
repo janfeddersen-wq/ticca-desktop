@@ -2,4 +2,4 @@
 
 mod spinner;
 
-pub use spinner::{spinner, spinner_sized};
+pub use spinner::spinner;

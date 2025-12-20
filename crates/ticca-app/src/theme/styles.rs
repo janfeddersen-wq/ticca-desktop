@@ -5,8 +5,10 @@
 use iced::widget::{button, container, text_editor, text_input};
 use iced::{Border, Color, Theme};
 
-use super::{dark, light, dracula, nord, catppuccin_mocha, catppuccin_latte,
-            tokyo_night, one_dark, gruvbox_dark, gruvbox_light, zinc};
+use super::{
+    catppuccin_latte, catppuccin_mocha, dark, dracula, gruvbox_dark, gruvbox_light, light, nord,
+    one_dark, tokyo_night, zinc,
+};
 
 /// Border radius constants
 const RADIUS_SM: f32 = 4.0;
@@ -33,197 +35,353 @@ fn is_dark_theme(theme: &Theme) -> bool {
 
 fn bg_base(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::BG_BASE }
-    else if name.contains("Nord") { nord::colors::BG_BASE }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::BG_BASE }
-    else if name.contains("Latte") { catppuccin_latte::colors::BG_BASE }
-    else if name.contains("Tokyo") { tokyo_night::colors::BG_BASE }
-    else if name.contains("One Dark") { one_dark::colors::BG_BASE }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::BG_BASE }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::BG_BASE }
-    else if name.contains("Light") { light::colors::ZINC_50 }
-    else if name.contains("Zinc") { zinc::colors::BG_BASE }
-    else { dark::colors::BG_BASE }
+    if name.contains("Dracula") {
+        dracula::colors::BG_BASE
+    } else if name.contains("Nord") {
+        nord::colors::BG_BASE
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::BG_BASE
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::BG_BASE
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::BG_BASE
+    } else if name.contains("One Dark") {
+        one_dark::colors::BG_BASE
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::BG_BASE
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::BG_BASE
+    } else if name.contains("Light") {
+        light::colors::ZINC_50
+    } else if name.contains("Zinc") {
+        zinc::colors::BG_BASE
+    } else {
+        dark::colors::BG_BASE
+    }
 }
 
 fn bg_surface(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::BG_SURFACE }
-    else if name.contains("Nord") { nord::colors::BG_SURFACE }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::BG_SURFACE }
-    else if name.contains("Latte") { catppuccin_latte::colors::BG_SURFACE }
-    else if name.contains("Tokyo") { tokyo_night::colors::BG_SURFACE }
-    else if name.contains("One Dark") { one_dark::colors::BG_SURFACE }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::BG_SURFACE }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::BG_SURFACE }
-    else if name.contains("Light") { light::colors::WHITE }
-    else if name.contains("Zinc") { zinc::colors::BG_SURFACE }
-    else { dark::colors::BG_SURFACE }
+    if name.contains("Dracula") {
+        dracula::colors::BG_SURFACE
+    } else if name.contains("Nord") {
+        nord::colors::BG_SURFACE
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::BG_SURFACE
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::BG_SURFACE
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::BG_SURFACE
+    } else if name.contains("One Dark") {
+        one_dark::colors::BG_SURFACE
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::BG_SURFACE
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::BG_SURFACE
+    } else if name.contains("Light") {
+        light::colors::WHITE
+    } else if name.contains("Zinc") {
+        zinc::colors::BG_SURFACE
+    } else {
+        dark::colors::BG_SURFACE
+    }
 }
 
 fn bg_elevated(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::BG_ELEVATED }
-    else if name.contains("Nord") { nord::colors::BG_ELEVATED }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::BG_ELEVATED }
-    else if name.contains("Latte") { catppuccin_latte::colors::BG_ELEVATED }
-    else if name.contains("Tokyo") { tokyo_night::colors::BG_ELEVATED }
-    else if name.contains("One Dark") { one_dark::colors::BG_ELEVATED }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::BG_ELEVATED }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::BG_ELEVATED }
-    else if name.contains("Light") { light::colors::ZINC_100 }
-    else if name.contains("Zinc") { zinc::colors::BG_ELEVATED }
-    else { dark::colors::BG_ELEVATED }
+    if name.contains("Dracula") {
+        dracula::colors::BG_ELEVATED
+    } else if name.contains("Nord") {
+        nord::colors::BG_ELEVATED
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::BG_ELEVATED
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::BG_ELEVATED
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::BG_ELEVATED
+    } else if name.contains("One Dark") {
+        one_dark::colors::BG_ELEVATED
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::BG_ELEVATED
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::BG_ELEVATED
+    } else if name.contains("Light") {
+        light::colors::ZINC_100
+    } else if name.contains("Zinc") {
+        zinc::colors::BG_ELEVATED
+    } else {
+        dark::colors::BG_ELEVATED
+    }
 }
 
 fn bg_hover(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::BG_HOVER }
-    else if name.contains("Nord") { nord::colors::BG_HOVER }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::BG_HOVER }
-    else if name.contains("Latte") { catppuccin_latte::colors::BG_HOVER }
-    else if name.contains("Tokyo") { tokyo_night::colors::BG_HOVER }
-    else if name.contains("One Dark") { one_dark::colors::BG_HOVER }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::BG_HOVER }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::BG_HOVER }
-    else if name.contains("Light") { light::colors::ZINC_200 }
-    else if name.contains("Zinc") { zinc::colors::BG_HOVER }
-    else { dark::colors::BG_HOVER }
+    if name.contains("Dracula") {
+        dracula::colors::BG_HOVER
+    } else if name.contains("Nord") {
+        nord::colors::BG_HOVER
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::BG_HOVER
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::BG_HOVER
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::BG_HOVER
+    } else if name.contains("One Dark") {
+        one_dark::colors::BG_HOVER
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::BG_HOVER
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::BG_HOVER
+    } else if name.contains("Light") {
+        light::colors::ZINC_200
+    } else if name.contains("Zinc") {
+        zinc::colors::BG_HOVER
+    } else {
+        dark::colors::BG_HOVER
+    }
 }
 
 fn text_primary(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::TEXT_PRIMARY }
-    else if name.contains("Nord") { nord::colors::TEXT_PRIMARY }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::TEXT_PRIMARY }
-    else if name.contains("Latte") { catppuccin_latte::colors::TEXT_PRIMARY }
-    else if name.contains("Tokyo") { tokyo_night::colors::TEXT_PRIMARY }
-    else if name.contains("One Dark") { one_dark::colors::TEXT_PRIMARY }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::TEXT_PRIMARY }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::TEXT_PRIMARY }
-    else if name.contains("Light") { light::colors::ZINC_900 }
-    else if name.contains("Zinc") { zinc::colors::TEXT_PRIMARY }
-    else { dark::colors::TEXT_PRIMARY }
+    if name.contains("Dracula") {
+        dracula::colors::TEXT_PRIMARY
+    } else if name.contains("Nord") {
+        nord::colors::TEXT_PRIMARY
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::TEXT_PRIMARY
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::TEXT_PRIMARY
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::TEXT_PRIMARY
+    } else if name.contains("One Dark") {
+        one_dark::colors::TEXT_PRIMARY
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::TEXT_PRIMARY
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::TEXT_PRIMARY
+    } else if name.contains("Light") {
+        light::colors::ZINC_900
+    } else if name.contains("Zinc") {
+        zinc::colors::TEXT_PRIMARY
+    } else {
+        dark::colors::TEXT_PRIMARY
+    }
 }
 
 fn text_secondary(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::TEXT_SECONDARY }
-    else if name.contains("Nord") { nord::colors::TEXT_SECONDARY }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::TEXT_SECONDARY }
-    else if name.contains("Latte") { catppuccin_latte::colors::TEXT_SECONDARY }
-    else if name.contains("Tokyo") { tokyo_night::colors::TEXT_SECONDARY }
-    else if name.contains("One Dark") { one_dark::colors::TEXT_SECONDARY }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::TEXT_SECONDARY }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::TEXT_SECONDARY }
-    else if name.contains("Light") { light::colors::ZINC_600 }
-    else if name.contains("Zinc") { zinc::colors::TEXT_SECONDARY }
-    else { dark::colors::TEXT_SECONDARY }
+    if name.contains("Dracula") {
+        dracula::colors::TEXT_SECONDARY
+    } else if name.contains("Nord") {
+        nord::colors::TEXT_SECONDARY
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::TEXT_SECONDARY
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::TEXT_SECONDARY
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::TEXT_SECONDARY
+    } else if name.contains("One Dark") {
+        one_dark::colors::TEXT_SECONDARY
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::TEXT_SECONDARY
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::TEXT_SECONDARY
+    } else if name.contains("Light") {
+        light::colors::ZINC_600
+    } else if name.contains("Zinc") {
+        zinc::colors::TEXT_SECONDARY
+    } else {
+        dark::colors::TEXT_SECONDARY
+    }
 }
 
 fn text_muted(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::TEXT_MUTED }
-    else if name.contains("Nord") { nord::colors::TEXT_MUTED }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::TEXT_MUTED }
-    else if name.contains("Latte") { catppuccin_latte::colors::TEXT_MUTED }
-    else if name.contains("Tokyo") { tokyo_night::colors::TEXT_MUTED }
-    else if name.contains("One Dark") { one_dark::colors::TEXT_MUTED }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::TEXT_MUTED }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::TEXT_MUTED }
-    else if name.contains("Light") { light::colors::ZINC_400 }
-    else if name.contains("Zinc") { zinc::colors::TEXT_MUTED }
-    else { dark::colors::TEXT_MUTED }
+    if name.contains("Dracula") {
+        dracula::colors::TEXT_MUTED
+    } else if name.contains("Nord") {
+        nord::colors::TEXT_MUTED
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::TEXT_MUTED
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::TEXT_MUTED
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::TEXT_MUTED
+    } else if name.contains("One Dark") {
+        one_dark::colors::TEXT_MUTED
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::TEXT_MUTED
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::TEXT_MUTED
+    } else if name.contains("Light") {
+        light::colors::ZINC_400
+    } else if name.contains("Zinc") {
+        zinc::colors::TEXT_MUTED
+    } else {
+        dark::colors::TEXT_MUTED
+    }
 }
 
 fn border_subtle(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::BORDER_SUBTLE }
-    else if name.contains("Nord") { nord::colors::BORDER_SUBTLE }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::BORDER_SUBTLE }
-    else if name.contains("Latte") { catppuccin_latte::colors::BORDER_SUBTLE }
-    else if name.contains("Tokyo") { tokyo_night::colors::BORDER_SUBTLE }
-    else if name.contains("One Dark") { one_dark::colors::BORDER_SUBTLE }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::BORDER_SUBTLE }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::BORDER_SUBTLE }
-    else if name.contains("Light") { light::colors::ZINC_200 }
-    else if name.contains("Zinc") { zinc::colors::BORDER_SUBTLE }
-    else { dark::colors::BORDER_SUBTLE }
+    if name.contains("Dracula") {
+        dracula::colors::BORDER_SUBTLE
+    } else if name.contains("Nord") {
+        nord::colors::BORDER_SUBTLE
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::BORDER_SUBTLE
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::BORDER_SUBTLE
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::BORDER_SUBTLE
+    } else if name.contains("One Dark") {
+        one_dark::colors::BORDER_SUBTLE
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::BORDER_SUBTLE
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::BORDER_SUBTLE
+    } else if name.contains("Light") {
+        light::colors::ZINC_200
+    } else if name.contains("Zinc") {
+        zinc::colors::BORDER_SUBTLE
+    } else {
+        dark::colors::BORDER_SUBTLE
+    }
 }
 
 fn border_default(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::BORDER_DEFAULT }
-    else if name.contains("Nord") { nord::colors::BORDER_DEFAULT }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::BORDER_DEFAULT }
-    else if name.contains("Latte") { catppuccin_latte::colors::BORDER_DEFAULT }
-    else if name.contains("Tokyo") { tokyo_night::colors::BORDER_DEFAULT }
-    else if name.contains("One Dark") { one_dark::colors::BORDER_DEFAULT }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::BORDER_DEFAULT }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::BORDER_DEFAULT }
-    else if name.contains("Light") { light::colors::ZINC_300 }
-    else if name.contains("Zinc") { zinc::colors::BORDER_DEFAULT }
-    else { dark::colors::BORDER_DEFAULT }
+    if name.contains("Dracula") {
+        dracula::colors::BORDER_DEFAULT
+    } else if name.contains("Nord") {
+        nord::colors::BORDER_DEFAULT
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::BORDER_DEFAULT
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::BORDER_DEFAULT
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::BORDER_DEFAULT
+    } else if name.contains("One Dark") {
+        one_dark::colors::BORDER_DEFAULT
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::BORDER_DEFAULT
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::BORDER_DEFAULT
+    } else if name.contains("Light") {
+        light::colors::ZINC_300
+    } else if name.contains("Zinc") {
+        zinc::colors::BORDER_DEFAULT
+    } else {
+        dark::colors::BORDER_DEFAULT
+    }
 }
 
 fn accent(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::ACCENT }
-    else if name.contains("Nord") { nord::colors::ACCENT }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::ACCENT }
-    else if name.contains("Latte") { catppuccin_latte::colors::ACCENT }
-    else if name.contains("Tokyo") { tokyo_night::colors::ACCENT }
-    else if name.contains("One Dark") { one_dark::colors::ACCENT }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::ACCENT }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::ACCENT }
-    else if name.contains("Light") { light::colors::BLUE_600 }
-    else if name.contains("Zinc") { zinc::colors::ACCENT }
-    else { dark::colors::ACCENT }
+    if name.contains("Dracula") {
+        dracula::colors::ACCENT
+    } else if name.contains("Nord") {
+        nord::colors::ACCENT
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::ACCENT
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::ACCENT
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::ACCENT
+    } else if name.contains("One Dark") {
+        one_dark::colors::ACCENT
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::ACCENT
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::ACCENT
+    } else if name.contains("Light") {
+        light::colors::BLUE_600
+    } else if name.contains("Zinc") {
+        zinc::colors::ACCENT
+    } else {
+        dark::colors::ACCENT
+    }
 }
 
 fn accent_hover(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::ACCENT_HOVER }
-    else if name.contains("Nord") { nord::colors::ACCENT_HOVER }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::ACCENT_HOVER }
-    else if name.contains("Latte") { catppuccin_latte::colors::ACCENT_HOVER }
-    else if name.contains("Tokyo") { tokyo_night::colors::ACCENT_HOVER }
-    else if name.contains("One Dark") { one_dark::colors::ACCENT_HOVER }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::ACCENT_HOVER }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::ACCENT_HOVER }
-    else if name.contains("Light") { light::colors::BLUE_500 }
-    else if name.contains("Zinc") { zinc::colors::ACCENT_HOVER }
-    else { dark::colors::ACCENT_HOVER }
+    if name.contains("Dracula") {
+        dracula::colors::ACCENT_HOVER
+    } else if name.contains("Nord") {
+        nord::colors::ACCENT_HOVER
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::ACCENT_HOVER
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::ACCENT_HOVER
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::ACCENT_HOVER
+    } else if name.contains("One Dark") {
+        one_dark::colors::ACCENT_HOVER
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::ACCENT_HOVER
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::ACCENT_HOVER
+    } else if name.contains("Light") {
+        light::colors::BLUE_500
+    } else if name.contains("Zinc") {
+        zinc::colors::ACCENT_HOVER
+    } else {
+        dark::colors::ACCENT_HOVER
+    }
 }
 
 fn accent_muted(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::ACCENT_MUTED }
-    else if name.contains("Nord") { nord::colors::ACCENT_MUTED }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::ACCENT_MUTED }
-    else if name.contains("Latte") { catppuccin_latte::colors::ACCENT_MUTED }
-    else if name.contains("Tokyo") { tokyo_night::colors::ACCENT_MUTED }
-    else if name.contains("One Dark") { one_dark::colors::ACCENT_MUTED }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::ACCENT_MUTED }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::ACCENT_MUTED }
-    else if name.contains("Light") { light::colors::BLUE_700 }
-    else if name.contains("Zinc") { zinc::colors::ACCENT_MUTED }
-    else { dark::colors::ACCENT_MUTED }
+    if name.contains("Dracula") {
+        dracula::colors::ACCENT_MUTED
+    } else if name.contains("Nord") {
+        nord::colors::ACCENT_MUTED
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::ACCENT_MUTED
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::ACCENT_MUTED
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::ACCENT_MUTED
+    } else if name.contains("One Dark") {
+        one_dark::colors::ACCENT_MUTED
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::ACCENT_MUTED
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::ACCENT_MUTED
+    } else if name.contains("Light") {
+        light::colors::BLUE_700
+    } else if name.contains("Zinc") {
+        zinc::colors::ACCENT_MUTED
+    } else {
+        dark::colors::ACCENT_MUTED
+    }
 }
 
 fn danger(theme: &Theme) -> Color {
     let name = get_theme_name(theme);
-    if name.contains("Dracula") { dracula::colors::DANGER }
-    else if name.contains("Nord") { nord::colors::DANGER }
-    else if name.contains("Mocha") { catppuccin_mocha::colors::DANGER }
-    else if name.contains("Latte") { catppuccin_latte::colors::DANGER }
-    else if name.contains("Tokyo") { tokyo_night::colors::DANGER }
-    else if name.contains("One Dark") { one_dark::colors::DANGER }
-    else if name.contains("Gruvbox Dark") { gruvbox_dark::colors::DANGER }
-    else if name.contains("Gruvbox Light") { gruvbox_light::colors::DANGER }
-    else if name.contains("Light") { light::colors::RED_600 }
-    else if name.contains("Zinc") { zinc::colors::DANGER }
-    else { dark::colors::DANGER }
+    if name.contains("Dracula") {
+        dracula::colors::DANGER
+    } else if name.contains("Nord") {
+        nord::colors::DANGER
+    } else if name.contains("Mocha") {
+        catppuccin_mocha::colors::DANGER
+    } else if name.contains("Latte") {
+        catppuccin_latte::colors::DANGER
+    } else if name.contains("Tokyo") {
+        tokyo_night::colors::DANGER
+    } else if name.contains("One Dark") {
+        one_dark::colors::DANGER
+    } else if name.contains("Gruvbox Dark") {
+        gruvbox_dark::colors::DANGER
+    } else if name.contains("Gruvbox Light") {
+        gruvbox_light::colors::DANGER
+    } else if name.contains("Light") {
+        light::colors::RED_600
+    } else if name.contains("Zinc") {
+        zinc::colors::DANGER
+    } else {
+        dark::colors::DANGER
+    }
 }
 
 // ============================================================================
@@ -381,7 +539,14 @@ pub fn tab_button(theme: &Theme, status: button::Status, is_active: bool) -> but
 /// Sidebar tab button - classic "tabs" look (not pill buttons)
 pub fn sidebar_tab_button(theme: &Theme, status: button::Status, is_active: bool) -> button::Style {
     let base = button::Style {
-        background: Some((if is_active { bg_surface(theme) } else { bg_elevated(theme) }).into()),
+        background: Some(
+            (if is_active {
+                bg_surface(theme)
+            } else {
+                bg_elevated(theme)
+            })
+            .into(),
+        ),
         text_color: if is_active {
             text_primary(theme)
         } else {
@@ -402,7 +567,14 @@ pub fn sidebar_tab_button(theme: &Theme, status: button::Status, is_active: bool
     match status {
         button::Status::Active => base,
         button::Status::Hovered => button::Style {
-            background: Some((if is_active { bg_surface(theme) } else { bg_hover(theme) }).into()),
+            background: Some(
+                (if is_active {
+                    bg_surface(theme)
+                } else {
+                    bg_hover(theme)
+                })
+                .into(),
+            ),
             text_color: text_primary(theme),
             border: Border {
                 color: border_default(theme),
@@ -604,7 +776,11 @@ pub fn message_bubble(theme: &Theme, is_user: bool) -> container::Style {
     if is_user {
         container::Style {
             background: Some(accent_muted(theme).into()),
-            text_color: Some(if is_dark_theme(theme) { text_primary(theme) } else { Color::WHITE }),
+            text_color: Some(if is_dark_theme(theme) {
+                text_primary(theme)
+            } else {
+                Color::WHITE
+            }),
             border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
@@ -683,6 +859,7 @@ pub fn image_thumbnail_container(theme: &Theme) -> container::Style {
 }
 
 /// Code block container
+#[allow(dead_code)]
 pub fn code_block(theme: &Theme, _is_dark: bool) -> container::Style {
     container::Style {
         background: Some(bg_base(theme).into()),
@@ -697,6 +874,7 @@ pub fn code_block(theme: &Theme, _is_dark: bool) -> container::Style {
 }
 
 /// Table header
+#[allow(dead_code)]
 pub fn table_header(theme: &Theme, _is_dark: bool) -> container::Style {
     container::Style {
         background: Some(bg_elevated(theme).into()),
@@ -711,6 +889,7 @@ pub fn table_header(theme: &Theme, _is_dark: bool) -> container::Style {
 }
 
 /// Table row
+#[allow(dead_code)]
 pub fn table_row(theme: &Theme, _is_dark: bool, is_alternate: bool) -> container::Style {
     let bg = if is_alternate {
         bg_surface(theme)

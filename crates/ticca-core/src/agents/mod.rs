@@ -14,11 +14,7 @@ pub use base::{Agent, AgentConfig, AgentType, get_agent, get_all_agents};
 pub use coding::CodingAgent;
 pub use planning::PlanningAgent;
 pub use profile::{
-    AccountSelectionPolicy,
-    AgentProfile,
-    ModelRule,
-    ModelSelectionContext,
-    ModelStrategy,
+    AccountSelectionPolicy, AgentProfile, ModelRule, ModelSelectionContext, ModelStrategy,
     ToolUsagePolicy,
 };
 pub use prompt_blocks::PromptBlocks;

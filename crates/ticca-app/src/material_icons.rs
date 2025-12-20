@@ -3,8 +3,10 @@
 //! This module provides Material Icons font and helper functions for rendering
 //! Material Design icons in the Iced UI using the `material-icons` crate.
 
-use iced::widget::Text;
+#![allow(dead_code)]
+
 use iced::Font;
+use iced::widget::Text;
 use material_icons::{Icon, icon_to_char};
 
 /// Material Icons font - embedded from material-icons crate

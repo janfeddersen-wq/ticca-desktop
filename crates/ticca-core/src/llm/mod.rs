@@ -32,11 +32,11 @@
 //!     .build();
 //! ```
 
-pub mod claude;
-pub mod providers;
 pub mod auth;
-pub mod provider_registry;
+pub mod claude;
 pub mod model_service;
+pub mod provider_registry;
+pub mod providers;
 
 use crate::config::ConfigDatabase;
 use crate::config::models::providers as provider_names;
@@ -46,14 +46,9 @@ use crate::llm::auth as account_auth;
 pub use claude::ClaudeClient;
 
 // Re-export OAuth providers for convenience
-pub use providers::{
-    ClaudeOAuthClient,
-    ChatGptOAuthClient,
-    GeminiOAuthClient,
-    OAuthProviderError,
-};
-pub use provider_registry::{ProviderId, ProviderRegistry, ProviderCapabilities, ProviderInfo};
 pub use model_service::ModelService;
+pub use provider_registry::{ProviderCapabilities, ProviderId, ProviderInfo, ProviderRegistry};
+pub use providers::{ChatGptOAuthClient, ClaudeOAuthClient, GeminiOAuthClient, OAuthProviderError};
 
 /// Get a Claude client if we have valid credentials
 pub fn get_claude_client() -> Option<ClaudeClient> {

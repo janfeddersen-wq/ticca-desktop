@@ -7,8 +7,8 @@
 
 #![allow(dead_code)]
 
-use iced::widget::Text;
 use iced::Font;
+use iced::widget::Text;
 
 /// Bootstrap Icons font
 pub const ICONS: Font = Font::with_name("bootstrap-icons");

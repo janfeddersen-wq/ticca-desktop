@@ -7,7 +7,7 @@ pub mod repo;
 pub mod settings;
 
 pub use database::ConfigDatabase;
-pub use models::{ModelConfig, OAuthToken, OAuthAccount, Setting};
+pub use models::{ModelConfig, OAuthAccount, OAuthToken, Setting};
 pub use repo::ConfigRepo;
 pub use settings::{AccountRotationPolicy, TypedSettings};
 

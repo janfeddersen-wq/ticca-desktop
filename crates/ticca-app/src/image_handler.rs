@@ -4,7 +4,7 @@
 //! and converting them to formats suitable for the LLM API.
 
 use crate::messages::ImageAttachment;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Load an image from a file path and convert to PNG bytes
@@ -13,12 +13,13 @@ pub async fn load_image_from_path(path: &PathBuf) -> Result<ImageAttachment, Str
     use std::io::Cursor;
 
     // Read the file
-    let data = tokio::fs::read(path).await
+    let data = tokio::fs::read(path)
+        .await
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
     // Load and decode the image
-    let img = image::load_from_memory(&data)
-        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    let img =
+        image::load_from_memory(&data).map_err(|e| format!("Failed to decode image: {}", e))?;
 
     let (width, height) = img.dimensions();
 
@@ -28,7 +29,8 @@ pub async fn load_image_from_path(path: &PathBuf) -> Result<ImageAttachment, Str
     img.write_to(&mut cursor, image::ImageFormat::Png)
         .map_err(|e| format!("Failed to encode as PNG: {}", e))?;
 
-    let filename = path.file_name()
+    let filename = path
+        .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string());
 
@@ -46,10 +48,11 @@ pub async fn paste_image_from_clipboard() -> Result<ImageAttachment, String> {
     tokio::task::spawn_blocking(|| {
         use arboard::Clipboard;
 
-        let mut clipboard = Clipboard::new()
-            .map_err(|e| format!("Failed to access clipboard: {}", e))?;
+        let mut clipboard =
+            Clipboard::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
 
-        let img_data = clipboard.get_image()
+        let img_data = clipboard
+            .get_image()
             .map_err(|e| format!("No image in clipboard: {}", e))?;
 
         // Convert RGBA pixels to PNG
@@ -57,16 +60,15 @@ pub async fn paste_image_from_clipboard() -> Result<ImageAttachment, String> {
         let height = img_data.height as u32;
 
         // Create image buffer from raw RGBA data
-        let img_buffer: image::RgbaImage = image::ImageBuffer::from_raw(
-            width,
-            height,
-            img_data.bytes.into_owned(),
-        ).ok_or_else(|| "Failed to create image buffer".to_string())?;
+        let img_buffer: image::RgbaImage =
+            image::ImageBuffer::from_raw(width, height, img_data.bytes.into_owned())
+                .ok_or_else(|| "Failed to create image buffer".to_string())?;
 
         // Encode as PNG
         let mut png_data = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut png_data);
-        img_buffer.write_to(&mut cursor, image::ImageFormat::Png)
+        img_buffer
+            .write_to(&mut cursor, image::ImageFormat::Png)
             .map_err(|e| format!("Failed to encode as PNG: {}", e))?;
 
         Ok(ImageAttachment {
@@ -81,10 +83,14 @@ pub async fn paste_image_from_clipboard() -> Result<ImageAttachment, String> {
 }
 
 /// Check if a file path is a supported image format
-pub fn is_image_file(path: &PathBuf) -> bool {
-    let ext = path.extension()
+pub fn is_image_file(path: &Path) -> bool {
+    let ext = path
+        .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
 
-    matches!(ext.as_deref(), Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp"))
+    matches!(
+        ext.as_deref(),
+        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp")
+    )
 }

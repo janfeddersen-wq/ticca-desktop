@@ -1,6 +1,6 @@
 //! File operation tools: list_files, read_file
 
-use crate::tools::registry::{ToolDefinition, ToolResult, ToolExecutor};
+use crate::tools::registry::{ToolDefinition, ToolExecutor, ToolResult};
 use crate::tools::spec;
 use anyhow::Result;
 use ignore::WalkBuilder;
@@ -39,20 +39,26 @@ const IGNORE_PATTERNS: &[&str] = &[
 
 /// Check if a directory is likely a home directory
 fn is_home_directory(path: &Path) -> bool {
-    let home = dirs::home_dir();
-    if let Some(home_path) = home {
-        if path == home_path {
-            return true;
-        }
-        // Check common home subdirectories
-        let common_subdirs = ["Documents", "Desktop", "Downloads", "Pictures", "Music", "Videos"];
-        if let Some(parent) = path.parent() {
-            if parent == home_path {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    return common_subdirs.contains(&name);
-                }
-            }
-        }
+    let Some(home_path) = dirs::home_dir() else {
+        return false;
+    };
+    if path == home_path {
+        return true;
+    }
+    // Check common home subdirectories
+    let common_subdirs = [
+        "Documents",
+        "Desktop",
+        "Downloads",
+        "Pictures",
+        "Music",
+        "Videos",
+    ];
+    if let Some(parent) = path.parent()
+        && parent == home_path
+        && let Some(name) = path.file_name().and_then(|n| n.to_str())
+    {
+        return common_subdirs.contains(&name);
     }
     false
 }
@@ -74,13 +80,13 @@ fn is_project_directory(path: &Path) -> bool {
         "Makefile",
         "setup.py",
     ];
-    
+
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if indicators.contains(&name) {
-                    return true;
-                }
+            if let Some(name) = entry.file_name().to_str()
+                && indicators.contains(&name)
+            {
+                return true;
             }
         }
     }
@@ -113,30 +119,34 @@ pub fn list_files_impl(directory: &str, recursive: bool) -> Result<ToolResult> {
     } else {
         std::env::current_dir()?.join(&path)
     };
-    
+
     if !abs_path.exists() {
-        return Ok(ToolResult::error(format!("Directory does not exist: {}", directory)));
+        return Ok(ToolResult::error(format!(
+            "Directory does not exist: {}",
+            directory
+        )));
     }
-    
+
     if !abs_path.is_dir() {
         return Ok(ToolResult::error(format!("Not a directory: {}", directory)));
     }
-    
+
     // Auto-disable recursion for home directories (unless it's a project)
-    let effective_recursive = if recursive && is_home_directory(&abs_path) && !is_project_directory(&abs_path) {
-        false
-    } else {
-        recursive
-    };
-    
+    let effective_recursive =
+        if recursive && is_home_directory(&abs_path) && !is_project_directory(&abs_path) {
+            false
+        } else {
+            recursive
+        };
+
     let mut output_lines = vec![format!(
         "DIRECTORY LISTING: {} (recursive={})",
         abs_path.display(),
         effective_recursive
     )];
-    
+
     let mut entries: Vec<FileEntry> = Vec::new();
-    
+
     if effective_recursive {
         // Use ignore crate for efficient recursive listing
         let walker = WalkBuilder::new(&abs_path)
@@ -144,26 +154,27 @@ pub fn list_files_impl(directory: &str, recursive: bool) -> Result<ToolResult> {
             .git_ignore(true)
             .git_global(false)
             .git_exclude(false)
-            .max_depth(Some(10))  // Limit depth for safety
+            .max_depth(Some(10)) // Limit depth for safety
             .build();
-        
+
         for entry in walker.flatten() {
             let entry_path = entry.path();
             if entry_path == abs_path {
-                continue;  // Skip root directory itself
+                continue; // Skip root directory itself
             }
-            
+
             // Skip ignored patterns
-            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                if matches_ignore_pattern(name) {
-                    continue;
-                }
+            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str())
+                && matches_ignore_pattern(name)
+            {
+                continue;
             }
-            
-            let relative_path = entry_path.strip_prefix(&abs_path)
+
+            let relative_path = entry_path
+                .strip_prefix(&abs_path)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| entry_path.to_string_lossy().to_string());
-            
+
             let file_type = if entry_path.is_dir() {
                 "dir"
             } else if entry_path.is_symlink() {
@@ -171,9 +182,9 @@ pub fn list_files_impl(directory: &str, recursive: bool) -> Result<ToolResult> {
             } else {
                 "file"
             };
-            
+
             let size = entry_path.metadata().map(|m| m.len()).unwrap_or(0);
-            
+
             entries.push(FileEntry {
                 path: relative_path,
                 file_type: file_type.to_string(),
@@ -185,18 +196,19 @@ pub fn list_files_impl(directory: &str, recursive: bool) -> Result<ToolResult> {
         for entry in fs::read_dir(&abs_path)? {
             let entry = entry?;
             let entry_path = entry.path();
-            
+
             // Skip ignored patterns
-            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                if matches_ignore_pattern(name) {
-                    continue;
-                }
+            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str())
+                && matches_ignore_pattern(name)
+            {
+                continue;
             }
-            
-            let relative_path = entry_path.file_name()
+
+            let relative_path = entry_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| entry_path.to_string_lossy().to_string());
-            
+
             let file_type = if entry_path.is_dir() {
                 "dir"
             } else if entry_path.is_symlink() {
@@ -204,9 +216,9 @@ pub fn list_files_impl(directory: &str, recursive: bool) -> Result<ToolResult> {
             } else {
                 "file"
             };
-            
+
             let size = entry_path.metadata().map(|m| m.len()).unwrap_or(0);
-            
+
             entries.push(FileEntry {
                 path: relative_path,
                 file_type: file_type.to_string(),
@@ -214,17 +226,15 @@ pub fn list_files_impl(directory: &str, recursive: bool) -> Result<ToolResult> {
             });
         }
     }
-    
+
     // Sort entries: directories first, then files, alphabetically
-    entries.sort_by(|a, b| {
-        match (a.file_type.as_str(), b.file_type.as_str()) {
-            ("dir", "dir") | ("file", "file") | ("symlink", "symlink") => a.path.cmp(&b.path),
-            ("dir", _) => std::cmp::Ordering::Less,
-            (_, "dir") => std::cmp::Ordering::Greater,
-            _ => a.path.cmp(&b.path),
-        }
+    entries.sort_by(|a, b| match (a.file_type.as_str(), b.file_type.as_str()) {
+        ("dir", "dir") | ("file", "file") | ("symlink", "symlink") => a.path.cmp(&b.path),
+        ("dir", _) => std::cmp::Ordering::Less,
+        (_, "dir") => std::cmp::Ordering::Greater,
+        _ => a.path.cmp(&b.path),
     });
-    
+
     // Format output
     for entry in &entries {
         let size_str = format_size(entry.size);
@@ -235,9 +245,9 @@ pub fn list_files_impl(directory: &str, recursive: bool) -> Result<ToolResult> {
         };
         output_lines.push(format!("{}{} ({})", entry.path, type_indicator, size_str));
     }
-    
+
     output_lines.push(format!("\nTotal: {} entries", entries.len()));
-    
+
     Ok(ToolResult::success(output_lines.join("\n")))
 }
 
@@ -246,7 +256,7 @@ fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
     const GB: u64 = MB * 1024;
-    
+
     if bytes >= GB {
         format!("{:.1} GB", bytes as f64 / GB as f64)
     } else if bytes >= MB {
@@ -259,44 +269,56 @@ fn format_size(bytes: u64) -> String {
 }
 
 /// Read a file with optional line range
-pub fn read_file_impl(file_path: &str, start_line: Option<usize>, num_lines: Option<usize>) -> Result<ToolResult> {
+pub fn read_file_impl(
+    file_path: &str,
+    start_line: Option<usize>,
+    num_lines: Option<usize>,
+) -> Result<ToolResult> {
     let path = PathBuf::from(file_path);
-    
+
     if !path.exists() {
-        return Ok(ToolResult::error(format!("File does not exist: {}", file_path)));
+        return Ok(ToolResult::error(format!(
+            "File does not exist: {}",
+            file_path
+        )));
     }
-    
+
     if !path.is_file() {
         return Ok(ToolResult::error(format!("Not a file: {}", file_path)));
     }
-    
+
     let content = fs::read_to_string(&path)?;
-    
+
     // Apply line range if specified
     let result_content = match (start_line, num_lines) {
         (Some(start), Some(count)) => {
             let lines: Vec<&str> = content.lines().collect();
-            let start_idx = start.saturating_sub(1);  // Convert to 0-based
+            let start_idx = start.saturating_sub(1); // Convert to 0-based
             let end_idx = (start_idx + count).min(lines.len());
-            
+
             if start_idx >= lines.len() {
                 return Ok(ToolResult::error(format!(
                     "Start line {} is beyond file length ({} lines)",
-                    start, lines.len()
+                    start,
+                    lines.len()
                 )));
             }
-            
+
             lines[start_idx..end_idx].join("\n")
         }
         (Some(_), None) => {
-            return Ok(ToolResult::error("If start_line is specified, num_lines must also be specified"));
+            return Ok(ToolResult::error(
+                "If start_line is specified, num_lines must also be specified",
+            ));
         }
         (None, Some(_)) => {
-            return Ok(ToolResult::error("If num_lines is specified, start_line must also be specified"));
+            return Ok(ToolResult::error(
+                "If num_lines is specified, start_line must also be specified",
+            ));
         }
         (None, None) => content,
     };
-    
+
     // Check token limit (rough estimate: ~4 chars per token)
     let estimated_tokens = result_content.len() / 4;
     if estimated_tokens > 10000 {
@@ -305,7 +327,7 @@ pub fn read_file_impl(file_path: &str, start_line: Option<usize>, num_lines: Opt
             estimated_tokens
         )));
     }
-    
+
     Ok(ToolResult::success(result_content))
 }
 
@@ -323,13 +345,15 @@ pub fn list_files_definition() -> ToolDefinition {
 pub fn list_files_executor() -> ToolExecutor {
     Arc::new(|params: Value| {
         Box::pin(async move {
-            let directory = params.get("directory")
+            let directory = params
+                .get("directory")
                 .and_then(|v| v.as_str())
                 .unwrap_or(".");
-            let recursive = params.get("recursive")
+            let recursive = params
+                .get("recursive")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            
+
             list_files_impl(directory, recursive)
         })
     })
@@ -349,19 +373,22 @@ pub fn read_file_definition() -> ToolDefinition {
 pub fn read_file_executor() -> ToolExecutor {
     Arc::new(|params: Value| {
         Box::pin(async move {
-            let file_path = params.get("path")
+            let file_path = params
+                .get("path")
                 .and_then(|v| v.as_str())
                 .or_else(|| params.get("file_path").and_then(|v| v.as_str()))
                 .ok_or_else(|| anyhow::anyhow!("path is required"))?;
-            
-            let start_line = params.get("start_line")
+
+            let start_line = params
+                .get("start_line")
                 .and_then(|v| v.as_u64())
                 .map(|n| n as usize);
-            
-            let num_lines = params.get("num_lines")
+
+            let num_lines = params
+                .get("num_lines")
                 .and_then(|v| v.as_u64())
                 .map(|n| n as usize);
-            
+
             read_file_impl(file_path, start_line, num_lines)
         })
     })
@@ -375,12 +402,12 @@ mod tests {
     #[test]
     fn test_list_files_simple() {
         let dir = TempDir::new().unwrap();
-        
+
         // Create some test files
         fs::write(dir.path().join("file1.txt"), "content").unwrap();
         fs::write(dir.path().join("file2.rs"), "fn main() {}").unwrap();
         fs::create_dir(dir.path().join("subdir")).unwrap();
-        
+
         let result = list_files_impl(dir.path().to_str().unwrap(), false).unwrap();
         assert!(result.success);
         assert!(result.content.contains("file1.txt"));
@@ -393,7 +420,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "line1\nline2\nline3").unwrap();
-        
+
         let result = read_file_impl(file_path.to_str().unwrap(), None, None).unwrap();
         assert!(result.success);
         assert_eq!(result.content, "line1\nline2\nline3");
@@ -404,7 +431,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("test.txt");
         fs::write(&file_path, "line1\nline2\nline3\nline4\nline5").unwrap();
-        
+
         let result = read_file_impl(file_path.to_str().unwrap(), Some(2), Some(2)).unwrap();
         assert!(result.success);
         assert_eq!(result.content, "line2\nline3");

@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub struct Session {
     pub id: String,
     pub name: String,
-    pub agent_type: String,  // "planning" or "coding"
+    pub agent_type: String, // "planning" or "coding"
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub total_tokens: i64,
@@ -27,11 +27,11 @@ impl Session {
             message_count: 0,
         }
     }
-    
+
     pub fn planning(name: impl Into<String>) -> Self {
         Self::new(name, "planning")
     }
-    
+
     pub fn coding(name: impl Into<String>) -> Self {
         Self::new(name, "coding")
     }
@@ -55,8 +55,8 @@ impl MessageRole {
             MessageRole::Tool => "tool",
         }
     }
-    
-    pub fn from_str(s: &str) -> Self {
+
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "user" => MessageRole::User,
             "assistant" => MessageRole::Assistant,
@@ -74,7 +74,7 @@ pub struct SessionMessage {
     pub session_id: String,
     pub role: MessageRole,
     pub content: String,
-    pub tool_calls_json: Option<String>,  // For assistant tool calls
+    pub tool_calls_json: Option<String>, // For assistant tool calls
     pub tool_result_json: Option<String>, // For tool responses
     pub tokens: i64,
     pub created_at: Option<String>,
@@ -93,7 +93,7 @@ impl SessionMessage {
             created_at: None,
         }
     }
-    
+
     pub fn assistant(session_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             id: None,
@@ -106,7 +106,7 @@ impl SessionMessage {
             created_at: None,
         }
     }
-    
+
     pub fn system(session_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             id: None,
@@ -119,7 +119,7 @@ impl SessionMessage {
             created_at: None,
         }
     }
-    
+
     pub fn tool(session_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             id: None,
@@ -132,17 +132,17 @@ impl SessionMessage {
             created_at: None,
         }
     }
-    
+
     pub fn with_tokens(mut self, tokens: i64) -> Self {
         self.tokens = tokens;
         self
     }
-    
+
     pub fn with_tool_calls(mut self, json: impl Into<String>) -> Self {
         self.tool_calls_json = Some(json.into());
         self
     }
-    
+
     pub fn with_tool_result(mut self, json: impl Into<String>) -> Self {
         self.tool_result_json = Some(json.into());
         self

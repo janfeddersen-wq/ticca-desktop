@@ -1,13 +1,13 @@
 //! Right sidebar with tabbed panels.
 
-use iced::widget::{button, column, container, row, text, Space};
-use iced::{Color, Element, Length, Padding};
+use iced::widget::{Space, button, column, container, row, text};
+use iced::{Element, Length, Padding};
 
 use crate::agent_graph::AgentCallGraph;
 use crate::material_icons::{icon, icons};
 use crate::messages::{Message, RightSidebarTab, TodoNodeOption};
 use crate::system_executions::SystemExecutionsState;
-use crate::theme::{styles, AppTheme};
+use crate::theme::{AppTheme, styles};
 use crate::views::{agent_flow, system_executions, todo_list};
 
 use iced::widget::pick_list;

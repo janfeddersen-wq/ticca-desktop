@@ -16,25 +16,20 @@
 //! println!("Access token: {}", token_response.access_token);
 //! ```
 
-pub mod common;
-pub mod pkce;
 pub mod callback_server;
-pub mod claude;
-pub mod gemini;
 pub mod chatgpt;
+pub mod claude;
+pub mod common;
+pub mod gemini;
+pub mod pkce;
 
 // Re-export commonly used types
-pub use common::{
-    OAuthConfig,
-    OAuthError,
-    OAuthResult,
-    OAuthFlowState,
-    TokenResponse,
-    Provider,
-};
+pub use common::{OAuthConfig, OAuthError, OAuthFlowState, OAuthResult, Provider, TokenResponse};
 
-pub use pkce::create_pkce_state;
-pub use callback_server::{CallbackResult, find_available_port, wait_for_callback, build_redirect_uri};
+pub use callback_server::{
+    CallbackResult, build_redirect_uri, find_available_port, wait_for_callback,
+};
+pub use chatgpt::ChatGptOAuth;
 pub use claude::ClaudeOAuth;
 pub use gemini::GeminiOAuth;
-pub use chatgpt::ChatGptOAuth;
+pub use pkce::create_pkce_state;

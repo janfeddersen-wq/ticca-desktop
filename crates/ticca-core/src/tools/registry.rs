@@ -24,7 +24,7 @@ impl ToolResult {
             error: None,
         }
     }
-    
+
     pub fn error(message: impl Into<String>) -> Self {
         let msg = message.into();
         Self {
@@ -62,7 +62,7 @@ impl ToolParameterSchema {
             items: None,
         }
     }
-    
+
     pub fn integer(description: impl Into<String>) -> Self {
         Self {
             param_type: "integer".to_string(),
@@ -73,7 +73,7 @@ impl ToolParameterSchema {
             items: None,
         }
     }
-    
+
     pub fn boolean(description: impl Into<String>) -> Self {
         Self {
             param_type: "boolean".to_string(),
@@ -84,12 +84,12 @@ impl ToolParameterSchema {
             items: None,
         }
     }
-    
+
     pub fn with_default(mut self, value: Value) -> Self {
         self.default = Some(value);
         self
     }
-    
+
     pub fn object(properties: HashMap<String, ToolParameterSchema>, required: Vec<String>) -> Self {
         Self {
             param_type: "object".to_string(),
@@ -111,9 +111,8 @@ pub struct ToolDefinition {
 }
 
 /// Type alias for async tool executor function
-pub type ToolExecutor = Arc<
-    dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send>> + Send + Sync
->;
+pub type ToolExecutor =
+    Arc<dyn Fn(Value) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send>> + Send + Sync>;
 
 /// A registered tool with its definition and executor
 pub struct RegisteredTool {
@@ -138,28 +137,34 @@ impl ToolRegistry {
             tools: HashMap::new(),
         }
     }
-    
+
     /// Register a new tool
     pub fn register(&mut self, definition: ToolDefinition, executor: ToolExecutor) {
         let name = definition.name.clone();
-        self.tools.insert(name, RegisteredTool { definition, executor });
+        self.tools.insert(
+            name,
+            RegisteredTool {
+                definition,
+                executor,
+            },
+        );
     }
-    
+
     /// Get a tool by name
     pub fn get(&self, name: &str) -> Option<&RegisteredTool> {
         self.tools.get(name)
     }
-    
+
     /// Get all tool definitions (for LLM function calling)
     pub fn get_definitions(&self) -> Vec<&ToolDefinition> {
         self.tools.values().map(|t| &t.definition).collect()
     }
-    
+
     /// Get tool names
     pub fn tool_names(&self) -> Vec<&str> {
         self.tools.keys().map(|s| s.as_str()).collect()
     }
-    
+
     /// Execute a tool by name
     pub async fn execute(&self, name: &str, params: Value) -> Result<ToolResult> {
         match self.tools.get(name) {
@@ -167,17 +172,17 @@ impl ToolRegistry {
             None => Ok(ToolResult::error(format!("Unknown tool: {}", name))),
         }
     }
-    
+
     /// Check if a tool exists
     pub fn has_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }
-    
+
     /// Get number of registered tools
     pub fn len(&self) -> usize {
         self.tools.len()
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }

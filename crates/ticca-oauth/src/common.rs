@@ -7,31 +7,31 @@ use thiserror::Error;
 pub enum OAuthError {
     #[error("HTTP request failed: {0}")]
     HttpError(#[from] reqwest::Error),
-    
+
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
-    
+
     #[error("Token exchange failed: {0}")]
     TokenExchangeFailed(String),
-    
+
     #[error("Token refresh failed: {0}")]
     TokenRefreshFailed(String),
-    
+
     #[error("Authorization failed: {0}")]
     AuthorizationFailed(String),
-    
+
     #[error("Callback server error: {0}")]
     CallbackServerError(String),
-    
+
     #[error("Timeout waiting for authorization")]
     Timeout,
-    
+
     #[error("User cancelled authorization")]
     Cancelled,
-    
+
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-    
+
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
 }
@@ -55,7 +55,12 @@ pub struct OAuthConfig {
 impl OAuthConfig {
     /// Build the redirect URI for a given port
     pub fn redirect_uri(&self, port: u16) -> String {
-        format!("http://{}:{}/{}", self.redirect_host, port, self.redirect_path.trim_start_matches('/'))
+        format!(
+            "http://{}:{}/{}",
+            self.redirect_host,
+            port,
+            self.redirect_path.trim_start_matches('/')
+        )
     }
 }
 
@@ -79,9 +84,8 @@ pub struct TokenResponse {
 impl TokenResponse {
     /// Calculate expiration timestamp from expires_in
     pub fn expires_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        self.expires_in.map(|secs| {
-            chrono::Utc::now() + chrono::Duration::seconds(secs as i64)
-        })
+        self.expires_in
+            .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs as i64))
     }
 
     /// Convert to RFC3339 expiration string
@@ -115,12 +119,12 @@ impl OAuthFlowState {
             created_at: std::time::Instant::now(),
         }
     }
-    
+
     pub fn with_redirect_uri(mut self, uri: String) -> Self {
         self.redirect_uri = Some(uri);
         self
     }
-    
+
     /// Check if the flow has timed out
     pub fn is_expired(&self, timeout_secs: u64) -> bool {
         self.created_at.elapsed().as_secs() > timeout_secs

@@ -181,8 +181,10 @@ fn build_oauth_headers(access_token: &str) -> ProviderResult<HeaderMap> {
             .map_err(|e| OAuthProviderError::ConfigError(format!("Invalid access token: {}", e)))?,
     );
 
-    tracing::debug!("Built OAuth headers for Gemini (token: {}... chars)",
-        std::cmp::min(access_token.len(), 8));
+    tracing::debug!(
+        "Built OAuth headers for Gemini (token: {}... chars)",
+        std::cmp::min(access_token.len(), 8)
+    );
 
     Ok(headers)
 }

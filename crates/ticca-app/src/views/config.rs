@@ -1,13 +1,13 @@
 //! Settings/Configuration view
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, Column, Space};
+use iced::widget::{Column, Space, button, column, container, pick_list, row, scrollable, text};
 use iced::{Border, Color, Element, Length};
 
 use std::collections::HashMap;
 
 use crate::material_icons::{icon, icons};
 use crate::messages::{Message, OAuthProvider, SettingsTab};
-use crate::theme::{styles, AppTheme};
+use crate::theme::{AppTheme, styles};
 
 use ticca_core::agents::AgentType;
 use ticca_core::config::{ConfigDatabase, OAuthAccount};
@@ -27,6 +27,7 @@ pub struct ProviderAuthStatus {
 }
 
 /// Render the settings view
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     theme: AppTheme,
     available_models: &'a [String],
@@ -38,16 +39,10 @@ pub fn view<'a>(
     active_tab: SettingsTab,
 ) -> Element<'a, Message> {
     let header = row![
-        button(
-            row![
-                icon(icons::ARROW_BACK).size(16),
-                text(" Back").size(14),
-            ]
-            .spacing(4)
-        )
-        .on_press(Message::CloseSettings)
-        .style(styles::secondary_button)
-        .padding([8, 12]),
+        button(row![icon(icons::ARROW_BACK).size(16), text(" Back").size(14),].spacing(4))
+            .on_press(Message::CloseSettings)
+            .style(styles::secondary_button)
+            .padding([8, 12]),
         text("Settings").size(24),
     ]
     .spacing(20)
@@ -71,7 +66,11 @@ pub fn view<'a>(
         AppTheme::GruvboxLight,
     ];
 
-    let theme_icon = if theme.is_dark() { icons::DARK_MODE } else { icons::LIGHT_MODE };
+    let theme_icon = if theme.is_dark() {
+        icons::DARK_MODE
+    } else {
+        icons::LIGHT_MODE
+    };
 
     let appearance: Element<Message> = container(
         column![
@@ -79,17 +78,13 @@ pub fn view<'a>(
             row![
                 icon(theme_icon).size(16),
                 text("Theme:").size(14).width(Length::Fixed(80.0)),
-                pick_list(
-                    theme_options,
-                    Some(theme),
-                    Message::SetTheme
-                )
-                .width(Length::Fixed(200.0)),
+                pick_list(theme_options, Some(theme), Message::SetTheme)
+                    .width(Length::Fixed(200.0)),
             ]
             .spacing(10)
             .align_y(iced::Alignment::Center),
         ]
-        .spacing(15)
+        .spacing(15),
     )
     .padding(20)
     .style(styles::card_container)
@@ -113,16 +108,7 @@ pub fn view<'a>(
         SettingsTab::Sessions => sessions_section,
     };
 
-    scrollable(
-        column![
-            header,
-            tabs,
-            content,
-        ]
-        .spacing(16)
-        .padding(10)
-    )
-    .into()
+    scrollable(column![header, tabs, content,].spacing(16).padding(10)).into()
 }
 
 /// Build the model settings section with default model and agent pinning
@@ -141,12 +127,26 @@ fn build_model_settings_section<'a>(
         horizontal_space(),
         button(
             row![
-                icon(if is_loading_models { icons::HOURGLASS_EMPTY } else { icons::REFRESH }).size(16),
-                text(if is_loading_models { " Loading..." } else { " Refresh" }).size(14),
+                icon(if is_loading_models {
+                    icons::HOURGLASS_EMPTY
+                } else {
+                    icons::REFRESH
+                })
+                .size(16),
+                text(if is_loading_models {
+                    " Loading..."
+                } else {
+                    " Refresh"
+                })
+                .size(14),
             ]
             .spacing(4)
         )
-        .on_press_maybe(if is_loading_models { None } else { Some(Message::RefreshModels) })
+        .on_press_maybe(if is_loading_models {
+            None
+        } else {
+            Some(Message::RefreshModels)
+        })
         .style(styles::secondary_button)
         .padding([6, 10]),
     ]
@@ -165,11 +165,9 @@ fn build_model_settings_section<'a>(
         let selected_default = default_model.map(|s| s.to_string());
         row![
             text("Default Model:").size(14).width(Length::Fixed(140.0)),
-            pick_list(
-                model_options.clone(),
-                selected_default,
-                |model| Message::SetDefaultModel(model)
-            )
+            pick_list(model_options.clone(), selected_default, |model| {
+                Message::SetDefaultModel(model)
+            })
             .placeholder("Select default model...")
             .width(Length::Fixed(300.0)),
         ]
@@ -179,7 +177,8 @@ fn build_model_settings_section<'a>(
 
     // Agent model pinning section
     let agent_pinning_header = text("Agent Model Pinning").size(16);
-    let agent_pinning_desc = text("Pin specific models to agents. If not pinned, the default model is used.").size(12);
+    let agent_pinning_desc =
+        text("Pin specific models to agents. If not pinned, the default model is used.").size(12);
 
     // Build agent pinning rows
     let coding_pinned = agent_pinned_models.get(&AgentType::Coding).cloned();
@@ -187,7 +186,11 @@ fn build_model_settings_section<'a>(
 
     // Create options with "Use Default" at the start
     let agent_model_options: Vec<ModelOption> = std::iter::once(ModelOption::UseDefault)
-        .chain(available_models.iter().map(|m| ModelOption::Model(m.clone())))
+        .chain(
+            available_models
+                .iter()
+                .map(|m| ModelOption::Model(m.clone())),
+        )
         .collect();
 
     let coding_row = if available_models.is_empty() {
@@ -199,20 +202,18 @@ fn build_model_settings_section<'a>(
         .spacing(10)
         .align_y(iced::Alignment::Center)
     } else {
-        let selected = coding_pinned.map(ModelOption::Model).unwrap_or(ModelOption::UseDefault);
+        let selected = coding_pinned
+            .map(ModelOption::Model)
+            .unwrap_or(ModelOption::UseDefault);
         row![
             icon(icons::CODE).size(16),
             text("Coding Agent:").size(14).width(Length::Fixed(120.0)),
-            pick_list(
-                agent_model_options.clone(),
-                Some(selected),
-                move |opt| {
-                    match opt {
-                        ModelOption::UseDefault => Message::SetAgentModel(AgentType::Coding, None),
-                        ModelOption::Model(m) => Message::SetAgentModel(AgentType::Coding, Some(m)),
-                    }
+            pick_list(agent_model_options.clone(), Some(selected), move |opt| {
+                match opt {
+                    ModelOption::UseDefault => Message::SetAgentModel(AgentType::Coding, None),
+                    ModelOption::Model(m) => Message::SetAgentModel(AgentType::Coding, Some(m)),
                 }
-            )
+            })
             .width(Length::Fixed(300.0)),
         ]
         .spacing(10)
@@ -228,20 +229,18 @@ fn build_model_settings_section<'a>(
         .spacing(10)
         .align_y(iced::Alignment::Center)
     } else {
-        let selected = planning_pinned.map(ModelOption::Model).unwrap_or(ModelOption::UseDefault);
+        let selected = planning_pinned
+            .map(ModelOption::Model)
+            .unwrap_or(ModelOption::UseDefault);
         row![
             icon(icons::CHECKLIST).size(16),
             text("Planning Agent:").size(14).width(Length::Fixed(120.0)),
-            pick_list(
-                agent_model_options.clone(),
-                Some(selected),
-                move |opt| {
-                    match opt {
-                        ModelOption::UseDefault => Message::SetAgentModel(AgentType::Planning, None),
-                        ModelOption::Model(m) => Message::SetAgentModel(AgentType::Planning, Some(m)),
-                    }
+            pick_list(agent_model_options.clone(), Some(selected), move |opt| {
+                match opt {
+                    ModelOption::UseDefault => Message::SetAgentModel(AgentType::Planning, None),
+                    ModelOption::Model(m) => Message::SetAgentModel(AgentType::Planning, Some(m)),
                 }
-            )
+            })
             .width(Length::Fixed(300.0)),
         ]
         .spacing(10)
@@ -268,7 +267,7 @@ fn build_model_settings_section<'a>(
             coding_row,
             planning_row,
         ]
-        .spacing(12)
+        .spacing(12),
     )
     .padding(20)
     .style(styles::card_container)
@@ -288,7 +287,7 @@ fn build_tabs(active: SettingsTab) -> Element<'static, Message> {
                 icon(tab_icon).size(14),
                 text(format!(" {}", label)).size(13),
             ]
-            .spacing(4)
+            .spacing(4),
         )
         .on_press(Message::SwitchSettingsTab(tab))
         .style(style)
@@ -323,7 +322,7 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                 icon(auth_icon).size(16),
                 text(format!(" Add {}", label)).size(14),
             ]
-            .spacing(4)
+            .spacing(4),
         )
         .on_press(Message::StartOAuth(provider))
         .style(style_fn)
@@ -333,15 +332,15 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
     let db = ConfigDatabase::open().ok();
     let claude_accounts = db
         .as_ref()
-        .and_then(|db| db.list_oauth_accounts(Some("claude")).ok())
+        .and_then(|db| db.list_oauth_accounts_pruned(Some("claude")).ok())
         .unwrap_or_default();
     let gemini_accounts = db
         .as_ref()
-        .and_then(|db| db.list_oauth_accounts(Some("gemini")).ok())
+        .and_then(|db| db.list_oauth_accounts_pruned(Some("gemini")).ok())
         .unwrap_or_default();
     let chatgpt_accounts = db
         .as_ref()
-        .and_then(|db| db.list_oauth_accounts(Some("chatgpt")).ok())
+        .and_then(|db| db.list_oauth_accounts_pruned(Some("chatgpt")).ok())
         .unwrap_or_default();
 
     let accounts_section = |label: &str, accounts: Vec<OAuthAccount>| -> Element<Message> {
@@ -362,30 +361,41 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                         "ready"
                     };
 
-                    let label_text = account
-                        .label
-                        .clone()
-                        .unwrap_or_else(|| format!("{}…", account.id.chars().take(8).collect::<String>()));
+                    let label_text = account.label.clone().unwrap_or_else(|| {
+                        format!("{}…", account.id.chars().take(8).collect::<String>())
+                    });
 
                     let detail = account
                         .cooldown_until
                         .clone()
-                        .map(|until| format!("priority {} • {} • cooldown until {}", account.priority, status, until))
+                        .map(|until| {
+                            format!(
+                                "priority {} • {} • cooldown until {}",
+                                account.priority, status, until
+                            )
+                        })
                         .unwrap_or_else(|| format!("priority {} • {}", account.priority, status));
 
                     container(
                         row![
-                            column![
-                                text(label_text).size(14),
-                                text(detail).size(11),
-                            ]
-                            .spacing(2)
-                            .width(Length::Fill),
+                            column![text(label_text).size(14), text(detail).size(11),]
+                                .spacing(2)
+                                .width(Length::Fill),
                             row![
                                 button(
                                     row![
-                                        icon(if account.is_active { icons::CHECK_CIRCLE } else { icons::CANCEL }).size(14),
-                                        text(if account.is_active { " Active" } else { " Disabled" }).size(12),
+                                        icon(if account.is_active {
+                                            icons::CHECK_CIRCLE
+                                        } else {
+                                            icons::CANCEL
+                                        })
+                                        .size(14),
+                                        text(if account.is_active {
+                                            " Active"
+                                        } else {
+                                            " Disabled"
+                                        })
+                                        .size(12),
                                     ]
                                     .spacing(4)
                                 )
@@ -432,11 +442,8 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
-                                    row![
-                                        icon(icons::DELETE).size(14),
-                                        text(" Remove").size(12),
-                                    ]
-                                    .spacing(4)
+                                    row![icon(icons::DELETE).size(14), text(" Remove").size(12),]
+                                        .spacing(4)
                                 )
                                 .on_press(Message::RemoveOAuthAccount(account.id))
                                 .style(styles::secondary_button)
@@ -445,7 +452,7 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                             .spacing(6)
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center)
+                        .align_y(iced::Alignment::Center),
                     )
                     .padding(8)
                     .width(Length::Fill)
@@ -454,12 +461,9 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                 .collect()
         };
 
-        column![
-            text(label).size(16),
-            Column::with_children(rows).spacing(4),
-        ]
-        .spacing(8)
-        .into()
+        column![text(label).size(16), Column::with_children(rows).spacing(4),]
+            .spacing(8)
+            .into()
     };
 
     container(
@@ -475,7 +479,7 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
             accounts_section("Gemini Accounts", gemini_accounts),
             accounts_section("ChatGPT Accounts", chatgpt_accounts),
         ]
-        .spacing(12)
+        .spacing(12),
     )
     .padding(20)
     .style(styles::card_container)
@@ -533,7 +537,7 @@ fn build_tools_section(yolo_mode_enabled: bool) -> Element<'static, Message> {
             .spacing(10)
             .align_y(iced::Alignment::Center),
         ]
-        .spacing(12)
+        .spacing(12),
     )
     .padding(20)
     .style(styles::card_container)
@@ -546,11 +550,12 @@ fn build_sessions_section<'a>() -> Element<'a, Message> {
         .ok()
         .and_then(|db| db.list_sessions().ok())
         .unwrap_or_default();
-    
+
     let session_list: Vec<Element<'a, Message>> = if sessions.is_empty() {
         vec![text("No saved sessions yet.").size(14).into()]
     } else {
-        sessions.into_iter()
+        sessions
+            .into_iter()
             .take(10) // Show last 10 sessions
             .map(|session| {
                 let session_id = session.id.clone();
@@ -561,7 +566,8 @@ fn build_sessions_section<'a>() -> Element<'a, Message> {
                     icons::CHECKLIST
                 };
 
-                let updated = session.updated_at
+                let updated = session
+                    .updated_at
                     .as_ref()
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                     .map(|dt| dt.format("%m/%d %H:%M").to_string())
@@ -572,25 +578,19 @@ fn build_sessions_section<'a>() -> Element<'a, Message> {
                 container(
                     row![
                         icon(agent_icon).size(16),
-                        column![
-                            text(session_name).size(14),
-                            text(info_text).size(11),
-                        ]
-                        .spacing(2)
-                        .width(Length::Fill),
+                        column![text(session_name).size(14), text(info_text).size(11),]
+                            .spacing(2)
+                            .width(Length::Fill),
                         button(
-                            row![
-                                icon(icons::FOLDER_OPEN).size(14),
-                                text(" Load").size(12),
-                            ]
-                            .spacing(4)
+                            row![icon(icons::FOLDER_OPEN).size(14), text(" Load").size(12),]
+                                .spacing(4)
                         )
                         .on_press(Message::LoadSession(session_id))
                         .style(styles::secondary_button)
                         .padding([6, 10]),
                     ]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center)
+                    .align_y(iced::Alignment::Center),
                 )
                 .padding(8)
                 .width(Length::Fill)
@@ -598,13 +598,13 @@ fn build_sessions_section<'a>() -> Element<'a, Message> {
             })
             .collect()
     };
-    
+
     container(
         column![
             text("Recent Sessions").size(18),
             Column::with_children(session_list).spacing(4),
         ]
-        .spacing(15)
+        .spacing(15),
     )
     .padding(20)
     .style(styles::card_container)

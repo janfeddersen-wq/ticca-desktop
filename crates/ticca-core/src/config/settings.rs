@@ -1,6 +1,6 @@
 //! Typed settings accessors
 
-use crate::config::{defaults, setting_keys, ConfigRepo};
+use crate::config::{ConfigRepo, defaults, setting_keys};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountRotationPolicy {
@@ -18,7 +18,7 @@ impl AccountRotationPolicy {
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
+    pub fn parse(value: &str) -> Self {
         match value {
             "priority_only" => AccountRotationPolicy::PriorityOnly,
             "least_recently_used" => AccountRotationPolicy::LeastRecentlyUsed,
@@ -38,14 +38,15 @@ pub struct TypedSettings {
 
 impl TypedSettings {
     pub fn load(repo: &impl ConfigRepo) -> Self {
-        let theme = get_string(repo, setting_keys::THEME).unwrap_or_else(|| defaults::THEME.to_string());
+        let theme =
+            get_string(repo, setting_keys::THEME).unwrap_or_else(|| defaults::THEME.to_string());
         let default_model = get_string(repo, setting_keys::DEFAULT_MODEL).filter(|s| !s.is_empty());
-        let max_tool_rounds = get_u32(repo, setting_keys::MAX_TOOL_ROUNDS)
-            .unwrap_or(defaults::MAX_TOOL_ROUNDS);
-        let yolo_mode_enabled = get_bool(repo, setting_keys::YOLO_MODE)
-            .unwrap_or(defaults::YOLO_MODE);
+        let max_tool_rounds =
+            get_u32(repo, setting_keys::MAX_TOOL_ROUNDS).unwrap_or(defaults::MAX_TOOL_ROUNDS);
+        let yolo_mode_enabled =
+            get_bool(repo, setting_keys::YOLO_MODE).unwrap_or(defaults::YOLO_MODE);
         let account_rotation_policy = get_string(repo, setting_keys::ACCOUNT_ROTATION_POLICY)
-            .map(|value| AccountRotationPolicy::from_str(&value))
+            .map(|value| AccountRotationPolicy::parse(&value))
             .unwrap_or(defaults::ACCOUNT_ROTATION_POLICY);
 
         Self {

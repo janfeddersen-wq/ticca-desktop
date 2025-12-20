@@ -57,7 +57,7 @@ impl Default for ProviderConfig {
 pub type ProviderResult<T> = Result<T, OAuthProviderError>;
 
 /// Extract model ID from a full model path
-/// 
+///
 /// Handles formats like:
 /// - `claude-sonnet-4-20250514` -> as-is
 /// - `models/gemini-2.0-flash` -> `gemini-2.0-flash`
@@ -75,8 +75,14 @@ mod tests {
 
     #[test]
     fn test_normalize_model_id() {
-        assert_eq!(normalize_model_id("claude-sonnet-4-20250514"), "claude-sonnet-4-20250514");
-        assert_eq!(normalize_model_id("models/gemini-2.0-flash"), "gemini-2.0-flash");
+        assert_eq!(
+            normalize_model_id("claude-sonnet-4-20250514"),
+            "claude-sonnet-4-20250514"
+        );
+        assert_eq!(
+            normalize_model_id("models/gemini-2.0-flash"),
+            "gemini-2.0-flash"
+        );
         assert_eq!(normalize_model_id("gpt-4o"), "gpt-4o");
     }
 }

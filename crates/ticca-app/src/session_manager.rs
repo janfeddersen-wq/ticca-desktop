@@ -2,12 +2,12 @@
 //!
 //! Handles persistence of chat sessions to the database.
 
-use uuid::Uuid;
 use chrono::{Local, Utc};
 use iced::widget::markdown;
+use uuid::Uuid;
 
 use ticca_core::agents::AgentType;
-use ticca_core::session::{Session, SessionDatabase, SessionMessage, MessageRole};
+use ticca_core::session::{MessageRole, Session, SessionDatabase, SessionMessage};
 
 use crate::chat_message::ChatMessage;
 
@@ -30,7 +30,7 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
         .map(|m| {
             let parsed_items = markdown::parse(&m.content).collect();
             ChatMessage {
-                role: m.role.clone(),
+                role: m.role,
                 content: m.content.clone(),
                 is_streaming: false,
                 author_label: None,
@@ -42,7 +42,7 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
         .collect();
 
     // Parse agent type
-    let agent_type = AgentType::from_str(&session.agent_type);
+    let agent_type = AgentType::parse(&session.agent_type);
 
     Some(LoadedSession {
         messages: chat_messages,
@@ -93,10 +93,10 @@ pub fn save_session(
     };
 
     // Try to create, or update if exists
-    if current_session.is_none() {
-        if let Err(e) = db.create_session(&session) {
-            tracing::warn!("Failed to create session: {}", e);
-        }
+    if current_session.is_none()
+        && let Err(e) = db.create_session(&session)
+    {
+        tracing::warn!("Failed to create session: {}", e);
     }
 
     // Clear existing messages and re-add

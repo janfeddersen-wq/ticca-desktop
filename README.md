@@ -4,7 +4,7 @@ A sleek, Iced-based desktop application for AI-assisted coding. Ticca provides a
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)
-![Version](https://img.shields.io/badge/version-0.9.0-green.svg)
+![Version](https://img.shields.io/badge/version-0.11.0-green.svg)
 
 ## Features
 

@@ -1,8 +1,8 @@
 //! Model discovery and aggregation across providers
 
+use crate::llm::ClaudeClient;
 use crate::llm::auth;
 use crate::llm::provider_registry::ProviderId;
-use crate::llm::ClaudeClient;
 use ticca_oauth::{ChatGptOAuth, GeminiOAuth};
 
 pub struct ModelService;
@@ -35,7 +35,10 @@ impl ModelService {
 
         if let Some(token) = auth::select_token(crate::config::models::providers::CHATGPT) {
             let oauth = ChatGptOAuth::new();
-            match oauth.fetch_models(&token.access_token, token.id_token.as_deref()).await {
+            match oauth
+                .fetch_models(&token.access_token, token.id_token.as_deref())
+                .await
+            {
                 Ok(models) => all_models.extend(models.into_iter().map(|m| m.id)),
                 Err(e) => {
                     tracing::warn!("Could not fetch ChatGPT models: {}", e);
@@ -87,7 +90,10 @@ impl ModelService {
                 let token = auth::select_token(crate::config::models::providers::CHATGPT)
                     .ok_or_else(|| "ChatGPT authentication required".to_string())?;
                 let oauth = ChatGptOAuth::new();
-                match oauth.fetch_models(&token.access_token, token.id_token.as_deref()).await {
+                match oauth
+                    .fetch_models(&token.access_token, token.id_token.as_deref())
+                    .await
+                {
                     Ok(models) => Ok(models.into_iter().map(|m| m.id).collect()),
                     Err(e) => {
                         tracing::warn!("Could not fetch ChatGPT models ({}), using defaults", e);

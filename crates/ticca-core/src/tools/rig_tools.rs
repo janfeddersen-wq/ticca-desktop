@@ -10,10 +10,10 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::future::Future;
-use std::sync::Mutex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -131,7 +131,7 @@ impl ToolContext {
         }
     }
 
-    fn enforce_path(&self, path: &PathBuf) -> Result<(), String> {
+    fn enforce_path(&self, path: &Path) -> Result<(), String> {
         if self.policy.is_path_allowed(path) {
             Ok(())
         } else {
@@ -196,10 +196,14 @@ impl Tool for ExecuteShellTool {
             return Err(ExecuteShellError("Tool context not available".to_string()));
         };
         let Some(store) = &context.system_exec_store else {
-            return Err(ExecuteShellError("System execution store not configured".to_string()));
+            return Err(ExecuteShellError(
+                "System execution store not configured".to_string(),
+            ));
         };
         let Some(tx) = &context.system_exec_tx else {
-            return Err(ExecuteShellError("System execution UI channel not configured".to_string()));
+            return Err(ExecuteShellError(
+                "System execution UI channel not configured".to_string(),
+            ));
         };
 
         if let Some(cwd) = &args.cwd {
@@ -243,7 +247,7 @@ impl Tool for ExecuteShellTool {
                 return Err(ExecuteShellError(format!(
                     "Unexpected response for execute_shell: {:?}",
                     other
-                )))
+                )));
             }
         };
 
@@ -317,7 +321,9 @@ impl Tool for ListProcessesTool {
             return Err(ListProcessesError("Tool context not available".to_string()));
         };
         let Some(store) = &context.system_exec_store else {
-            return Err(ListProcessesError("System execution store not configured".to_string()));
+            return Err(ListProcessesError(
+                "System execution store not configured".to_string(),
+            ));
         };
         Ok(json!(store.list_visible()).to_string())
     }
@@ -364,10 +370,14 @@ impl Tool for ReadProcessOutputTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let Some(context) = &self.context else {
-            return Err(ReadProcessOutputError("Tool context not available".to_string()));
+            return Err(ReadProcessOutputError(
+                "Tool context not available".to_string(),
+            ));
         };
         let Some(store) = &context.system_exec_store else {
-            return Err(ReadProcessOutputError("System execution store not configured".to_string()));
+            return Err(ReadProcessOutputError(
+                "System execution store not configured".to_string(),
+            ));
         };
 
         let Some(output) = store.output(&args.process_id) else {
@@ -443,10 +453,14 @@ impl Tool for KillProcessTool {
             return Err(KillProcessError("Tool context not available".to_string()));
         };
         let Some(store) = &context.system_exec_store else {
-            return Err(KillProcessError("System execution store not configured".to_string()));
+            return Err(KillProcessError(
+                "System execution store not configured".to_string(),
+            ));
         };
         let Some(tx) = &context.system_exec_tx else {
-            return Err(KillProcessError("System execution UI channel not configured".to_string()));
+            return Err(KillProcessError(
+                "System execution UI channel not configured".to_string(),
+            ));
         };
 
         let request_id = SYSTEM_EXEC_REQUEST_ID.fetch_add(1, Ordering::SeqCst) as u64;
@@ -464,10 +478,9 @@ impl Tool for KillProcessTool {
             .map_err(|_| KillProcessError("kill_process request was dropped".to_string()))?;
 
         match resp {
-            SystemExecResponse::Killed { process_id } => Ok(format!(
-                "Process `{}` terminated successfully.",
-                process_id
-            )),
+            SystemExecResponse::Killed { process_id } => {
+                Ok(format!("Process `{}` terminated successfully.", process_id))
+            }
             SystemExecResponse::Error { message } => Err(KillProcessError(message)),
             other => Err(KillProcessError(format!(
                 "Unexpected response for kill_process: {:?}",
@@ -796,13 +809,12 @@ impl Tool for DeleteFileTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        if let Some(context) = &self.context {
-            if let Err(e) = context
+        if let Some(context) = &self.context
+            && let Err(e) = context
                 .require_approval("delete_file", format!("path={}", args.path))
                 .await
-            {
-                return Err(DeleteFileError(e));
-            }
+        {
+            return Err(DeleteFileError(e));
         }
 
         let base_path = self
@@ -1023,16 +1035,11 @@ pub struct ListAgentsError(String);
 pub struct ListAgentsArgs {}
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ListAgentsTool {
-    #[serde(skip)]
-    context: Option<Arc<ToolContext>>,
-}
+pub struct ListAgentsTool {}
 
 impl ListAgentsTool {
-    pub fn new(context: Arc<ToolContext>) -> Self {
-        Self {
-            context: Some(context),
-        }
+    pub fn new(_context: Arc<ToolContext>) -> Self {
+        Self {}
     }
 }
 
@@ -1121,7 +1128,7 @@ impl Tool for InvokeAgentTool {
             .as_ref()
             .ok_or_else(|| InvokeAgentError("Tool context not available".to_string()))?;
 
-        let agent_type = AgentType::from_str(&args.agent)
+        let agent_type = AgentType::parse(&args.agent)
             .ok_or_else(|| InvokeAgentError(format!("Unknown agent: {}", args.agent)))?;
 
         let child_id = context
@@ -1247,23 +1254,7 @@ impl Tool for TodoListTool {
 }
 
 /// Create all tools with the given context
-pub fn create_tools(
-    context: Arc<ToolContext>,
-) -> (
-    ExecuteShellTool,
-    ListProcessesTool,
-    ReadProcessOutputTool,
-    KillProcessTool,
-    ReadFileTool,
-    ListFilesTool,
-    EditFileTool,
-    DeleteFileTool,
-    GrepTool,
-    WriteFileTool,
-    ListAgentsTool,
-    TodoListTool,
-    InvokeAgentTool,
-) {
+pub fn create_tools(context: Arc<ToolContext>) -> RigTools {
     (
         ExecuteShellTool::new(context.clone()),
         ListProcessesTool::new(context.clone()),
@@ -1280,6 +1271,22 @@ pub fn create_tools(
         InvokeAgentTool::new(context),
     )
 }
+
+pub type RigTools = (
+    ExecuteShellTool,
+    ListProcessesTool,
+    ReadProcessOutputTool,
+    KillProcessTool,
+    ReadFileTool,
+    ListFilesTool,
+    EditFileTool,
+    DeleteFileTool,
+    GrepTool,
+    WriteFileTool,
+    ListAgentsTool,
+    TodoListTool,
+    InvokeAgentTool,
+);
 
 #[cfg(test)]
 mod tests {

@@ -6,9 +6,6 @@
 
 use iced::theme::{Palette, Theme};
 
-#[allow(unused_imports)]
-use iced::Color;
-
 /// Tailwind Zinc light palette colors
 #[allow(dead_code)]
 pub mod colors {
@@ -30,7 +27,7 @@ pub mod colors {
     pub const WHITE: Color = Color::from_rgb(1.0, 1.0, 1.0); // #ffffff
 
     // Blue accent
-    pub const BLUE_700: Color = Color::from_rgb(0.114, 0.318, 0.804); // #1d4ed8
+    pub const BLUE_700: Color = Color::from_rgb8(0x1d, 0x4e, 0xd8); // #1d4ed8
     pub const BLUE_600: Color = Color::from_rgb(0.145, 0.388, 0.922); // #2563eb
     pub const BLUE_500: Color = Color::from_rgb(0.231, 0.510, 0.965); // #3b82f6
 

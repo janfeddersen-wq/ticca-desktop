@@ -13,9 +13,7 @@ use reqwest::Client as ReqwestClient;
 use serde_json::Value;
 use std::future::Future;
 
-use rig::http_client::{
-    HttpClientExt, LazyBody, MultipartForm, StreamingResponse,
-};
+use rig::http_client::{HttpClientExt, LazyBody, MultipartForm, StreamingResponse};
 
 /// A wrapper around reqwest::Client that adds custom headers to all requests
 #[derive(Clone, Debug)]
@@ -51,7 +49,7 @@ impl OAuthHttpClient {
     }
 
     /// Merge extra headers into the request
-    /// 
+    ///
     /// Note: For OAuth-based clients, we also remove the x-api-key header
     /// that rig's providers add by default, since we're using Bearer auth.
     fn merge_headers(&self, mut headers: HeaderMap) -> HeaderMap {
@@ -59,24 +57,25 @@ impl OAuthHttpClient {
         if headers.remove("x-api-key").is_some() {
             tracing::debug!("Removed x-api-key header in favor of Bearer auth");
         }
-        
+
         // Add our custom headers
         for (key, value) in self.extra_headers.iter() {
             headers.insert(key.clone(), value.clone());
         }
-        
+
         // Log all headers for debugging (mask sensitive values)
         for (name, value) in headers.iter() {
-            let value_str = if name.as_str().to_lowercase().contains("auth") 
-                || name.as_str().to_lowercase().contains("key") 
-                || name.as_str().to_lowercase().contains("token") {
+            let value_str = if name.as_str().to_lowercase().contains("auth")
+                || name.as_str().to_lowercase().contains("key")
+                || name.as_str().to_lowercase().contains("token")
+            {
                 "[REDACTED]"
             } else {
                 value.to_str().unwrap_or("[non-utf8]")
             };
             tracing::trace!("Header: {}: {}", name, value_str);
         }
-        
+
         headers
     }
 }
@@ -92,10 +91,10 @@ impl HttpClientExt for OAuthHttpClient {
     {
         let (mut parts, body) = req.into_parts();
         parts.headers = self.merge_headers(parts.headers);
-        
+
         // Convert body to bytes so we can log it
         let body_bytes: Bytes = body.into();
-        
+
         tracing::debug!(
             "OAuthHttpClient::send - {} {} (headers: {}, body: {} bytes)",
             parts.method,
@@ -103,15 +102,15 @@ impl HttpClientExt for OAuthHttpClient {
             parts.headers.len(),
             body_bytes.len()
         );
-        
+
         // Log the body content for debugging (first 2000 chars to avoid spam)
         if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
             let preview: String = body_str.chars().take(2000).collect();
             tracing::debug!("Request body preview: {}", preview);
         }
-        
+
         let req = Request::from_parts(parts, body_bytes);
-        
+
         // Delegate to inner client
         self.inner.send(req)
     }
@@ -126,14 +125,14 @@ impl HttpClientExt for OAuthHttpClient {
         let (mut parts, body) = req.into_parts();
         parts.headers = self.merge_headers(parts.headers);
         let req = Request::from_parts(parts, body);
-        
+
         tracing::debug!(
             "OAuthHttpClient::send_multipart - {} {} (headers: {})",
             req.method(),
             req.uri(),
             req.headers().len()
         );
-        
+
         self.inner.send_multipart(req)
     }
 
@@ -146,10 +145,10 @@ impl HttpClientExt for OAuthHttpClient {
     {
         let (mut parts, body) = req.into_parts();
         parts.headers = self.merge_headers(parts.headers);
-        
+
         // Convert body to bytes so we can log it
         let body_bytes: Bytes = body.into();
-        
+
         tracing::debug!(
             "OAuthHttpClient::send_streaming - {} {} (headers: {}, body: {} bytes)",
             parts.method,
@@ -157,15 +156,15 @@ impl HttpClientExt for OAuthHttpClient {
             parts.headers.len(),
             body_bytes.len()
         );
-        
+
         // Log the body content for debugging (first 2000 chars to avoid spam)
         if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
             let preview: String = body_str.chars().take(2000).collect();
             tracing::debug!("Streaming request body preview: {}", preview);
         }
-        
+
         let req = Request::from_parts(parts, body_bytes);
-        
+
         self.inner.send_streaming(req)
     }
 }
@@ -217,12 +216,12 @@ impl CodexHttpClient {
         if headers.remove("x-api-key").is_some() {
             tracing::debug!("Removed x-api-key header in favor of Bearer auth");
         }
-        
+
         // Add our custom headers
         for (key, value) in self.extra_headers.iter() {
             headers.insert(key.clone(), value.clone());
         }
-        
+
         headers
     }
 
@@ -240,20 +239,20 @@ impl CodexHttpClient {
             tracing::warn!("Codex: request body is not valid UTF-8");
             return body_bytes;
         };
-        
+
         // Log the original body for debugging
         tracing::debug!("Codex: ORIGINAL request body: {}", body_str);
-        
+
         let Ok(mut json) = serde_json::from_str::<Value>(body_str) else {
             tracing::warn!("Codex: request body is not valid JSON");
             return body_bytes;
         };
-        
+
         if let Some(obj) = json.as_object_mut() {
             // Log what fields are present
             let fields: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
             tracing::debug!("Codex: request has fields: {:?}", fields);
-            
+
             // Remove unsupported fields
             if obj.remove("max_output_tokens").is_some() {
                 tracing::debug!("Codex: removed unsupported max_output_tokens");
@@ -264,11 +263,11 @@ impl CodexHttpClient {
             if obj.remove("temperature").is_some() {
                 tracing::debug!("Codex: removed unsupported temperature");
             }
-            
+
             // Add required fields
             obj.insert("store".to_string(), Value::Bool(false));
             tracing::debug!("Codex: set store=false");
-            
+
             // If tools are present, disable parallel tool calls
             if obj.contains_key("tools") {
                 obj.insert("parallel_tool_calls".to_string(), Value::Bool(false));
@@ -280,48 +279,60 @@ impl CodexHttpClient {
             if obj.contains_key("instructions") {
                 tracing::debug!("Codex: overwriting existing instructions field");
             }
-            obj.insert("instructions".to_string(), Value::String(CODEX_INSTRUCTIONS.to_string()));
-            tracing::debug!("Codex: set instructions to official Codex prompt ({} chars)", CODEX_INSTRUCTIONS.len());
-            
+            obj.insert(
+                "instructions".to_string(),
+                Value::String(CODEX_INSTRUCTIONS.to_string()),
+            );
+            tracing::debug!(
+                "Codex: set instructions to official Codex prompt ({} chars)",
+                CODEX_INSTRUCTIONS.len()
+            );
+
             // Remove system messages from `input` array (Responses API format)
             // The Codex API uses the `instructions` field for system prompts, not input messages
             if let Some(Value::Array(input)) = obj.get_mut("input") {
                 let original_len = input.len();
                 input.retain(|msg| {
                     // Keep messages that don't have role=system
-                    if let Some(role) = msg.get("role").and_then(|v| v.as_str()) {
-                        if role == "system" {
-                            tracing::debug!("Codex: removing system message from input array");
-                            return false;
-                        }
+                    if let Some(role) = msg.get("role").and_then(|v| v.as_str())
+                        && role == "system"
+                    {
+                        tracing::debug!("Codex: removing system message from input array");
+                        return false;
                     }
                     true
                 });
                 let removed = original_len - input.len();
                 if removed > 0 {
-                    tracing::debug!("Codex: removed {} system message(s) from input array", removed);
+                    tracing::debug!(
+                        "Codex: removed {} system message(s) from input array",
+                        removed
+                    );
                 }
             }
-            
+
             // Also check `messages` array (Chat Completions API format - just in case)
             if let Some(Value::Array(messages)) = obj.get_mut("messages") {
                 let original_len = messages.len();
                 messages.retain(|msg| {
-                    if let Some(role) = msg.get("role").and_then(|v| v.as_str()) {
-                        if role == "system" {
-                            tracing::debug!("Codex: removing system message from messages array");
-                            return false;
-                        }
+                    if let Some(role) = msg.get("role").and_then(|v| v.as_str())
+                        && role == "system"
+                    {
+                        tracing::debug!("Codex: removing system message from messages array");
+                        return false;
                     }
                     true
                 });
                 let removed = original_len - messages.len();
                 if removed > 0 {
-                    tracing::debug!("Codex: removed {} system message(s) from messages array", removed);
+                    tracing::debug!(
+                        "Codex: removed {} system message(s) from messages array",
+                        removed
+                    );
                 }
             }
         }
-        
+
         // Re-serialize
         match serde_json::to_vec(&json) {
             Ok(new_body) => {
@@ -350,11 +361,11 @@ impl HttpClientExt for CodexHttpClient {
     {
         let (mut parts, body) = req.into_parts();
         parts.headers = self.merge_headers(parts.headers);
-        
+
         // Convert body to bytes and modify for Codex
         let body_bytes: Bytes = body.into();
         let body_bytes = self.modify_body_for_codex(body_bytes);
-        
+
         tracing::debug!(
             "CodexHttpClient::send - {} {} (headers: {}, body: {} bytes)",
             parts.method,
@@ -362,7 +373,7 @@ impl HttpClientExt for CodexHttpClient {
             parts.headers.len(),
             body_bytes.len()
         );
-        
+
         let req = Request::from_parts(parts, body_bytes);
         self.inner.send(req)
     }
@@ -377,14 +388,14 @@ impl HttpClientExt for CodexHttpClient {
         let (mut parts, body) = req.into_parts();
         parts.headers = self.merge_headers(parts.headers);
         let req = Request::from_parts(parts, body);
-        
+
         tracing::debug!(
             "CodexHttpClient::send_multipart - {} {} (headers: {})",
             req.method(),
             req.uri(),
             req.headers().len()
         );
-        
+
         self.inner.send_multipart(req)
     }
 
@@ -396,13 +407,13 @@ impl HttpClientExt for CodexHttpClient {
         T: Into<Bytes>,
     {
         let (mut parts, body) = req.into_parts();
-        
+
         // ===== AGGRESSIVE DEBUG LOGGING =====
         tracing::warn!("========================================");
         tracing::warn!("===== CODEX STREAMING REQUEST =====");
         tracing::warn!("========================================");
         tracing::warn!("URL: {} {}", parts.method, parts.uri);
-        
+
         // Log all headers
         tracing::warn!("--- HEADERS ({}) ---", parts.headers.len());
         for (name, value) in parts.headers.iter() {
@@ -413,39 +424,45 @@ impl HttpClientExt for CodexHttpClient {
             };
             tracing::warn!("  {}: {}", name, value_str);
         }
-        
+
         // Convert body to bytes BEFORE modification
         let body_bytes: Bytes = body.into();
-        
+
         // Log ORIGINAL body
         tracing::warn!("--- ORIGINAL BODY ({} bytes) ---", body_bytes.len());
         if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
             // Check if it has instructions field
             let has_instructions = body_str.contains("\"instructions\"");
-            tracing::warn!("Has 'instructions' field BEFORE modification: {}", has_instructions);
+            tracing::warn!(
+                "Has 'instructions' field BEFORE modification: {}",
+                has_instructions
+            );
             tracing::warn!("{}", body_str);
         } else {
             tracing::warn!("[Body is not UTF-8]");
         }
-        
+
         // Merge headers
         parts.headers = self.merge_headers(parts.headers);
-        
+
         // Modify body for Codex
         let body_bytes = self.modify_body_for_codex(body_bytes);
-        
+
         // Log MODIFIED body
         tracing::warn!("--- MODIFIED BODY ({} bytes) ---", body_bytes.len());
         if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
             // Check if it has instructions field
             let has_instructions = body_str.contains("\"instructions\"");
-            tracing::warn!("Has 'instructions' field AFTER modification: {}", has_instructions);
+            tracing::warn!(
+                "Has 'instructions' field AFTER modification: {}",
+                has_instructions
+            );
             tracing::warn!("{}", body_str);
         } else {
             tracing::warn!("[Body is not UTF-8]");
         }
         tracing::warn!("========================================");
-        
+
         let req = Request::from_parts(parts, body_bytes);
         let client = self.inner.clone();
         async move {

@@ -13,7 +13,7 @@
 //!   - `codex_mode: true`
 //!   - `parallel_tool_calls: false`
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use rig::client::CompletionClient;
 use rig::providers::openai;
@@ -64,14 +64,9 @@ impl ChatGptConfig {
 
     /// Create config from access token and id_token
     /// Extracts account_id from the JWT id_token
-    pub fn from_tokens(
-        access_token: impl Into<String>,
-        id_token: &str,
-    ) -> ProviderResult<Self> {
+    pub fn from_tokens(access_token: impl Into<String>, id_token: &str) -> ProviderResult<Self> {
         let account_id = extract_account_id_from_jwt(id_token).ok_or_else(|| {
-            OAuthProviderError::AuthError(
-                "Failed to extract account_id from id_token".to_string(),
-            )
+            OAuthProviderError::AuthError("Failed to extract account_id from id_token".to_string())
         })?;
 
         Ok(Self::new(access_token, account_id))
@@ -132,17 +127,14 @@ impl ChatGptOAuthClient {
     }
 
     /// Create a new ChatGPT OAuth client from access_token and id_token
-    pub fn from_tokens(
-        access_token: impl Into<String>,
-        id_token: &str,
-    ) -> ProviderResult<Self> {
+    pub fn from_tokens(access_token: impl Into<String>, id_token: &str) -> ProviderResult<Self> {
         Self::with_config(ChatGptConfig::from_tokens(access_token, id_token)?)
     }
 
     /// Create a new ChatGPT OAuth client with custom configuration
     pub fn with_config(config: ChatGptConfig) -> ProviderResult<Self> {
         let headers = build_chatgpt_headers(&config.access_token, &config.account_id)?;
-        
+
         // Use CodexHttpClient which modifies request bodies for Codex compatibility:
         // - Removes unsupported fields (max_output_tokens)
         // - Adds required fields (store: false)
@@ -258,8 +250,9 @@ fn build_chatgpt_headers(access_token: &str, account_id: &str) -> ProviderResult
     let conversation_id = Uuid::new_v4().to_string();
     headers.insert(
         HeaderName::from_static("conversation_id"),
-        HeaderValue::from_str(&conversation_id)
-            .map_err(|e| OAuthProviderError::ConfigError(format!("Invalid conversation_id: {}", e)))?,
+        HeaderValue::from_str(&conversation_id).map_err(|e| {
+            OAuthProviderError::ConfigError(format!("Invalid conversation_id: {}", e))
+        })?,
     );
 
     // Session ID header (can be same as conversation_id for now)
@@ -282,8 +275,11 @@ fn build_chatgpt_headers(access_token: &str, account_id: &str) -> ProviderResult
             .unwrap_or_else(|_| HeaderValue::from_static("codex_cli_rs/0.75.0 (Linux; x86_64)")),
     );
 
-    tracing::debug!("Built OAuth headers for ChatGPT (token: {}... chars, conversation_id: {})",
-        std::cmp::min(access_token.len(), 8), conversation_id);
+    tracing::debug!(
+        "Built OAuth headers for ChatGPT (token: {}... chars, conversation_id: {})",
+        std::cmp::min(access_token.len(), 8),
+        conversation_id
+    );
 
     Ok(headers)
 }

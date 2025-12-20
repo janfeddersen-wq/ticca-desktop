@@ -12,15 +12,19 @@ pub struct ImageAttachment {
     /// Raw image bytes (PNG format)
     pub data: Arc<Vec<u8>>,
     /// Original width
+    #[allow(dead_code)]
     pub width: u32,
     /// Original height
+    #[allow(dead_code)]
     pub height: u32,
     /// Optional filename (for dropped files)
+    #[allow(dead_code)]
     pub filename: Option<String>,
 }
 
 /// Main application message type
 #[derive(Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 pub enum Message {
     // Chat messages
     InputChanged(String),
@@ -69,6 +73,7 @@ pub enum Message {
     TodoEvent(TodoListEvent),
 
     /// Tool result received
+    #[allow(dead_code)]
     ToolResult {
         name: String,
         result: String,
@@ -170,6 +175,7 @@ pub enum Message {
 
     // Model selection
     RefreshModels,
+    #[allow(dead_code)]
     RefreshModelsForProvider(OAuthProvider),
     ModelsLoaded(Result<Vec<String>, String>),
     SetDefaultModel(String),

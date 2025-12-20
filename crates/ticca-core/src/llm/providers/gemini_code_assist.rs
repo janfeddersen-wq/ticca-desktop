@@ -9,12 +9,14 @@ use async_stream::stream;
 use futures::{Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::time::sleep;
 use uuid::Uuid;
 
 use super::common::{OAuthProviderError, ProviderResult};
-use rig::completion::{self, CompletionError, CompletionRequest, CompletionResponse, GetTokenUsage};
+use rig::completion::{
+    self, CompletionError, CompletionRequest, CompletionResponse, GetTokenUsage,
+};
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, Content, ContentCandidate, FunctionCallingMode, GenerateContentRequest,
     GenerateContentResponse, Part, PartKind, Role, Tool, ToolConfig,
@@ -63,7 +65,6 @@ struct CodeAssistResponseEnvelope<T> {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodeAssistStreamResponse {
     candidates: Vec<ContentCandidate>,
-    model_version: Option<String>,
     usage_metadata: Option<CodeAssistPartialUsage>,
 }
 
@@ -118,22 +119,24 @@ impl GetTokenUsage for CodeAssistStreamingCompletionResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct LoadCodeAssistResponse {
     #[serde(default)]
-    currentTier: Option<GeminiUserTier>,
+    current_tier: Option<GeminiUserTier>,
     #[serde(default)]
-    allowedTiers: Option<Vec<GeminiUserTier>>,
+    allowed_tiers: Option<Vec<GeminiUserTier>>,
     #[serde(default)]
-    cloudaicompanionProject: Option<String>,
+    cloudaicompanion_project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct GeminiUserTier {
     id: String,
     #[serde(default)]
-    userDefinedCloudaicompanionProject: Option<bool>,
+    user_defined_cloudaicompanion_project: Option<bool>,
     #[serde(default)]
-    isDefault: Option<bool>,
+    is_default: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,9 +148,10 @@ struct LongRunningOperationResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct OnboardUserResponse {
     #[serde(default)]
-    cloudaicompanionProject: Option<ProjectRef>,
+    cloudaicompanion_project: Option<ProjectRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,12 +160,13 @@ struct ProjectRef {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ClientMetadata<'a> {
-    ideType: &'a str,
+    ide_type: &'a str,
     platform: &'a str,
-    pluginType: &'a str,
+    plugin_type: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    duetProject: Option<&'a str>,
+    duet_project: Option<&'a str>,
 }
 
 #[derive(Clone, Debug)]
@@ -301,19 +306,20 @@ impl GeminiCodeAssistClient {
         let project_id = std::env::var("GOOGLE_CLOUD_PROJECT").ok();
         let project_id_clone = project_id.clone();
         let metadata = ClientMetadata {
-            ideType: "IDE_UNSPECIFIED",
+            ide_type: "IDE_UNSPECIFIED",
             platform: "PLATFORM_UNSPECIFIED",
-            pluginType: "GEMINI",
-            duetProject: project_id.as_deref(),
+            plugin_type: "GEMINI",
+            duet_project: project_id.as_deref(),
         };
         let load_req = json!({
             "cloudaicompanionProject": project_id,
             "metadata": metadata,
         });
-        let load_res: LoadCodeAssistResponse = self.request_post("loadCodeAssist", &load_req).await?;
+        let load_res: LoadCodeAssistResponse =
+            self.request_post("loadCodeAssist", &load_req).await?;
 
-        if load_res.currentTier.is_some() {
-            if let Some(project) = load_res.cloudaicompanionProject.clone().or(project_id) {
+        if load_res.current_tier.is_some() {
+            if let Some(project) = load_res.cloudaicompanion_project.clone().or(project_id) {
                 return Ok(project);
             }
 
@@ -327,14 +333,24 @@ impl GeminiCodeAssistClient {
         }
 
         let default_tier = load_res
-            .allowedTiers
+            .allowed_tiers
             .as_ref()
-            .and_then(|tiers| tiers.iter().find(|tier| tier.isDefault.unwrap_or(false)))
-            .or_else(|| load_res.allowedTiers.as_ref().and_then(|tiers| tiers.first()))
+            .and_then(|tiers| tiers.iter().find(|tier| tier.is_default.unwrap_or(false)))
+            .or_else(|| {
+                load_res
+                    .allowed_tiers
+                    .as_ref()
+                    .and_then(|tiers| tiers.first())
+            })
             .cloned()
-            .ok_or_else(|| OAuthProviderError::ConfigError("No available Gemini tiers".to_string()))?;
+            .ok_or_else(|| {
+                OAuthProviderError::ConfigError("No available Gemini tiers".to_string())
+            })?;
 
-        if default_tier.userDefinedCloudaicompanionProject.unwrap_or(false) && project_id.is_none()
+        if default_tier
+            .user_defined_cloudaicompanion_project
+            .unwrap_or(false)
+            && project_id.is_none()
         {
             return Err(OAuthProviderError::ConfigError(
                 "Gemini tier requires GOOGLE_CLOUD_PROJECT".to_string(),
@@ -353,7 +369,7 @@ impl GeminiCodeAssistClient {
             if onboard_res.done.unwrap_or(false) {
                 if let Some(project) = onboard_res
                     .response
-                    .and_then(|r| r.cloudaicompanionProject)
+                    .and_then(|r| r.cloudaicompanion_project)
                     .map(|p| p.id)
                     .or(project_id)
                 {
@@ -591,7 +607,10 @@ impl rig::completion::CompletionModel for GeminiCodeAssistCompletionModel {
             attempt += 1;
             match self.client.generate_content(&self.model, &body).await {
                 Ok(response) => break response,
-                Err(OAuthProviderError::ApiError { status: 429, message }) => {
+                Err(OAuthProviderError::ApiError {
+                    status: 429,
+                    message,
+                }) => {
                     if attempt >= CODE_ASSIST_MAX_RETRIES {
                         return Err(CompletionError::ProviderError(format!(
                             "Rate limited after {} attempts: {}",
@@ -711,7 +730,9 @@ impl rig::completion::CompletionModel for GeminiCodeAssistCompletionModel {
             ));
         };
 
-        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(stream)))
+        Ok(streaming::StreamingCompletionResponse::stream(Box::pin(
+            stream,
+        )))
     }
 }
 

@@ -2,16 +2,18 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use iced::Size;
-use iced_term::settings::{BackendSettings, Settings};
 use iced_term::Terminal;
+use iced_term::settings::{BackendSettings, Settings};
 
 use ticca_core::tools::{ProcessKind, ProcessSnapshot, SystemExecStore};
 
 pub struct TerminalInstance {
+    #[allow(dead_code)]
     pub process_id: String,
+    #[allow(dead_code)]
     pub kind: ProcessKind,
     pub started_at: Instant,
     pub terminal_id: u64,
@@ -58,14 +60,9 @@ impl SystemExecutionsState {
         let base = now.format("%Y%m%d_%H%M%S").to_string();
         let ms = (ts_ms % 1000) as u32;
         if self.last_ts_bump == 0 {
-            format!("process_{}_{}", base, format!("{:03}", ms))
+            format!("process_{}_{:03}", base, ms)
         } else {
-            format!(
-                "process_{}_{}_{:02}",
-                base,
-                format!("{:03}", ms),
-                self.last_ts_bump
-            )
+            format!("process_{}_{:03}_{:02}", base, ms, self.last_ts_bump)
         }
     }
 
@@ -79,7 +76,11 @@ impl SystemExecutionsState {
         self.create_terminal(process_id, ProcessKind::Llm, program, args, cwd, true)
     }
 
-    pub fn create_user_terminal(&mut self, name: String, cwd: Option<PathBuf>) -> Result<(), String> {
+    pub fn create_user_terminal(
+        &mut self,
+        name: String,
+        cwd: Option<PathBuf>,
+    ) -> Result<(), String> {
         let trimmed = name.trim();
         if trimmed.is_empty() {
             return Err("Terminal name cannot be empty".to_string());
@@ -88,7 +89,14 @@ impl SystemExecutionsState {
             return Err(format!("Terminal name already exists: {}", trimmed));
         }
         let (program, args) = platform_default_shell();
-        self.create_terminal(trimmed.to_string(), ProcessKind::User, program, args, cwd, false)
+        self.create_terminal(
+            trimmed.to_string(),
+            ProcessKind::User,
+            program,
+            args,
+            cwd,
+            false,
+        )
     }
 
     fn create_terminal(
@@ -169,6 +177,7 @@ impl SystemExecutionsState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn update_output_from_terminal(&mut self, process_id: &str) {
         let Some(instance) = self.terminals.get_mut(process_id) else {
             return;

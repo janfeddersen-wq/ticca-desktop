@@ -16,6 +16,7 @@ pub struct AgentNode {
 pub struct AgentEdge {
     pub from: usize,
     pub to: usize,
+    #[allow(dead_code)]
     pub prompt: String,
 }
 
@@ -56,7 +57,11 @@ impl AgentCallGraph {
         self.ensure_node(event.child_id, event.child);
 
         let prompt_preview: String = event.prompt.chars().take(120).collect();
-        let prompt_suffix = if event.prompt.chars().count() > 120 { "..." } else { "" };
+        let prompt_suffix = if event.prompt.chars().count() > 120 {
+            "..."
+        } else {
+            ""
+        };
         let prompt = format!("{}{}", prompt_preview, prompt_suffix);
 
         self.edges.push(AgentEdge {

@@ -6,6 +6,8 @@
 //! Uses custom OAuth providers from `ticca_core::llm::providers` that wrap upstream rig
 //! with OAuth authentication support.
 
+#![allow(clippy::items_after_test_module)]
+
 use crate::chat_message::ChatMessage;
 use crate::messages::Message;
 
@@ -28,7 +30,7 @@ use rig::agent::AgentBuilder;
 
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
@@ -162,6 +164,7 @@ fn prepend_system_to_first_user_message(
 }
 
 #[cfg(test)]
+#[allow(clippy::manual_async_fn)]
 mod tests {
     use super::*;
     use futures::stream;
@@ -290,6 +293,7 @@ mod tests {
 /// Returns a Stream that yields Message events for each chunk.
 ///
 /// `image_data` is a list of (media_type, base64_data) tuples for attached images
+#[allow(clippy::too_many_arguments)]
 pub fn run_rig_agent_stream(
     system_prompt: String,
     user_message: String,
@@ -451,16 +455,16 @@ fn resolve_invocation_model(
     parent_context: &ToolContext,
 ) -> Result<String, String> {
     if let Ok(db) = ConfigDatabase::open() {
-        if let Ok(Some(model)) = db.get_agent_pinned_model(agent_type.as_str()) {
-            if !model.trim().is_empty() {
-                return Ok(model);
-            }
+        if let Ok(Some(model)) = db.get_agent_pinned_model(agent_type.as_str())
+            && !model.trim().is_empty()
+        {
+            return Ok(model);
         }
 
-        if let Ok(Some(setting)) = db.get_setting(setting_keys::DEFAULT_MODEL) {
-            if !setting.value.trim().is_empty() {
-                return Ok(setting.value);
-            }
+        if let Ok(Some(setting)) = db.get_setting(setting_keys::DEFAULT_MODEL)
+            && !setting.value.trim().is_empty()
+        {
+            return Ok(setting.value);
         }
     }
 
@@ -470,7 +474,7 @@ fn resolve_invocation_model(
         .ok_or_else(|| "No model configured for invoke_agent".to_string())
 }
 
-async fn append_agents_md(system_prompt: &str, working_directory: &PathBuf) -> String {
+async fn append_agents_md(system_prompt: &str, working_directory: &Path) -> String {
     let agents_path = working_directory.join("AGENTS.md");
     match tokio::fs::read_to_string(&agents_path).await {
         Ok(contents) if !contents.trim().is_empty() => {
@@ -535,7 +539,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
         request.prompt
     );
     let user_msg = build_user_message(&invoke_prompt, Vec::new());
-    let mut history = vec![user_msg];
+    let history = vec![user_msg];
 
     let result = match ProviderRegistry::resolve_provider(&model_name) {
         ProviderId::ChatGpt => {
@@ -768,10 +772,10 @@ where
                     StreamedAssistantContent::Reasoning(reasoning),
                 )) => {
                     let text = reasoning.reasoning.join("");
-                    if !text.is_empty() {
-                        if let Some(tx) = &parent_context.agent_stream_tx {
-                            let _ = tx.send(AgentStreamEvent::Reasoning { node_id, text });
-                        }
+                    if !text.is_empty()
+                        && let Some(tx) = &parent_context.agent_stream_tx
+                    {
+                        let _ = tx.send(AgentStreamEvent::Reasoning { node_id, text });
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
@@ -828,6 +832,7 @@ where
     Ok(collected_all)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_stream(
     event_tx: mpsc::UnboundedSender<Message>,
     tool_context: Arc<ToolContext>,
@@ -842,7 +847,7 @@ async fn run_agent_stream(
     let mut stats_window_chars: usize = 0;
     const STATS_WINDOW_MIN_MS: u64 = 200;
 
-    let mut emit_stream_stats =
+    let emit_stream_stats =
         |stats_window_chars: &mut usize, stats_window_start: &mut Instant| -> Option<Message> {
             if *stats_window_chars == 0 {
                 return None;

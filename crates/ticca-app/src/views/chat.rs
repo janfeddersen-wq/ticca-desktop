@@ -2,7 +2,10 @@
 //!
 //! Renders the main chat interface including header, messages, and input area.
 
-use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input, markdown, Column, Space};
+use iced::widget::{
+    Column, Space, button, column, container, markdown, row, scrollable, text, text_editor,
+    text_input,
+};
 use iced::{Element, Length, widget};
 
 use std::collections::{HashMap, HashSet};
@@ -13,8 +16,8 @@ use ticca_core::session::MessageRole;
 
 use crate::chat_message::ChatMessage;
 use crate::material_icons::{icon, icons};
-use crate::messages::{Message, ImageAttachment};
-use crate::theme::{styles, AppTheme};
+use crate::messages::{ImageAttachment, Message};
+use crate::theme::{AppTheme, styles};
 use crate::widgets::spinner;
 
 /// ID for the chat messages scrollable
@@ -26,6 +29,7 @@ fn horizontal_space() -> Space {
 }
 
 /// Render the chat view
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     current_agent: AgentType,
     working_directory: &Path,
@@ -51,38 +55,33 @@ pub fn view<'a>(
         row![
             // Agent selector tabs
             row![
+                button(row![icon(icons::CODE).size(14), text(" Coding").size(14),].spacing(4))
+                    .on_press(Message::SwitchAgent(AgentType::Coding))
+                    .style(move |theme, status| styles::tab_button(theme, status, is_coding))
+                    .padding([8, 12]),
                 button(
-                    row![
-                        icon(icons::CODE).size(14),
-                        text(" Coding").size(14),
-                    ]
-                    .spacing(4)
-                )
-                .on_press(Message::SwitchAgent(AgentType::Coding))
-                .style(move |theme, status| styles::tab_button(theme, status, is_coding))
-                .padding([8, 12]),
-                button(
-                    row![
-                        icon(icons::CHECKLIST).size(14),
-                        text(" Planning").size(14),
-                    ]
-                    .spacing(4)
+                    row![icon(icons::CHECKLIST).size(14), text(" Planning").size(14),].spacing(4)
                 )
                 .on_press(Message::SwitchAgent(AgentType::Planning))
                 .style(move |theme, status| styles::tab_button(theme, status, is_planning))
                 .padding([8, 12]),
             ]
             .spacing(8),
-
             // Spacer
             horizontal_space(),
-
             // Actions
             row![
-                button(icon(if flow_panel_visible { icons::CLOSE } else { icons::MENU }).size(18))
-                    .on_press(Message::ToggleFlowPanel)
-                    .style(styles::icon_button)
-                    .padding(8),
+                button(
+                    icon(if flow_panel_visible {
+                        icons::CLOSE
+                    } else {
+                        icons::MENU
+                    })
+                    .size(18)
+                )
+                .on_press(Message::ToggleFlowPanel)
+                .style(styles::icon_button)
+                .padding(8),
                 button(icon(icons::CONTRAST).size(18))
                     .on_press(Message::ThemeToggle)
                     .style(styles::icon_button)
@@ -99,7 +98,7 @@ pub fn view<'a>(
             .spacing(4),
         ]
         .spacing(10)
-        .align_y(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center),
     )
     .padding(10)
     .style(styles::header_container);
@@ -117,7 +116,7 @@ pub fn view<'a>(
                 .padding([4, 8]),
         ]
         .spacing(8)
-        .align_y(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center),
     )
     .padding([6, 12])
     .style(styles::dir_bar_container);
@@ -132,7 +131,7 @@ pub fn view<'a>(
     let messages_view: Element<Message> = scrollable(
         Column::with_children(message_widgets)
             .spacing(12)
-            .padding(20)
+            .padding(20),
     )
     .id(widget::Id::new(CHAT_SCROLLABLE_ID))
     .on_scroll(Message::ChatScrolled)
@@ -143,8 +142,8 @@ pub fn view<'a>(
     let attachment_preview = build_attachment_preview(pending_attachments);
 
     // Check if we can send (has text or attachments)
-    let can_send = !is_streaming
-        && (!input_value.trim().is_empty() || !pending_attachments.is_empty());
+    let can_send =
+        !is_streaming && (!input_value.trim().is_empty() || !pending_attachments.is_empty());
 
     // Streaming indicator - shows LLM output rate or waiting animation
     let streaming_indicator: Option<Element<'_, Message>> = if is_streaming {
@@ -160,11 +159,11 @@ pub fn view<'a>(
                         text(format!("{}s", secs_since_bytes)).size(12),
                     ]
                     .spacing(6)
-                    .align_y(iced::Alignment::Center)
+                    .align_y(iced::Alignment::Center),
                 )
                 .padding([4, 8])
                 .style(styles::streaming_indicator_container)
-                .into()
+                .into(),
             )
         } else {
             // Show chars/s rate when data is flowing
@@ -186,16 +185,13 @@ pub fn view<'a>(
 
             Some(
                 container(
-                    row![
-                        icon(pulse_icon).size(12),
-                        text(display_text).size(12),
-                    ]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center)
+                    row![icon(pulse_icon).size(12), text(display_text).size(12),]
+                        .spacing(6)
+                        .align_y(iced::Alignment::Center),
                 )
                 .padding([4, 8])
                 .style(styles::streaming_indicator_container)
-                .into()
+                .into(),
             )
         }
     } else {
@@ -231,16 +227,14 @@ pub fn view<'a>(
                 .style(styles::text_input_style)
                 .padding(12)
                 .size(14)
-                .width(Length::Fill)
+                .width(Length::Fill),
         )
         .push(
-            button(
-                if is_streaming {
-                    icon(icons::CANCEL).size(20)
-                } else {
-                    icon(icons::ARROW_UPWARD).size(20)
-                }
-            )
+            button(if is_streaming {
+                icon(icons::CANCEL).size(20)
+            } else {
+                icon(icons::ARROW_UPWARD).size(20)
+            })
             .on_press_maybe(if is_streaming {
                 Some(Message::StopStreaming)
             } else if can_send {
@@ -249,7 +243,7 @@ pub fn view<'a>(
                 None
             })
             .style(styles::send_button)
-            .padding([8, 8])
+            .padding([8, 8]),
         );
 
     let input_content: Element<'_, Message> = if let Some(preview) = attachment_preview {
@@ -258,25 +252,21 @@ pub fn view<'a>(
         input_row.into()
     };
     let input = container(input_content)
-    .padding(12)
-    .style(styles::input_area_container);
+        .padding(12)
+        .style(styles::input_area_container);
 
-    let chat_column: Element<'_, Message> = container(
-        column![
-            header,
-            dir_bar,
-            messages_view,
-            input,
-        ]
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    let chat_column: Element<'_, Message> =
+        container(column![header, dir_bar, messages_view, input,])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
     chat_column
 }
 
 /// Build the attachment preview bar
-fn build_attachment_preview(pending_attachments: &[ImageAttachment]) -> Option<Element<'_, Message>> {
+fn build_attachment_preview(
+    pending_attachments: &[ImageAttachment],
+) -> Option<Element<'_, Message>> {
     if pending_attachments.is_empty() {
         return None;
     }
@@ -297,8 +287,7 @@ fn build_attachment_preview(pending_attachments: &[ImageAttachment]) -> Option<E
                 column![
                     // Thumbnail with remove button overlay
                     iced::widget::stack![
-                        container(thumbnail)
-                            .style(styles::image_thumbnail_container),
+                        container(thumbnail).style(styles::image_thumbnail_container),
                         container(
                             button(icon(icons::CLOSE).size(12))
                                 .on_press(Message::RemoveAttachment(idx))
@@ -314,7 +303,7 @@ fn build_attachment_preview(pending_attachments: &[ImageAttachment]) -> Option<E
                     text(format!("{}KB", size_kb)).size(10),
                 ]
                 .spacing(2)
-                .align_x(iced::Alignment::Center)
+                .align_x(iced::Alignment::Center),
             )
             .padding(4)
             .into()
@@ -328,12 +317,12 @@ fn build_attachment_preview(pending_attachments: &[ImageAttachment]) -> Option<E
                 iced::widget::Row::with_children(previews).spacing(8),
             ]
             .spacing(8)
-            .align_y(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center),
         )
         .padding([8, 12])
         .width(Length::Fill)
         .style(styles::attachment_bar_container)
-        .into()
+        .into(),
     )
 }
 
@@ -358,17 +347,16 @@ fn render_message<'a>(
     let label = msg.author_label.as_deref().unwrap_or(default_label);
 
     let content: Element<Message> = if msg.is_streaming && msg.content.is_empty() {
-        row![
-            icon(icons::PENDING).size(16),
-            text(" Thinking...").size(14),
-        ]
-        .spacing(6)
-        .into()
+        row![icon(icons::PENDING).size(16), text(" Thinking...").size(14),]
+            .spacing(6)
+            .into()
     } else if msg.is_streaming {
         // Render markdown while streaming
-        markdown::view(&msg.parsed_items, markdown::Settings::with_text_size(14, theme.to_iced_theme()))
-            .map(Message::LinkClicked)
-            .into()
+        markdown::view(
+            &msg.parsed_items,
+            markdown::Settings::with_text_size(14, theme.to_iced_theme()),
+        )
+        .map(Message::LinkClicked)
     } else if is_raw_view {
         // Raw view: show selectable plain text
         if let Some(editor_content) = raw_view_editors.get(&index) {
@@ -382,13 +370,19 @@ fn render_message<'a>(
         }
     } else {
         // Render markdown for completed messages
-        markdown::view(&msg.parsed_items, markdown::Settings::with_text_size(14, theme.to_iced_theme()))
-            .map(Message::LinkClicked)
-            .into()
+        markdown::view(
+            &msg.parsed_items,
+            markdown::Settings::with_text_size(14, theme.to_iced_theme()),
+        )
+        .map(Message::LinkClicked)
     };
 
     // Toggle icon: CODE for raw view, DESCRIPTION for markdown view
-    let toggle_icon = if is_raw_view { icons::DESCRIPTION } else { icons::CODE };
+    let toggle_icon = if is_raw_view {
+        icons::DESCRIPTION
+    } else {
+        icons::CODE
+    };
 
     // Header row with label, toggle button, and copy button
     let header = row![
@@ -415,17 +409,10 @@ fn render_message<'a>(
     if let Some(ref reasoning) = msg.reasoning {
         let reasoning_content = container(
             column![
-                row![
-                    icon(icons::PSYCHOLOGY).size(14),
-                    text(" Thinking").size(12),
-                ]
-                .spacing(4),
-                container(
-                    text(reasoning).size(12)
-                )
-                .padding([4, 8])
+                row![icon(icons::PSYCHOLOGY).size(14), text(" Thinking").size(12),].spacing(4),
+                container(text(reasoning).size(12)).padding([4, 8])
             ]
-            .spacing(4)
+            .spacing(4),
         )
         .padding(8)
         .width(Length::Fill)

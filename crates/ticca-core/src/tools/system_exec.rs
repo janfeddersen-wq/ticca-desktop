@@ -46,15 +46,9 @@ pub enum SystemExecRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SystemExecResponse {
-    Started {
-        process_id: String,
-    },
-    Killed {
-        process_id: String,
-    },
-    Error {
-        message: String,
-    },
+    Started { process_id: String },
+    Killed { process_id: String },
+    Error { message: String },
 }
 
 #[derive(Default)]
@@ -84,7 +78,11 @@ impl SystemExecStore {
         Self::default()
     }
 
-    pub fn register_pending(&self, request_id: u64, responder: oneshot::Sender<SystemExecResponse>) {
+    pub fn register_pending(
+        &self,
+        request_id: u64,
+        responder: oneshot::Sender<SystemExecResponse>,
+    ) {
         let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
         inner.pending.insert(request_id, responder);
     }

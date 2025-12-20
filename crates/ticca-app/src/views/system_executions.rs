@@ -1,6 +1,6 @@
 //! System Executions sidebar panel.
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Color, Element, Length};
 
 use crate::material_icons::{icon, icons};
@@ -8,17 +8,16 @@ use crate::messages::Message;
 use crate::system_executions::SystemExecutionsState;
 use crate::theme::{AppTheme, styles};
 
-pub fn contents<'a>(
-    state: &'a SystemExecutionsState,
-    theme: AppTheme,
-) -> Element<'a, Message> {
+pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Element<'a, Message> {
     let _ = theme;
 
     let error_banner: Element<'a, Message> = if let Some(err) = &state.ui_error {
         container(
-            text(err).size(12).style(|_theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(Color::from_rgb8(200, 60, 60)),
-            }),
+            text(err)
+                .size(12)
+                .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb8(200, 60, 60)),
+                }),
         )
         .padding([6, 8])
         .style(styles::card_container)
@@ -33,16 +32,13 @@ pub fn contents<'a>(
                 .on_input(Message::SystemExecNewTerminalNameChanged)
                 .width(Length::Fill),
             button(
-                row![
-                    icon(icons::ADD).size(14),
-                    text("New Terminal").size(12),
-                ]
-                .spacing(6)
-                .align_y(iced::Alignment::Center),
+                row![icon(icons::ADD).size(14), text("New Terminal").size(12),]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center),
             )
-                .on_press(Message::SystemExecCreateUserTerminal)
-                .style(styles::secondary_button)
-                .padding([6, 10]),
+            .on_press(Message::SystemExecCreateUserTerminal)
+            .style(styles::secondary_button)
+            .padding([6, 10]),
         ]
         .spacing(10)
         .align_y(iced::Alignment::Center),
@@ -73,8 +69,7 @@ pub fn contents<'a>(
         .align_y(iced::Alignment::Center);
 
         let terminal = container(
-            iced_term::TerminalView::show(&instance.terminal)
-                .map(Message::SystemExecTerminalEvent),
+            iced_term::TerminalView::show(&instance.terminal).map(Message::SystemExecTerminalEvent),
         )
         .width(Length::Fill)
         .height(Length::Fixed(220.0));

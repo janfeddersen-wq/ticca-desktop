@@ -14,7 +14,7 @@ pub fn run_config_migrations(conn: &Connection) -> Result<()> {
         )",
         [],
     )?;
-    
+
     // Create models table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS models (
@@ -29,7 +29,7 @@ pub fn run_config_migrations(conn: &Connection) -> Result<()> {
         )",
         [],
     )?;
-    
+
     // Create oauth_tokens table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS oauth_tokens (
@@ -75,21 +75,24 @@ pub fn run_config_migrations(conn: &Connection) -> Result<()> {
     )?;
 
     // Best-effort migrations for new columns
-    let _ = conn.execute("ALTER TABLE oauth_accounts ADD COLUMN priority INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE oauth_accounts ADD COLUMN last_used_at TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE oauth_accounts ADD COLUMN priority INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE oauth_accounts ADD COLUMN last_used_at TEXT",
+        [],
+    );
 
     // Clean up legacy migrated placeholder accounts
-    conn.execute(
-        "DELETE FROM oauth_accounts WHERE label = 'Migrated'",
-        [],
-    )?;
-    
+    conn.execute("DELETE FROM oauth_accounts WHERE label = 'Migrated'", [])?;
+
     // Insert default settings if they don't exist
     conn.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
         ["theme", "dark"],
     )?;
-    
+
     conn.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
         ["allow_recursion", "true"],
@@ -99,6 +102,6 @@ pub fn run_config_migrations(conn: &Connection) -> Result<()> {
         "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
         ["yolo_mode", "true"],
     )?;
-    
+
     Ok(())
 }

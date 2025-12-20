@@ -28,12 +28,12 @@ use crate::image_handler;
 use crate::llm_stream;
 use crate::messages::SettingsTab;
 use crate::messages::{ImageAttachment, Message, RightSidebarTab};
+use crate::system_executions::SystemExecutionsState;
 use crate::theme::AppTheme;
 use crate::views::chat::CHAT_SCROLLABLE_ID;
 use crate::views::config::ProviderAuthStatus;
-use crate::system_executions::SystemExecutionsState;
-use ticca_core::tools::{SystemExecRequest, SystemExecResponse, SystemExecStore};
 use ticca_core::tools::TodoListState;
+use ticca_core::tools::{SystemExecRequest, SystemExecResponse, SystemExecStore};
 
 use tokio::sync::mpsc;
 
@@ -117,10 +117,12 @@ fn terminal_backend_stream(
             match ev {
                 Some(ev) => {
                     let _ = output
-                        .send(Message::SystemExecTerminalEvent(iced_term::Event::BackendCall(
-                            terminal_id,
-                            iced_term::backend::Command::ProcessAlacrittyEvent(ev),
-                        )))
+                        .send(Message::SystemExecTerminalEvent(
+                            iced_term::Event::BackendCall(
+                                terminal_id,
+                                iced_term::backend::Command::ProcessAlacrittyEvent(ev),
+                            ),
+                        ))
                         .await;
                 }
                 None => break,
@@ -190,7 +192,8 @@ struct ChatState {
     todo_lists: HashMap<usize, TodoListState>,
     system_exec: SystemExecutionsState,
     system_exec_request_tx: mpsc::UnboundedSender<SystemExecRequest>,
-    system_exec_request_rx: std::sync::Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<SystemExecRequest>>>,
+    system_exec_request_rx:
+        std::sync::Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<SystemExecRequest>>>,
 }
 
 impl ChatState {
@@ -527,29 +530,29 @@ impl TiccaApp {
             }
 
             Message::StreamChunk(chunk) => {
-                if let Some(last) = self.chat.messages.last_mut() {
-                    if last.is_streaming {
-                        self.chat.last_bytes_time = Some(std::time::Instant::now());
-                        if last.last_was_tool_call && !chunk.trim().is_empty() {
-                            last.content.push_str("\n\n💡 ");
-                            last.last_was_tool_call = false;
-                        }
-                        last.content.push_str(&chunk);
-                        last.update_parsed_items();
+                if let Some(last) = self.chat.messages.last_mut()
+                    && last.is_streaming
+                {
+                    self.chat.last_bytes_time = Some(std::time::Instant::now());
+                    if last.last_was_tool_call && !chunk.trim().is_empty() {
+                        last.content.push_str("\n\n💡 ");
+                        last.last_was_tool_call = false;
                     }
+                    last.content.push_str(&chunk);
+                    last.update_parsed_items();
                 }
                 self.push_scroll_if_needed(&mut commands);
             }
 
             Message::Reasoning(reasoning) => {
-                if let Some(last) = self.chat.messages.last_mut() {
-                    if last.is_streaming {
-                        self.chat.last_bytes_time = Some(std::time::Instant::now());
-                        if let Some(ref mut existing) = last.reasoning {
-                            existing.push_str(&reasoning);
-                        } else {
-                            last.reasoning = Some(reasoning);
-                        }
+                if let Some(last) = self.chat.messages.last_mut()
+                    && last.is_streaming
+                {
+                    self.chat.last_bytes_time = Some(std::time::Instant::now());
+                    if let Some(ref mut existing) = last.reasoning {
+                        existing.push_str(&reasoning);
+                    } else {
+                        last.reasoning = Some(reasoning);
                     }
                 }
                 self.push_scroll_if_needed(&mut commands);
@@ -608,11 +611,11 @@ impl TiccaApp {
                 self.chat.last_bytes_time = None;
                 self.chat.spinner_frame = 0;
 
-                if let Some(last) = self.chat.messages.last_mut() {
-                    if last.is_streaming {
-                        last.is_streaming = false;
-                        last.update_parsed_items();
-                    }
+                if let Some(last) = self.chat.messages.last_mut()
+                    && last.is_streaming
+                {
+                    last.is_streaming = false;
+                    last.update_parsed_items();
                 }
                 self.save_current_session();
             }
@@ -630,11 +633,11 @@ impl TiccaApp {
                 self.chat.last_bytes_time = None;
                 self.chat.spinner_frame = 0;
 
-                if let Some(last) = self.chat.messages.last_mut() {
-                    if last.is_streaming {
-                        last.content = format!("❌ Error: {}", error);
-                        last.is_streaming = false;
-                    }
+                if let Some(last) = self.chat.messages.last_mut()
+                    && last.is_streaming
+                {
+                    last.content = format!("❌ Error: {}", error);
+                    last.is_streaming = false;
                 }
             }
 
@@ -651,15 +654,15 @@ impl TiccaApp {
                 self.chat.last_bytes_time = None;
                 self.chat.spinner_frame = 0;
 
-                if let Some(last) = self.chat.messages.last_mut() {
-                    if last.is_streaming {
-                        if !last.content.trim().is_empty() {
-                            last.content.push_str("\n\n");
-                        }
-                        last.content.push_str("[Stopped by user]");
-                        last.is_streaming = false;
-                        last.update_parsed_items();
+                if let Some(last) = self.chat.messages.last_mut()
+                    && last.is_streaming
+                {
+                    if !last.content.trim().is_empty() {
+                        last.content.push_str("\n\n");
                     }
+                    last.content.push_str("[Stopped by user]");
+                    last.is_streaming = false;
+                    last.update_parsed_items();
                 }
                 self.save_current_session();
             }
@@ -713,15 +716,13 @@ impl TiccaApp {
                     if let Some((_state, remaining)) = self.chat.panes.close(flow_pane) {
                         self.chat.chat_pane = remaining;
                     }
-                } else {
-                    if let Some((new_pane, split)) = self.chat.panes.split(
-                        iced::widget::pane_grid::Axis::Vertical,
-                        self.chat.chat_pane,
-                        ChatPane::Flow,
-                    ) {
-                        self.chat.panes.resize(split, 0.75);
-                        self.chat.flow_pane = Some(new_pane);
-                    }
+                } else if let Some((new_pane, split)) = self.chat.panes.split(
+                    iced::widget::pane_grid::Axis::Vertical,
+                    self.chat.chat_pane,
+                    ChatPane::Flow,
+                ) {
+                    self.chat.panes.resize(split, 0.75);
+                    self.chat.flow_pane = Some(new_pane);
                 }
             }
 
@@ -742,10 +743,11 @@ impl TiccaApp {
                 let name = self.chat.system_exec.new_terminal_name.trim().to_string();
                 let name_key = name.clone();
                 self.chat.system_exec.ui_error = None;
-                match self.chat.system_exec.create_user_terminal(
-                    name,
-                    Some(self.chat.working_directory.clone()),
-                ) {
+                match self
+                    .chat
+                    .system_exec
+                    .create_user_terminal(name, Some(self.chat.working_directory.clone()))
+                {
                     Ok(()) => {
                         if let Some(instance) = self.chat.system_exec.terminals.get(&name_key) {
                             commands.push(AppCommand::FocusTerminal(instance.terminal_id));
@@ -776,123 +778,121 @@ impl TiccaApp {
                 }
             }
 
-            Message::SystemExecRequest(request) => {
-                match request {
-                    SystemExecRequest::ExecuteShell {
-                        request_id,
+            Message::SystemExecRequest(request) => match request {
+                SystemExecRequest::ExecuteShell {
+                    request_id,
+                    command,
+                    cwd,
+                } => {
+                    let process_id = self.chat.system_exec.generate_llm_process_id();
+                    let cwd = cwd
+                        .map(PathBuf::from)
+                        .or_else(|| Some(self.chat.working_directory.clone()));
+
+                    match self.chat.system_exec.create_llm_terminal(
+                        process_id.clone(),
                         command,
                         cwd,
-                    } => {
-                        let process_id = self.chat.system_exec.generate_llm_process_id();
-                        let cwd = cwd
-                            .map(PathBuf::from)
-                            .or_else(|| Some(self.chat.working_directory.clone()));
+                    ) {
+                        Ok(()) => {
+                            self.chat
+                                .system_exec
+                                .store
+                                .respond(request_id, SystemExecResponse::Started { process_id });
+                            self.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
+                        }
+                        Err(e) => {
+                            self.chat
+                                .system_exec
+                                .store
+                                .respond(request_id, SystemExecResponse::Error { message: e });
+                        }
+                    }
+                }
+                SystemExecRequest::KillProcess {
+                    request_id,
+                    process_id,
+                } => {
+                    let resp = match self.chat.system_exec.shutdown_terminal(&process_id) {
+                        Ok(()) => {
+                            self.chat.system_exec.remove_terminal(&process_id);
+                            SystemExecResponse::Killed { process_id }
+                        }
+                        Err(e) => SystemExecResponse::Error { message: e },
+                    };
+                    self.chat.system_exec.store.respond(request_id, resp);
+                }
+            },
 
-                        match self.chat.system_exec.create_llm_terminal(
-                            process_id.clone(),
-                            command,
-                            cwd,
-                        ) {
-                            Ok(()) => {
+            Message::SystemExecTerminalEvent(event) => match event {
+                iced_term::Event::Focus(terminal_id) => {
+                    commands.push(AppCommand::FocusTerminal(terminal_id));
+                }
+                iced_term::Event::BackendCall(terminal_id, cmd) => {
+                    let process_id = self
+                        .chat
+                        .system_exec
+                        .terminal_index
+                        .get(&terminal_id)
+                        .cloned();
+                    if let Some(process_id) = process_id {
+                        let mut child_exit: Option<i32> = None;
+                        let mut should_update_output = false;
+
+                        if let iced_term::backend::Command::ProcessAlacrittyEvent(ref ev) = cmd {
+                            match ev {
+                                iced_term::AlacrittyEvent::Wakeup
+                                | iced_term::AlacrittyEvent::PtyWrite(_)
+                                | iced_term::AlacrittyEvent::Title(_)
+                                | iced_term::AlacrittyEvent::ResetTitle => {
+                                    should_update_output = true;
+                                }
+                                iced_term::AlacrittyEvent::ChildExit(code) => {
+                                    should_update_output = true;
+                                    child_exit = Some(*code);
+                                }
+                                iced_term::AlacrittyEvent::Exit => {
+                                    should_update_output = true;
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        let mut remove_terminal = false;
+                        let mut auto_close_if_fast = false;
+
+                        if let Some(instance) = self.chat.system_exec.terminals.get_mut(&process_id)
+                        {
+                            let action = instance
+                                .terminal
+                                .handle(iced_term::Command::ProxyToBackend(cmd));
+
+                            if should_update_output {
+                                let output = instance.terminal.dump_text();
+                                self.chat.system_exec.store.set_output(&process_id, output);
+                            }
+
+                            if matches!(action, iced_term::actions::Action::Shutdown) {
+                                remove_terminal = true;
+                            }
+
+                            if let Some(code) = child_exit {
                                 self.chat
                                     .system_exec
                                     .store
-                                    .respond(request_id, SystemExecResponse::Started { process_id });
-                                self.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
-                            }
-                            Err(e) => {
-                                self.chat.system_exec.store.respond(
-                                    request_id,
-                                    SystemExecResponse::Error { message: e },
-                                );
+                                    .mark_finished(&process_id, Some(code));
+                                auto_close_if_fast = instance.auto_close_if_fast
+                                    && instance.started_at.elapsed()
+                                        < std::time::Duration::from_secs(30);
                             }
                         }
-                    }
-                    SystemExecRequest::KillProcess {
-                        request_id,
-                        process_id,
-                    } => {
-                        let resp = match self.chat.system_exec.shutdown_terminal(&process_id) {
-                            Ok(()) => {
-                                self.chat.system_exec.remove_terminal(&process_id);
-                                SystemExecResponse::Killed { process_id }
-                            }
-                            Err(e) => SystemExecResponse::Error { message: e },
-                        };
-                        self.chat.system_exec.store.respond(request_id, resp);
-                    }
-                }
-            }
 
-            Message::SystemExecTerminalEvent(event) => {
-                match event {
-                    iced_term::Event::Focus(terminal_id) => {
-                        commands.push(AppCommand::FocusTerminal(terminal_id));
-                    }
-                    iced_term::Event::BackendCall(terminal_id, cmd) => {
-                        let process_id =
-                            self.chat.system_exec.terminal_index.get(&terminal_id).cloned();
-                        if let Some(process_id) = process_id {
-                            let mut child_exit: Option<i32> = None;
-                            let mut should_update_output = false;
-
-                            if let iced_term::backend::Command::ProcessAlacrittyEvent(ref ev) = cmd
-                            {
-                                match ev {
-                                    iced_term::AlacrittyEvent::Wakeup
-                                    | iced_term::AlacrittyEvent::PtyWrite(_)
-                                    | iced_term::AlacrittyEvent::Title(_)
-                                    | iced_term::AlacrittyEvent::ResetTitle => {
-                                        should_update_output = true;
-                                    }
-                                    iced_term::AlacrittyEvent::ChildExit(code) => {
-                                        should_update_output = true;
-                                        child_exit = Some(*code);
-                                    }
-                                    iced_term::AlacrittyEvent::Exit => {
-                                        should_update_output = true;
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            let mut remove_terminal = false;
-                            let mut auto_close_if_fast = false;
-
-                            if let Some(instance) =
-                                self.chat.system_exec.terminals.get_mut(&process_id)
-                            {
-                                let action = instance
-                                    .terminal
-                                    .handle(iced_term::Command::ProxyToBackend(cmd));
-
-                                if should_update_output {
-                                    let output = instance.terminal.dump_text();
-                                    self.chat.system_exec.store.set_output(&process_id, output);
-                                }
-
-                                if matches!(action, iced_term::actions::Action::Shutdown) {
-                                    remove_terminal = true;
-                                }
-
-                                if let Some(code) = child_exit {
-                                    self.chat
-                                        .system_exec
-                                        .store
-                                        .mark_finished(&process_id, Some(code));
-                                    auto_close_if_fast = instance.auto_close_if_fast
-                                        && instance.started_at.elapsed()
-                                            < std::time::Duration::from_secs(30);
-                                }
-                            }
-
-                            if remove_terminal || auto_close_if_fast {
-                                self.chat.system_exec.remove_terminal(&process_id);
-                            }
+                        if remove_terminal || auto_close_if_fast {
+                            self.chat.system_exec.remove_terminal(&process_id);
                         }
                     }
                 }
-            }
+            },
 
             Message::StartOAuth(provider) => {
                 commands.push(AppCommand::StartOAuth(provider));
@@ -937,11 +937,11 @@ impl TiccaApp {
             }
 
             Message::AdjustOAuthAccountPriority { account_id, delta } => {
-                if let Ok(db) = ConfigDatabase::open() {
-                    if let Ok(Some(account)) = db.get_oauth_account(&account_id) {
-                        let new_priority = account.priority.saturating_add(delta);
-                        let _ = db.set_oauth_account_priority(&account_id, new_priority);
-                    }
+                if let Ok(db) = ConfigDatabase::open()
+                    && let Ok(Some(account)) = db.get_oauth_account(&account_id)
+                {
+                    let new_priority = account.priority.saturating_add(delta);
+                    let _ = db.set_oauth_account_priority(&account_id, new_priority);
                 }
             }
 
@@ -1054,17 +1054,14 @@ impl TiccaApp {
             },
 
             Message::ToolCall { name, args } => {
-                if let Some(last) = self.chat.messages.last_mut() {
-                    if last.is_streaming {
-                        let tool_line = format_tool_call_oneliner(
-                            &name,
-                            &args,
-                            Some(&self.chat.working_directory),
-                        );
-                        last.content.push_str(&format!("\n\n{}", tool_line));
-                        last.last_was_tool_call = true;
-                        last.update_parsed_items();
-                    }
+                if let Some(last) = self.chat.messages.last_mut()
+                    && last.is_streaming
+                {
+                    let tool_line =
+                        format_tool_call_oneliner(&name, &args, Some(&self.chat.working_directory));
+                    last.content.push_str(&format!("\n\n{}", tool_line));
+                    last.last_was_tool_call = true;
+                    last.update_parsed_items();
                 }
                 self.push_scroll_if_needed(&mut commands);
             }
@@ -1109,26 +1106,26 @@ impl TiccaApp {
                         self.chat.user_at_bottom = true;
                     }
                     AgentStreamEvent::Chunk { node_id, text } => {
-                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
-                            if let Some(msg) = self.chat.messages.get_mut(index) {
-                                if msg.last_was_tool_call && !text.trim().is_empty() {
-                                    msg.content.push_str("\n\n💡 ");
-                                    msg.last_was_tool_call = false;
-                                }
-                                msg.content.push_str(&text);
-                                msg.update_parsed_items();
+                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id)
+                            && let Some(msg) = self.chat.messages.get_mut(index)
+                        {
+                            if msg.last_was_tool_call && !text.trim().is_empty() {
+                                msg.content.push_str("\n\n💡 ");
+                                msg.last_was_tool_call = false;
                             }
+                            msg.content.push_str(&text);
+                            msg.update_parsed_items();
                         }
                         self.push_scroll_if_needed(&mut commands);
                     }
                     AgentStreamEvent::Reasoning { node_id, text } => {
-                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
-                            if let Some(msg) = self.chat.messages.get_mut(index) {
-                                if let Some(ref mut existing) = msg.reasoning {
-                                    existing.push_str(&text);
-                                } else {
-                                    msg.reasoning = Some(text);
-                                }
+                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id)
+                            && let Some(msg) = self.chat.messages.get_mut(index)
+                        {
+                            if let Some(ref mut existing) = msg.reasoning {
+                                existing.push_str(&text);
+                            } else {
+                                msg.reasoning = Some(text);
                             }
                         }
                         self.push_scroll_if_needed(&mut commands);
@@ -1138,26 +1135,26 @@ impl TiccaApp {
                         name,
                         args,
                     } => {
-                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
-                            if let Some(msg) = self.chat.messages.get_mut(index) {
-                                let tool_line = format_tool_call_oneliner(
-                                    &name,
-                                    &args,
-                                    Some(&self.chat.working_directory),
-                                );
-                                msg.content.push_str(&format!("\n\n{}", tool_line));
-                                msg.last_was_tool_call = true;
-                                msg.update_parsed_items();
-                            }
+                        if let Some(&index) = self.chat.subagent_message_indices.get(&node_id)
+                            && let Some(msg) = self.chat.messages.get_mut(index)
+                        {
+                            let tool_line = format_tool_call_oneliner(
+                                &name,
+                                &args,
+                                Some(&self.chat.working_directory),
+                            );
+                            msg.content.push_str(&format!("\n\n{}", tool_line));
+                            msg.last_was_tool_call = true;
+                            msg.update_parsed_items();
                         }
                         self.push_scroll_if_needed(&mut commands);
                     }
                     AgentStreamEvent::Complete { node_id } => {
-                        if let Some(index) = self.chat.subagent_message_indices.remove(&node_id) {
-                            if let Some(msg) = self.chat.messages.get_mut(index) {
-                                msg.is_streaming = false;
-                                msg.update_parsed_items();
-                            }
+                        if let Some(index) = self.chat.subagent_message_indices.remove(&node_id)
+                            && let Some(msg) = self.chat.messages.get_mut(index)
+                        {
+                            msg.is_streaming = false;
+                            msg.update_parsed_items();
                         }
                     }
                 }
@@ -1442,15 +1439,13 @@ impl TiccaApp {
 
         // Terminal backend events (PTY output, exit codes, etc.)
         for instance in self.chat.system_exec.terminals.values() {
-            subs.push(
-                Subscription::run_with(
-                    TerminalBackendSubscriptionData {
-                        terminal_id: instance.terminal_id,
-                        rx: instance.terminal.event_receiver(),
-                    },
-                    terminal_backend_stream,
-                ),
-            );
+            subs.push(Subscription::run_with(
+                TerminalBackendSubscriptionData {
+                    terminal_id: instance.terminal_id,
+                    rx: instance.terminal.event_receiver(),
+                },
+                terminal_backend_stream,
+            ));
         }
 
         // Add timer subscriptions while streaming

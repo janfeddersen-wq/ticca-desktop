@@ -4,15 +4,15 @@
 
 #![allow(dead_code)]
 
-use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::Subscription;
 use iced::event::{self, Event};
 use iced::keyboard;
+use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::window;
 
-use ticca_core::agents::AgentType;
 use crate::image_handler;
 use crate::messages::Message;
+use ticca_core::agents::AgentType;
 
 /// A keyboard shortcut definition
 #[derive(Debug, Clone)]
@@ -24,9 +24,13 @@ pub struct Keybinding {
 
 impl Keybinding {
     pub fn new(key: Key, modifiers: Modifiers, description: &'static str) -> Self {
-        Self { key, modifiers, description }
+        Self {
+            key,
+            modifiers,
+            description,
+        }
     }
-    
+
     /// Check if a key event matches this keybinding
     pub fn matches(&self, key: &Key, modifiers: Modifiers) -> bool {
         *key == self.key && modifiers == self.modifiers
@@ -123,12 +127,11 @@ pub fn subscription() -> Subscription<Message> {
                 let bindings = keybindings();
 
                 // Ctrl+V to paste image from clipboard
-                if modifiers.command() {
-                    if let iced::keyboard::Key::Character(c) = &key {
-                        if c.as_str() == "v" {
-                            return Some(Message::PasteImage);
-                        }
-                    }
+                if modifiers.command()
+                    && let iced::keyboard::Key::Character(c) = &key
+                    && c.as_str() == "v"
+                {
+                    return Some(Message::PasteImage);
                 }
 
                 if bindings.send_message.matches(&key, modifiers) {
@@ -163,20 +166,16 @@ pub fn subscription() -> Subscription<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_keybinding_matches() {
-        let binding = Keybinding::new(
-            Key::Character("n".into()),
-            Modifiers::CTRL,
-            "Test",
-        );
-        
+        let binding = Keybinding::new(Key::Character("n".into()), Modifiers::CTRL, "Test");
+
         assert!(binding.matches(&Key::Character("n".into()), Modifiers::CTRL));
         assert!(!binding.matches(&Key::Character("n".into()), Modifiers::empty()));
         assert!(!binding.matches(&Key::Character("m".into()), Modifiers::CTRL));
     }
-    
+
     #[test]
     fn test_keybindings_all() {
         let bindings = Keybindings::default();

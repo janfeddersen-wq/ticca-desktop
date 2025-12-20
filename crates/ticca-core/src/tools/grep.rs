@@ -1,6 +1,6 @@
 //! Grep tool using ripgrep libraries
 
-use crate::tools::registry::{ToolDefinition, ToolResult, ToolExecutor};
+use crate::tools::registry::{ToolDefinition, ToolExecutor, ToolResult};
 use crate::tools::spec;
 use anyhow::Result;
 use grep_regex::RegexMatcher;
@@ -35,11 +35,11 @@ impl Sink for MatchCollector {
 
     fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         if self.matches.len() >= self.max_matches {
-            return Ok(false);  // Stop searching
+            return Ok(false); // Stop searching
         }
 
         let line_content = String::from_utf8_lossy(mat.bytes()).trim().to_string();
-        
+
         self.matches.push(GrepMatch {
             file_path: self.file_path.clone(),
             line_number: mat.line_number().unwrap_or(0),
@@ -64,7 +64,10 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
     };
 
     if !abs_path.exists() {
-        return Ok(ToolResult::error(format!("Directory does not exist: {}", directory)));
+        return Ok(ToolResult::error(format!(
+            "Directory does not exist: {}",
+            directory
+        )));
     }
 
     if !abs_path.is_dir() {
@@ -73,14 +76,15 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
 
     // Build the regex matcher
     // Support for common ripgrep flags in the search string
-    let (pattern, case_insensitive) = if search_string.starts_with("--ignore-case ") || search_string.starts_with("-i ") {
-        let pattern = search_string
-            .trim_start_matches("--ignore-case ")
-            .trim_start_matches("-i ");
-        (pattern.to_string(), true)
-    } else {
-        (search_string.to_string(), false)
-    };
+    let (pattern, case_insensitive) =
+        if search_string.starts_with("--ignore-case ") || search_string.starts_with("-i ") {
+            let pattern = search_string
+                .trim_start_matches("--ignore-case ")
+                .trim_start_matches("-i ");
+            (pattern.to_string(), true)
+        } else {
+            (search_string.to_string(), false)
+        };
 
     // Build regex pattern with case sensitivity option
     let regex_pattern = if case_insensitive {
@@ -89,17 +93,16 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
         pattern.clone()
     };
 
-    let matcher = RegexMatcher::new_line_matcher(&regex_pattern)
-        .or_else(|_| {
-            // If regex fails, try as literal
-            let escaped = regex::escape(&pattern);
-            let escaped_pattern = if case_insensitive {
-                format!("(?i){}", escaped)
-            } else {
-                escaped
-            };
-            RegexMatcher::new_line_matcher(&escaped_pattern)
-        })?;
+    let matcher = RegexMatcher::new_line_matcher(&regex_pattern).or_else(|_| {
+        // If regex fails, try as literal
+        let escaped = regex::escape(&pattern);
+        let escaped_pattern = if case_insensitive {
+            format!("(?i){}", escaped)
+        } else {
+            escaped
+        };
+        RegexMatcher::new_line_matcher(&escaped_pattern)
+    })?;
 
     let mut all_matches: Vec<GrepMatch> = Vec::new();
 
@@ -120,7 +123,7 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
         }
 
         let entry_path = entry.path();
-        
+
         // Skip directories and non-text files
         if entry_path.is_dir() {
             continue;
@@ -129,12 +132,9 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
         // Skip binary files by extension
         if let Some(ext) = entry_path.extension().and_then(|e| e.to_str()) {
             let binary_extensions = [
-                "exe", "dll", "so", "dylib", "bin", "obj", "o", "a",
-                "png", "jpg", "jpeg", "gif", "bmp", "ico", "svg",
-                "mp3", "mp4", "wav", "avi", "mov",
-                "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
-                "pdf", "doc", "docx", "xls", "xlsx",
-                "db", "sqlite", "sqlite3",
+                "exe", "dll", "so", "dylib", "bin", "obj", "o", "a", "png", "jpg", "jpeg", "gif",
+                "bmp", "ico", "svg", "mp3", "mp4", "wav", "avi", "mov", "zip", "tar", "gz", "bz2",
+                "xz", "7z", "rar", "pdf", "doc", "docx", "xls", "xlsx", "db", "sqlite", "sqlite3",
                 "wasm", "pyc", "pyo",
             ];
             if binary_extensions.contains(&ext.to_lowercase().as_str()) {
@@ -155,7 +155,7 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
 
         // Search the file
         let search_result = searcher.search_path(&matcher, entry_path, &mut collector);
-        
+
         if search_result.is_ok() {
             all_matches.extend(collector.matches);
         }
@@ -185,9 +185,7 @@ pub fn grep_impl(search_string: &str, directory: &str) -> Result<ToolResult> {
     for m in &all_matches {
         output_lines.push(format!(
             "{}:{}:{}",
-            m.file_path,
-            m.line_number,
-            m.line_content
+            m.file_path, m.line_number, m.line_content
         ));
     }
 
@@ -201,8 +199,7 @@ pub fn grep_definition() -> ToolDefinition {
         name: spec.name.to_string(),
         description: format!(
             "{} Returns up to {} matches with file path, line number, and content.",
-            spec.description,
-            MAX_MATCHES
+            spec.description, MAX_MATCHES
         ),
         parameters: spec.registry_parameters,
     }
@@ -212,14 +209,16 @@ pub fn grep_definition() -> ToolDefinition {
 pub fn grep_executor() -> ToolExecutor {
     Arc::new(|params: Value| {
         Box::pin(async move {
-            let search_string = params.get("search_string")
+            let search_string = params
+                .get("search_string")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("search_string is required"))?;
-            
-            let directory = params.get("directory")
+
+            let directory = params
+                .get("directory")
                 .and_then(|v| v.as_str())
                 .unwrap_or(".");
-            
+
             grep_impl(search_string, directory)
         })
     })
@@ -228,13 +227,17 @@ pub fn grep_executor() -> ToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_grep_simple() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("test.txt"), "Hello, World!\nHello, Rust!\nGoodbye!").unwrap();
+        fs::write(
+            dir.path().join("test.txt"),
+            "Hello, World!\nHello, Rust!\nGoodbye!",
+        )
+        .unwrap();
         fs::write(dir.path().join("other.txt"), "No match here").unwrap();
 
         let result = grep_impl("Hello", dir.path().to_str().unwrap()).unwrap();

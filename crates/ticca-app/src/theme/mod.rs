@@ -8,14 +8,14 @@ pub mod styles;
 pub mod zinc;
 
 // Popular themes
-pub mod dracula;
-pub mod nord;
-pub mod catppuccin_mocha;
 pub mod catppuccin_latte;
-pub mod tokyo_night;
-pub mod one_dark;
+pub mod catppuccin_mocha;
+pub mod dracula;
 pub mod gruvbox_dark;
 pub mod gruvbox_light;
+pub mod nord;
+pub mod one_dark;
+pub mod tokyo_night;
 
 use iced::Theme;
 
@@ -60,7 +60,7 @@ impl AppTheme {
     }
 
     /// Get the Iced Theme for this AppTheme
-    pub fn to_iced_theme(&self) -> Theme {
+    pub fn to_iced_theme(self) -> Theme {
         match self {
             AppTheme::Dark => dark::theme(),
             AppTheme::Light => light::theme(),
@@ -94,7 +94,7 @@ impl AppTheme {
     }
 
     /// Parse from string
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "light" => AppTheme::Light,
             "zinc" => AppTheme::Zinc,
@@ -129,10 +129,10 @@ impl AppTheme {
 
     /// Check if this is a dark theme
     pub fn is_dark(&self) -> bool {
-        match self {
-            AppTheme::Light | AppTheme::CatppuccinLatte | AppTheme::GruvboxLight => false,
-            _ => true,
-        }
+        !matches!(
+            self,
+            AppTheme::Light | AppTheme::CatppuccinLatte | AppTheme::GruvboxLight
+        )
     }
 }
 

@@ -24,9 +24,9 @@
 //! The gemini-cli client ID was registered for Cloud Code Assist, not the
 //! Generative Language API. We cannot add new scopes without Google's approval.
 
-use crate::common::{OAuthConfig, OAuthError, OAuthResult, TokenResponse, OAuthFlowState};
+use crate::callback_server::{build_redirect_uri, find_available_port, wait_for_callback};
+use crate::common::{OAuthConfig, OAuthError, OAuthFlowState, OAuthResult, TokenResponse};
 use crate::pkce::create_pkce_state;
-use crate::callback_server::{find_available_port, wait_for_callback, build_redirect_uri};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -39,7 +39,8 @@ const GEMINI_API_URL: &str = "https://cloudcode-pa.googleapis.com";
 
 /// OAuth credentials from gemini-cli (Desktop app type - public client secret is safe to embed)
 /// Reference: https://github.com/google-gemini/gemini-cli
-const GEMINI_CLIENT_ID: &str = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+const GEMINI_CLIENT_ID: &str =
+    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 const GEMINI_CLIENT_SECRET: &str = "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";
 
 /// Scopes required for Gemini API access
@@ -81,7 +82,7 @@ pub struct GeminiModel {
 /// User info from Google
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleUserInfo {
-    pub sub: String,  // User ID
+    pub sub: String, // User ID
     pub email: Option<String>,
     pub name: Option<String>,
     pub picture: Option<String>,
@@ -122,15 +123,16 @@ impl GeminiOAuth {
             client: Client::new(),
         }
     }
-    
+
     /// Build the authorization URL
     pub fn build_auth_url(&self, flow_state: &OAuthFlowState) -> OAuthResult<String> {
-        let redirect_uri = flow_state.redirect_uri.as_ref()
-            .ok_or_else(|| OAuthError::InvalidResponse("redirect_uri not set in flow state".into()))?;
-        
+        let redirect_uri = flow_state.redirect_uri.as_ref().ok_or_else(|| {
+            OAuthError::InvalidResponse("redirect_uri not set in flow state".into())
+        })?;
+
         let mut url = Url::parse(&self.config.auth_url)
             .map_err(|e| OAuthError::InvalidResponse(format!("Invalid auth URL: {}", e)))?;
-        
+
         url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.config.client_id)
@@ -139,50 +141,48 @@ impl GeminiOAuth {
             .append_pair("state", &flow_state.state)
             .append_pair("code_challenge", &flow_state.code_challenge)
             .append_pair("code_challenge_method", "S256")
-            .append_pair("access_type", "offline")  // Request refresh token
-            .append_pair("prompt", "consent");  // Force consent to get refresh token
-        
+            .append_pair("access_type", "offline") // Request refresh token
+            .append_pair("prompt", "consent"); // Force consent to get refresh token
+
         Ok(url.to_string())
     }
-    
+
     /// Start the OAuth flow
     pub fn start_flow(&self) -> OAuthResult<(OAuthFlowState, u16)> {
         let port = find_available_port(self.config.callback_port_range)?;
-        let redirect_uri = build_redirect_uri(
-            &self.config.redirect_host,
-            port,
-            &self.config.redirect_path,
-        );
-        
+        let redirect_uri =
+            build_redirect_uri(&self.config.redirect_host, port, &self.config.redirect_path);
+
         let flow_state = create_pkce_state().with_redirect_uri(redirect_uri);
-        
+
         Ok((flow_state, port))
     }
-    
+
     /// Complete the full OAuth flow
     pub fn authorize(&self) -> OAuthResult<TokenResponse> {
         let (flow_state, port) = self.start_flow()?;
         let auth_url = self.build_auth_url(&flow_state)?;
-        
+
         tracing::info!("Opening browser for Google OAuth...");
-        
-        open::that(&auth_url)
-            .map_err(|e| OAuthError::CallbackServerError(format!("Failed to open browser: {}", e)))?;
-        
+
+        open::that(&auth_url).map_err(|e| {
+            OAuthError::CallbackServerError(format!("Failed to open browser: {}", e))
+        })?;
+
         let callback = wait_for_callback(
             port,
             &self.config.redirect_path,
             &flow_state.state,
             Duration::from_secs(self.config.callback_timeout_secs),
         )?;
-        
+
         self.exchange_code(
             &callback.code,
             &flow_state.code_verifier,
             flow_state.redirect_uri.as_deref().unwrap(),
         )
     }
-    
+
     /// Exchange authorization code for tokens
     pub fn exchange_code(
         &self,
@@ -191,7 +191,7 @@ impl GeminiOAuth {
         redirect_uri: &str,
     ) -> OAuthResult<TokenResponse> {
         let client = reqwest::blocking::Client::new();
-        
+
         let params = [
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -200,95 +200,106 @@ impl GeminiOAuth {
             ("client_secret", GEMINI_CLIENT_SECRET),
             ("code_verifier", code_verifier),
         ];
-        
+
         tracing::debug!("Exchanging code for tokens at {}", self.config.token_url);
-        
+
         let response = client
             .post(&self.config.token_url)
             .form(&params)
             .send()
             .map_err(OAuthError::HttpError)?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().unwrap_or_default();
             return Err(OAuthError::TokenExchangeFailed(format!(
-                "HTTP {}: {}", status, body
+                "HTTP {}: {}",
+                status, body
             )));
         }
-        
-        let token_response: TokenResponse = response.json()
-            .map_err(|e| OAuthError::InvalidResponse(format!("Failed to parse token response: {}", e)))?;
-        
+
+        let token_response: TokenResponse = response.json().map_err(|e| {
+            OAuthError::InvalidResponse(format!("Failed to parse token response: {}", e))
+        })?;
+
         tracing::info!("Successfully obtained Google access token");
-        
+
         Ok(token_response)
     }
-    
+
     /// Refresh an access token
     pub fn refresh_token(&self, refresh_token: &str) -> OAuthResult<TokenResponse> {
         let client = reqwest::blocking::Client::new();
-        
+
         let params = [
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
             ("client_id", &self.config.client_id),
             ("client_secret", GEMINI_CLIENT_SECRET),
         ];
-        
+
         tracing::debug!("Refreshing Google access token");
-        
+
         let response = client
             .post(&self.config.token_url)
             .form(&params)
             .send()
             .map_err(OAuthError::HttpError)?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().unwrap_or_default();
             return Err(OAuthError::TokenRefreshFailed(format!(
-                "HTTP {}: {}", status, body
+                "HTTP {}: {}",
+                status, body
             )));
         }
-        
-        let token_response: TokenResponse = response.json()
-            .map_err(|e| OAuthError::InvalidResponse(format!("Failed to parse refresh response: {}", e)))?;
-        
+
+        let token_response: TokenResponse = response.json().map_err(|e| {
+            OAuthError::InvalidResponse(format!("Failed to parse refresh response: {}", e))
+        })?;
+
         tracing::info!("Successfully refreshed Google access token");
-        
+
         Ok(token_response)
     }
-    
+
     /// Get user info from Google
     pub async fn get_user_info(&self, access_token: &str) -> OAuthResult<GoogleUserInfo> {
         let url = "https://www.googleapis.com/oauth2/v3/userinfo";
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(url)
             .header("Authorization", format!("Bearer {}", access_token))
             .send()
             .await
             .map_err(OAuthError::HttpError)?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(OAuthError::InvalidResponse(format!(
-                "Failed to get user info: HTTP {}: {}", status, body
+                "Failed to get user info: HTTP {}: {}",
+                status, body
             )));
         }
-        
-        let user_info: GoogleUserInfo = response.json().await
-            .map_err(|e| OAuthError::InvalidResponse(format!("Failed to parse user info: {}", e)))?;
-        
+
+        let user_info: GoogleUserInfo = response.json().await.map_err(|e| {
+            OAuthError::InvalidResponse(format!("Failed to parse user info: {}", e))
+        })?;
+
         Ok(user_info)
     }
-    
+
     /// Fetch available Gemini models
     ///
     /// For OAuth, use a fixed model list. Dynamic listing is for API key / Vertex providers.
-    pub async fn fetch_models(&self, access_token: &str, project_id: Option<&str>) -> OAuthResult<Vec<GeminiModel>> {
+    pub async fn fetch_models(
+        &self,
+        access_token: &str,
+        project_id: Option<&str>,
+    ) -> OAuthResult<Vec<GeminiModel>> {
         let _ = access_token;
         let _ = project_id;
 
@@ -303,23 +314,24 @@ impl GeminiOAuth {
                 output_token_limit: None,
             })
             .collect();
-        
+
         Ok(models)
     }
 
     // OAuth model listing is fixed; dynamic listing lives in API key / Vertex providers.
-    
+
     /// Validate an access token
     pub async fn validate_token(&self, access_token: &str) -> OAuthResult<bool> {
         let url = "https://www.googleapis.com/oauth2/v3/tokeninfo";
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(url)
             .query(&[("access_token", access_token)])
             .send()
             .await
             .map_err(OAuthError::HttpError)?;
-        
+
         Ok(response.status().is_success())
     }
 }
@@ -327,9 +339,13 @@ impl GeminiOAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
 
     #[test]
     fn test_start_flow() {
+        if TcpListener::bind(("127.0.0.1", 0)).is_err() {
+            return;
+        }
         let oauth = GeminiOAuth::new();
         let (flow_state, port) = oauth.start_flow().unwrap();
 
@@ -341,6 +357,9 @@ mod tests {
 
     #[test]
     fn test_build_auth_url() {
+        if TcpListener::bind(("127.0.0.1", 0)).is_err() {
+            return;
+        }
         let oauth = GeminiOAuth::new();
         let (flow_state, _) = oauth.start_flow().unwrap();
         let auth_url = oauth.build_auth_url(&flow_state).unwrap();
