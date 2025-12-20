@@ -17,7 +17,7 @@ pub mod tools;
 pub use agents::{
     Agent, AgentConfig, AgentType, CodingAgent, PlanningAgent, get_agent, get_all_agents,
 };
-pub use config::{ConfigDatabase, ModelConfig, OAuthToken, Setting};
+pub use config::{ConfigDatabase, McpServer, McpTransport, ModelConfig, OAuthToken, Setting};
 pub use llm::{ClaudeClient, get_claude_client, has_claude_credentials};
 pub use session::{MessageRole, Session, SessionDatabase, SessionMessage};
 pub use tools::{ToolDefinition, ToolRegistry, ToolResult, create_default_registry};

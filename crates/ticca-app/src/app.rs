@@ -11,7 +11,7 @@ mod features;
 use ticca_core::llm::auth;
 
 use crate::app_config::load_config;
-use crate::messages::{settings, Message};
+use crate::messages::{Message, settings};
 use crate::theme::AppTheme;
 
 /// Main application state
@@ -80,10 +80,7 @@ impl TiccaApp {
     }
 
     fn execute_effects(&self, effects: Vec<effects::Effect>) -> Task<Message> {
-        let tasks: Vec<Task<Message>> = effects
-            .into_iter()
-            .map(effects::task)
-            .collect();
+        let tasks: Vec<Task<Message>> = effects.into_iter().map(effects::task).collect();
 
         Task::batch(tasks)
     }

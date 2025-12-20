@@ -74,6 +74,24 @@ impl SessionDatabase {
             [],
         )?;
 
+        // Create todo state table (agent-scoped per session/node)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS todo_states (
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                node_id INTEGER NOT NULL,
+                state_json TEXT NOT NULL,
+                updated_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (session_id, node_id)
+            )",
+            [],
+        )?;
+
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_todo_states_session
+             ON todo_states(session_id, updated_at)",
+            [],
+        )?;
+
         // Enable foreign key support
         self.conn.execute("PRAGMA foreign_keys = ON", [])?;
 
@@ -268,6 +286,44 @@ impl SessionDatabase {
         self.update_session_stats(session_id)?;
         Ok(changes)
     }
+
+    // Todo state
+
+    pub fn upsert_todo_state(&self, session_id: &str, node_id: usize, state_json: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO todo_states (session_id, node_id, state_json, updated_at)
+             VALUES (?, ?, ?, datetime('now'))
+             ON CONFLICT(session_id, node_id)
+             DO UPDATE SET state_json = excluded.state_json, updated_at = datetime('now')",
+            params![session_id, node_id as i64, state_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_todo_states(&self, session_id: &str) -> Result<Vec<(usize, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT node_id, state_json
+             FROM todo_states
+             WHERE session_id = ?
+             ORDER BY updated_at ASC",
+        )?;
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            let node_id: i64 = row.get(0)?;
+            let json: String = row.get(1)?;
+            Ok((node_id as usize, json))
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn clear_todo_states(&self, session_id: &str) -> Result<usize> {
+        let changes = self.conn.execute(
+            "DELETE FROM todo_states WHERE session_id = ?",
+            params![session_id],
+        )?;
+        Ok(changes)
+    }
 }
 
 #[cfg(test)]
@@ -380,5 +436,34 @@ mod tests {
         // Messages should be gone (verify by trying to get them)
         let messages = db.get_messages(&session_id).unwrap();
         assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn test_todo_states_crud() {
+        let test = test_db();
+        let db = &test.db;
+
+        // Create session first
+        let session = Session::coding("Todo Test");
+        let session_id = session.id.clone();
+        db.create_session(&session).unwrap();
+
+        // Upsert todo states
+        db.upsert_todo_state(&session_id, 0, "{\"items\":[],\"confirmed_complete\":false}")
+            .unwrap();
+        db.upsert_todo_state(&session_id, 1, "{\"items\":[],\"confirmed_complete\":true}")
+            .unwrap();
+
+        // Read todo states
+        let states = db.get_todo_states(&session_id).unwrap();
+        assert_eq!(states.len(), 2);
+        assert_eq!(states[0].0, 0);
+        assert_eq!(states[1].0, 1);
+
+        // Clear states
+        let cleared = db.clear_todo_states(&session_id).unwrap();
+        assert_eq!(cleared, 2);
+        let empty = db.get_todo_states(&session_id).unwrap();
+        assert!(empty.is_empty());
     }
 }

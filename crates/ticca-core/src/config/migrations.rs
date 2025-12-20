@@ -74,6 +74,38 @@ pub fn run_config_migrations(conn: &Connection) -> Result<()> {
         [],
     )?;
 
+    // Create MCP server tables
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            transport TEXT NOT NULL DEFAULT 'stdio',
+            command TEXT,
+            args_json TEXT,
+            env_json TEXT,
+            endpoint_url TEXT,
+            is_enabled INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_mcp_servers (
+            agent_type TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY(agent_type, server_id)
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_mcp_servers_agent_type ON agent_mcp_servers(agent_type)",
+        [],
+    )?;
+
     // Best-effort migrations for new columns
     let _ = conn.execute(
         "ALTER TABLE oauth_accounts ADD COLUMN priority INTEGER DEFAULT 0",

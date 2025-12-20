@@ -5,7 +5,7 @@ use iced::{Element, Length, Padding};
 
 use crate::agent_graph::AgentCallGraph;
 use crate::material_icons::{icon, icons};
-use crate::messages::{chat, Message, RightSidebarTab, TodoNodeOption};
+use crate::messages::{Message, RightSidebarTab, TodoNodeOption, chat};
 use crate::system_executions::SystemExecutionsState;
 use crate::theme::{AppTheme, styles};
 use crate::views::{agent_flow, system_executions, todo_list};
@@ -47,7 +47,7 @@ pub fn view<'a>(
             .padding(Padding {
                 top: 10.0,
                 right: 10.0,
-                bottom: 9.0,
+                bottom: 14.0,
                 left: 10.0,
             })
             .width(Length::Fill)
@@ -87,11 +87,10 @@ pub fn view<'a>(
                 .as_ref()
                 .and_then(|opt| todo_lists.get(&opt.node_id));
 
-            let picker =
-                pick_list(node_options, selected_option, |opt| {
-                    Message::Chat(chat::Msg::SelectTodoNode(opt))
-                })
-                .width(Length::Fill);
+            let picker = pick_list(node_options, selected_option, |opt| {
+                Message::Chat(chat::Msg::SelectTodoNode(opt))
+            })
+            .width(Length::Fill);
 
             column![
                 container(

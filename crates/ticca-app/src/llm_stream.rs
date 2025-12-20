@@ -4,10 +4,10 @@
 //! app-specific types (`ChatMessage`, `Message`) and core runner events.
 
 use crate::chat_message::ChatMessage;
-use crate::messages::{chat, Message};
+use crate::messages::{Message, chat};
 
 use ticca_core::agents::{AgentType, ChatHistoryMessage, RunnerEvent};
-use ticca_core::tools::ToolApprovalDecision;
+use ticca_core::tools::{TodoListState, ToolApprovalDecision};
 
 use futures::StreamExt;
 use std::path::PathBuf;
@@ -25,7 +25,9 @@ impl From<RunnerEvent> for Message {
                 chars_in_window,
                 window_ms,
             }),
-            RunnerEvent::ToolCall { name, args } => Message::Chat(chat::Msg::ToolCall { name, args }),
+            RunnerEvent::ToolCall { name, args } => {
+                Message::Chat(chat::Msg::ToolCall { name, args })
+            }
             RunnerEvent::AgentCall(event) => Message::Chat(chat::Msg::AgentCall(event)),
             RunnerEvent::SubagentStream(event) => Message::Chat(chat::Msg::SubagentStream(event)),
             RunnerEvent::TodoEvent(event) => Message::Chat(chat::Msg::TodoEvent(event)),
@@ -48,6 +50,7 @@ pub fn run_rig_agent_stream(
     working_directory: PathBuf,
     max_tool_rounds: u32,
     chat_history: Vec<ChatMessage>,
+    initial_todo_state: Option<TodoListState>,
     image_data: Vec<(String, String)>,
     yolo_mode_enabled: bool,
     current_agent: AgentType,
@@ -71,6 +74,7 @@ pub fn run_rig_agent_stream(
         working_directory,
         max_tool_rounds,
         history,
+        initial_todo_state,
         image_data,
         yolo_mode_enabled,
         current_agent,

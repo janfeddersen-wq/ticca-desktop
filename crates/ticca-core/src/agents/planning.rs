@@ -15,6 +15,8 @@ impl Agent for PlanningAgent {
 
     fn available_tools(&self) -> Vec<&'static str> {
         vec![
+            "todo_read",
+            "todo_write",
             "todo_list",
             "list_files",
             "read_file",
@@ -32,7 +34,7 @@ impl Agent for PlanningAgent {
             &policy,
             &[
                 "Always explore the codebase before planning",
-                "Maintain a To Do list via todo_list; update it as you refine the plan and confirm completion before ending",
+                "Use todo_read to see the current To Do list; use todo_write (or todo_list) to update it and confirm completion before ending",
                 "Be specific - each task should be concrete and actionable",
                 "Consider task dependencies and ordering",
                 "Include testing and validation steps",
@@ -108,6 +110,8 @@ mod tests {
         assert!(agent.can_use_tool("grep"));
         assert!(agent.can_use_tool("list_agents"));
         assert!(agent.can_use_tool("invoke_agent"));
+        assert!(agent.can_use_tool("todo_read"));
+        assert!(agent.can_use_tool("todo_write"));
         assert!(agent.can_use_tool("todo_list"));
         assert!(!agent.can_use_tool("edit_file")); // Planning can't edit
         assert!(!agent.can_use_tool("write_file"));
@@ -129,6 +133,8 @@ mod tests {
         let tools = agent.available_tools();
 
         // Planning agent should have limited, read-only tools
+        assert!(tools.contains(&"todo_read"));
+        assert!(tools.contains(&"todo_write"));
         assert!(tools.contains(&"todo_list"));
         assert!(tools.contains(&"list_files"));
         assert!(tools.contains(&"read_file"));
@@ -141,6 +147,6 @@ mod tests {
         assert!(!tools.contains(&"list_processes"));
         assert!(!tools.contains(&"read_process_output"));
         assert!(!tools.contains(&"kill_process"));
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 8);
     }
 }

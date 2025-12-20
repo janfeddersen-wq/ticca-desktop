@@ -1,17 +1,18 @@
 //! Configuration storage module
 
 pub mod database;
+mod mcp_import;
 pub mod migrations;
 pub mod models;
 pub mod repo;
-pub mod settings;
 pub mod service;
+pub mod settings;
 
 pub use database::ConfigDatabase;
-pub use models::{ModelConfig, OAuthAccount, OAuthToken, Setting};
+pub use models::{McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken, Setting};
 pub use repo::ConfigRepo;
-pub use settings::{AccountRotationPolicy, TypedSettings};
 pub use service::{ConfigService, SettingsSnapshot};
+pub use settings::{AccountRotationPolicy, TypedSettings};
 
 /// Well-known setting keys
 pub mod setting_keys {

@@ -1,16 +1,19 @@
 //! Settings/Configuration view
 
-use iced::widget::{Column, Space, button, column, container, pick_list, row, scrollable, text};
+use iced::widget::{
+    Column, Space, button, checkbox, column, container, pick_list, row, scrollable, text,
+    text_editor, text_input,
+};
 use iced::{Border, Color, Element, Length};
 
 use std::collections::HashMap;
 
 use crate::material_icons::{icon, icons};
-use crate::messages::{chat, settings, Message, OAuthProvider, SettingsTab};
+use crate::messages::{Message, OAuthProvider, SettingsTab, chat, settings};
 use crate::theme::{AppTheme, styles};
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::OAuthAccount;
+use ticca_core::config::{McpServer, McpTransport, OAuthAccount};
 use ticca_core::session::Session;
 
 /// Create horizontal space that fills available width (iced 0.14 helper)
@@ -24,6 +27,33 @@ pub struct ProviderAuthStatus {
     pub claude: bool,
     pub gemini: bool,
     pub chatgpt: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct McpServerFormState {
+    pub editing_id: Option<String>,
+    pub name: String,
+    pub transport: McpTransport,
+    pub command: String,
+    pub args_json: String,
+    pub env_json: String,
+    pub endpoint_url: String,
+    pub is_enabled: bool,
+}
+
+impl Default for McpServerFormState {
+    fn default() -> Self {
+        Self {
+            editing_id: None,
+            name: String::new(),
+            transport: McpTransport::Stdio,
+            command: String::new(),
+            args_json: "[]".to_string(),
+            env_json: "{}".to_string(),
+            endpoint_url: String::new(),
+            is_enabled: true,
+        }
+    }
 }
 
 /// Render the settings view
@@ -41,6 +71,10 @@ pub fn view<'a>(
     yolo_mode_enabled: bool,
     recent_sessions: &'a [Session],
     active_tab: SettingsTab,
+    mcp_servers: &'a [McpServer],
+    mcp_form: &'a McpServerFormState,
+    mcp_import_json: &'a text_editor::Content,
+    agent_mcp_server_ids: &'a HashMap<AgentType, Vec<String>>,
 ) -> Element<'a, Message> {
     let header = row![
         button(row![icon(icons::ARROW_BACK).size(16), text(" Back").size(14),].spacing(4))
@@ -85,7 +119,7 @@ pub fn view<'a>(
                 pick_list(theme_options, Some(theme), |t| {
                     Message::Settings(settings::Msg::SetTheme(t))
                 })
-                    .width(Length::Fixed(200.0)),
+                .width(Length::Fixed(200.0)),
             ]
             .spacing(10)
             .align_y(iced::Alignment::Center),
@@ -104,12 +138,20 @@ pub fn view<'a>(
     );
     let tools_section = build_tools_section(yolo_mode_enabled);
     let sessions_section = build_sessions_section(recent_sessions);
-    let accounts_section =
-        build_accounts_section(auth_status, claude_accounts, gemini_accounts, chatgpt_accounts);
+    let accounts_section = build_accounts_section(
+        auth_status,
+        claude_accounts,
+        gemini_accounts,
+        chatgpt_accounts,
+    );
+    let mcp_servers_section = build_mcp_servers_section(mcp_servers, mcp_form, mcp_import_json, theme);
+    let agents_section = build_agent_mcp_section(mcp_servers, agent_mcp_server_ids);
 
     let content = match active_tab {
         SettingsTab::Accounts => accounts_section,
         SettingsTab::Models => model_settings,
+        SettingsTab::Agents => agents_section,
+        SettingsTab::McpServers => mcp_servers_section,
         SettingsTab::Tools => tools_section,
         SettingsTab::Appearance => appearance,
         SettingsTab::Sessions => sessions_section,
@@ -220,10 +262,9 @@ fn build_model_settings_section<'a>(
                     ModelOption::UseDefault => {
                         Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, None))
                     }
-                    ModelOption::Model(m) => Message::Settings(settings::Msg::SetAgentModel(
-                        AgentType::Coding,
-                        Some(m),
-                    )),
+                    ModelOption::Model(m) => {
+                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, Some(m)))
+                    }
                 }
             })
             .width(Length::Fixed(300.0)),
@@ -314,12 +355,402 @@ fn build_tabs(active: SettingsTab) -> Element<'static, Message> {
     row![
         tab_button(SettingsTab::Accounts, "Accounts", icons::KEY),
         tab_button(SettingsTab::Models, "Models", icons::TUNE),
+        tab_button(SettingsTab::Agents, "Agents", icons::SMART_TOY),
+        tab_button(
+            SettingsTab::McpServers,
+            "MCP Servers",
+            icons::INTEGRATION_INSTRUCTIONS
+        ),
         tab_button(SettingsTab::Tools, "Tools & Safety", icons::SECURITY),
         tab_button(SettingsTab::Appearance, "Appearance", icons::BRIGHTNESS_6),
         tab_button(SettingsTab::Sessions, "Sessions", icons::FOLDER_OPEN),
     ]
     .spacing(8)
     .into()
+}
+
+fn build_mcp_servers_section<'a>(
+    servers: &'a [McpServer],
+    form: &'a McpServerFormState,
+    import_json: &'a text_editor::Content,
+    theme: AppTheme,
+) -> Element<'a, Message> {
+    let is_dark = theme.is_dark();
+    let transport_options = vec![McpTransport::Stdio, McpTransport::StreamableHttp];
+
+    let is_editing = form.editing_id.is_some();
+    let form_title = if is_editing {
+        "Edit MCP Server"
+    } else {
+        "Add MCP Server"
+    };
+
+    let transport_row = row![
+        text("Transport:").size(14).width(Length::Fixed(120.0)),
+        pick_list(transport_options, Some(form.transport), |t| {
+            Message::Settings(settings::Msg::McpFormTransportChanged(t))
+        })
+        .width(Length::Fixed(220.0)),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    let name_row = row![
+        text("Name:").size(14).width(Length::Fixed(120.0)),
+        text_input("e.g. filesystem", &form.name)
+            .on_input(|v| Message::Settings(settings::Msg::McpFormNameChanged(v)))
+            .width(Length::Fixed(420.0)),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    let enabled_row = row![
+        text("Enabled:").size(14).width(Length::Fixed(120.0)),
+        checkbox(form.is_enabled)
+            .on_toggle(|v| Message::Settings(settings::Msg::McpFormEnabledChanged(v))),
+        text(if form.is_enabled { "On" } else { "Off" }).size(12),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    let args_row = row![
+        text("Args (JSON):").size(14).width(Length::Fixed(120.0)),
+        text_input(r#"e.g. ["--root","/path"]"#, &form.args_json)
+            .on_input(|v| Message::Settings(settings::Msg::McpFormArgsJsonChanged(v)))
+            .width(Length::Fixed(420.0)),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    let env_row = row![
+        text("Env (JSON):").size(14).width(Length::Fixed(120.0)),
+        text_input(r#"e.g. {"KEY":"VALUE"}"#, &form.env_json)
+            .on_input(|v| Message::Settings(settings::Msg::McpFormEnvJsonChanged(v)))
+            .width(Length::Fixed(420.0)),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    let transport_specific = match form.transport {
+        McpTransport::Stdio => {
+            let command_row = row![
+                text("Command:").size(14).width(Length::Fixed(120.0)),
+                text_input("e.g. mcp-filesystem", &form.command)
+                    .on_input(|v| Message::Settings(settings::Msg::McpFormCommandChanged(v)))
+                    .width(Length::Fixed(420.0)),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
+            column![command_row].spacing(10)
+        }
+        McpTransport::StreamableHttp => {
+            let url_row = row![
+                text("Endpoint URL:").size(14).width(Length::Fixed(120.0)),
+                text_input("e.g. http://localhost:8080", &form.endpoint_url)
+                    .on_input(|v| {
+                        Message::Settings(settings::Msg::McpFormEndpointUrlChanged(v))
+                    })
+                    .width(Length::Fixed(420.0)),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
+            column![url_row].spacing(10)
+        }
+    };
+
+    let actions = row![
+        button(row![icon(icons::SAVE).size(16), text(" Save").size(14),].spacing(4))
+            .on_press(Message::Settings(settings::Msg::McpFormSave))
+            .style(styles::primary_button)
+            .padding([8, 12]),
+        button(row![icon(icons::ADD).size(16), text(" New").size(14),].spacing(4))
+            .on_press(Message::Settings(settings::Msg::McpFormNew))
+            .style(styles::secondary_button)
+            .padding([8, 12]),
+        button(row![icon(icons::CLOSE).size(16), text(" Cancel").size(14),].spacing(4))
+            .on_press(Message::Settings(settings::Msg::McpFormCancel))
+            .style(styles::secondary_button)
+            .padding([8, 12]),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    let import_card: Element<'a, Message> = container(
+        column![
+            text("Import MCP JSON").size(18),
+            text("Paste MCP server JSON (Claude Desktop-style `mcpServers`, or an array of server objects) and add them to Ticca.")
+                .size(12),
+            container(
+                text_editor(import_json)
+                    .on_action(|action| {
+                        Message::Settings(settings::Msg::McpImportEditorAction(action))
+                    })
+                    .height(Length::Fixed(180.0))
+                    .style(move |theme, _status| styles::raw_text_editor(theme, is_dark)),
+            )
+            .padding(8)
+            .style(styles::card_container),
+            row![
+                button(row![icon(icons::ADD).size(16), text(" Parse & Add").size(14),].spacing(4))
+                    .on_press(Message::Settings(settings::Msg::McpImportApply))
+                    .style(styles::primary_button)
+                    .padding([8, 12]),
+                button(row![icon(icons::CLOSE).size(16), text(" Clear").size(14),].spacing(4))
+                    .on_press(Message::Settings(settings::Msg::McpImportClear))
+                    .style(styles::secondary_button)
+                    .padding([8, 12]),
+            ]
+            .spacing(10),
+        ]
+        .spacing(10),
+    )
+    .padding(20)
+    .style(styles::card_container)
+    .into();
+
+    let form_card: Element<'a, Message> = container(
+        column![
+            text(form_title).size(18),
+            text("Configure MCP servers that provide additional tools.").size(12),
+            Space::new().height(Length::Fixed(4.0)),
+            name_row,
+            transport_row,
+            transport_specific,
+            args_row,
+            env_row,
+            enabled_row,
+            Space::new().height(Length::Fixed(6.0)),
+            actions,
+        ]
+        .spacing(10),
+    )
+    .padding(20)
+    .style(styles::card_container)
+    .into();
+
+    let mut server_rows: Vec<Element<'a, Message>> = Vec::new();
+    for server in servers {
+        let transport_label = match server.transport {
+            McpTransport::Stdio => "stdio",
+            McpTransport::StreamableHttp => "http",
+        };
+
+        let summary = match server.transport {
+            McpTransport::Stdio => server
+                .command
+                .as_deref()
+                .map(|c| format!("{} • {}", transport_label, c))
+                .unwrap_or_else(|| transport_label.to_string()),
+            McpTransport::StreamableHttp => server
+                .endpoint_url
+                .as_deref()
+                .map(|u| format!("{} • {}", transport_label, u))
+                .unwrap_or_else(|| transport_label.to_string()),
+        };
+
+        let row_el: Element<'a, Message> = container(
+            row![
+                checkbox(server.is_enabled).on_toggle({
+                    let server_id = server.id.clone();
+                    move |enabled| {
+                        Message::Settings(settings::Msg::McpSetServerEnabled {
+                            server_id: server_id.clone(),
+                            enabled,
+                        })
+                    }
+                }),
+                column![text(&server.name).size(14), text(summary).size(11),]
+                    .spacing(2)
+                    .width(Length::Fill),
+                button(row![icon(icons::EDIT).size(16)].spacing(6))
+                    .on_press(Message::Settings(settings::Msg::McpFormEdit(
+                        server.id.clone()
+                    )))
+                    .style(styles::secondary_button)
+                    .padding([4, 8]),
+                button(row![icon(icons::DELETE).size(16)].spacing(6))
+                    .on_press(Message::Settings(settings::Msg::McpDeleteServer(
+                        server.id.clone()
+                    )))
+                    .style(styles::danger_icon_button)
+                    .padding([4, 8]),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding([10, 12])
+        .style(styles::card_container)
+        .into();
+
+        server_rows.push(row_el);
+    }
+
+    let list_body: Element<'a, Message> = if server_rows.is_empty() {
+        text("No MCP servers configured yet.").size(13).into()
+    } else {
+        Column::with_children(server_rows).spacing(10).into()
+    };
+
+    let list_card: Element<'a, Message> = container(
+        column![
+            row![
+                text("Configured Servers").size(18),
+                horizontal_space(),
+                button(row![icon(icons::REFRESH).size(16), text(" Refresh").size(14),].spacing(4))
+                    .on_press(Message::Settings(settings::Msg::RefreshMcp))
+                    .style(styles::secondary_button)
+                    .padding([6, 10]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            list_body,
+        ]
+        .spacing(12),
+    )
+    .padding(20)
+    .style(styles::card_container)
+    .into();
+
+    column![import_card, form_card, list_card].spacing(12).into()
+}
+
+fn build_agent_mcp_section<'a>(
+    servers: &'a [McpServer],
+    agent_mcp_server_ids: &'a HashMap<AgentType, Vec<String>>,
+) -> Element<'a, Message> {
+    let help = container(
+        column![
+            row![
+                text("Agent Configuration").size(18),
+                horizontal_space(),
+                button(row![icon(icons::REFRESH).size(16), text(" Refresh").size(14),].spacing(4))
+                    .on_press(Message::Settings(settings::Msg::RefreshMcp))
+                    .style(styles::secondary_button)
+                    .padding([6, 10]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            text("Assign MCP servers to agents (rows: servers, columns: agents).").size(12),
+        ]
+        .spacing(10),
+    )
+    .padding(20)
+    .style(styles::card_container);
+
+    let agents = [AgentType::Coding, AgentType::Planning];
+
+    let table_body: Element<'a, Message> = if servers.is_empty() {
+        text("No MCP servers configured. Add one in the MCP Servers tab.")
+            .size(13)
+            .into()
+    } else {
+        let server_col_width = 340.0;
+        let agent_col_width = 120.0;
+
+        let header_row: Element<'a, Message> = container(
+            row![
+                text("MCP Server")
+                    .size(13)
+                    .width(Length::Fixed(server_col_width)),
+                row(agents.iter().map(|agent| {
+                    container(text(agent.display_name()).size(13))
+                        .width(Length::Fixed(agent_col_width))
+                        .center_x(Length::Fixed(agent_col_width))
+                        .into()
+                }))
+                .spacing(10)
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding([10, 12])
+        .style(styles::card_container)
+        .into();
+
+        let mut rows: Vec<Element<'a, Message>> = vec![header_row];
+
+        for server in servers {
+            let transport_label = match server.transport {
+                McpTransport::Stdio => "stdio",
+                McpTransport::StreamableHttp => "http",
+            };
+
+            let detail = match server.transport {
+                McpTransport::Stdio => server
+                    .command
+                    .as_deref()
+                    .map(|c| format!("{} • {}", transport_label, c))
+                    .unwrap_or_else(|| transport_label.to_string()),
+                McpTransport::StreamableHttp => server
+                    .endpoint_url
+                    .as_deref()
+                    .map(|u| format!("{} • {}", transport_label, u))
+                    .unwrap_or_else(|| transport_label.to_string()),
+            };
+
+            let name = if server.is_enabled {
+                server.name.clone()
+            } else {
+                format!("{} (disabled)", server.name)
+            };
+
+            let server_cell: Element<'a, Message> = column![
+                text(name).size(14),
+                text(detail).size(11),
+            ]
+            .spacing(2)
+            .width(Length::Fixed(server_col_width))
+            .into();
+
+            let mut agent_cells: Vec<Element<'a, Message>> = Vec::new();
+            for agent in agents {
+                let checked = agent_mcp_server_ids
+                    .get(&agent)
+                    .map(|ids| ids.contains(&server.id))
+                    .unwrap_or(false);
+
+                agent_cells.push(
+                    container(
+                        checkbox(checked).on_toggle({
+                            let server_id = server.id.clone();
+                            move |enabled| {
+                                Message::Settings(settings::Msg::AgentMcpToggled {
+                                    agent_type: agent,
+                                    server_id: server_id.clone(),
+                                    enabled,
+                                })
+                            }
+                        }),
+                    )
+                    .width(Length::Fixed(agent_col_width))
+                    .center_x(Length::Fixed(agent_col_width))
+                    .into(),
+                );
+            }
+
+            let row_el: Element<'a, Message> = container(
+                row![server_cell, row(agent_cells).spacing(10)]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+            )
+            .padding([10, 12])
+            .style(styles::card_container)
+            .into();
+
+            rows.push(row_el);
+        }
+
+        Column::with_children(rows).spacing(10).into()
+    };
+
+    let table_card: Element<'a, Message> = container(table_body)
+        .padding(20)
+        .style(styles::card_container)
+        .into();
+
+    column![help, table_card].spacing(12).into()
 }
 
 fn build_accounts_section(
@@ -408,10 +839,12 @@ fn build_accounts_section(
                                     ]
                                     .spacing(4)
                                 )
-                                .on_press(Message::Settings(settings::Msg::ToggleOAuthAccountActive {
-                                    account_id: account.id.clone(),
-                                    is_active: !account.is_active,
-                                }))
+                                .on_press(Message::Settings(
+                                    settings::Msg::ToggleOAuthAccountActive {
+                                        account_id: account.id.clone(),
+                                        is_active: !account.is_active,
+                                    }
+                                ))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
@@ -421,10 +854,12 @@ fn build_accounts_section(
                                     ]
                                     .spacing(4)
                                 )
-                                .on_press(Message::Settings(settings::Msg::AdjustOAuthAccountPriority {
-                                    account_id: account.id.clone(),
-                                    delta: -1,
-                                }))
+                                .on_press(Message::Settings(
+                                    settings::Msg::AdjustOAuthAccountPriority {
+                                        account_id: account.id.clone(),
+                                        delta: -1,
+                                    }
+                                ))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
@@ -434,10 +869,12 @@ fn build_accounts_section(
                                     ]
                                     .spacing(4)
                                 )
-                                .on_press(Message::Settings(settings::Msg::AdjustOAuthAccountPriority {
-                                    account_id: account.id.clone(),
-                                    delta: 1,
-                                }))
+                                .on_press(Message::Settings(
+                                    settings::Msg::AdjustOAuthAccountPriority {
+                                        account_id: account.id.clone(),
+                                        delta: 1,
+                                    }
+                                ))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
@@ -524,12 +961,16 @@ fn build_tools_section(yolo_mode_enabled: bool) -> Element<'static, Message> {
 
     let status_button = if yolo_mode_enabled {
         button(text(status_label).size(12))
-            .on_press(Message::Settings(settings::Msg::SetYoloMode(!yolo_mode_enabled)))
+            .on_press(Message::Settings(settings::Msg::SetYoloMode(
+                !yolo_mode_enabled,
+            )))
             .style(styles::success_button)
             .padding([6, 10])
     } else {
         button(text(status_label).size(12))
-            .on_press(Message::Settings(settings::Msg::SetYoloMode(!yolo_mode_enabled)))
+            .on_press(Message::Settings(settings::Msg::SetYoloMode(
+                !yolo_mode_enabled,
+            )))
             .style(styles::secondary_button)
             .padding([6, 10])
     };

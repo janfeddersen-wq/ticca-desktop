@@ -3,7 +3,7 @@
 //! These wrappers implement rig's `Tool` trait to enable the ReAct loop.
 
 use super::policy::ToolPolicy;
-use super::todo::{TodoItem, TodoListEvent, TodoStatus, TodoStore};
+use super::todo::{TodoItem, TodoListEvent, TodoListState, TodoStatus, TodoStore};
 use crate::agents::{AgentType, get_all_agents};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
@@ -1171,6 +1171,38 @@ impl Tool for InvokeAgentTool {
 #[error("Todo list error: {0}")]
 pub struct TodoListError(String);
 
+async fn update_todo_list(
+    context: &Arc<ToolContext>,
+    args: TodoListArgs,
+) -> Result<TodoListState, TodoListError> {
+    let store = context
+        .todo_store
+        .as_ref()
+        .ok_or_else(|| TodoListError("Todo store is not configured".to_string()))?;
+
+    let items: Vec<TodoItem> = args
+        .items
+        .into_iter()
+        .map(|item| TodoItem {
+            text: item.text,
+            status: item.status,
+        })
+        .collect();
+
+    let state = store
+        .update_node(context.node_id, items, args.confirmed_complete)
+        .await;
+
+    if let Some(tx) = &context.todo_tx {
+        let _ = tx.send(TodoListEvent::Updated {
+            node_id: context.node_id,
+            state: state.clone(),
+        });
+    }
+
+    Ok(state)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TodoListArgs {
     /// Array of to-do items for this agent.
@@ -1220,36 +1252,103 @@ impl Tool for TodoListTool {
             .context
             .as_ref()
             .ok_or_else(|| TodoListError("Tool context is missing".to_string()))?;
+        let state = update_todo_list(context, args).await?;
+        Ok(state.format_markdown())
+    }
+}
+
+// ============================================================================
+// Todo Read/Write Tools (LLxprt-compatible names)
+// ============================================================================
+
+#[derive(Debug, thiserror::Error)]
+#[error("Todo read error: {0}")]
+pub struct TodoReadError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TodoReadArgs {}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TodoReadTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl TodoReadTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for TodoReadTool {
+    const NAME: &'static str = "todo_read";
+
+    type Error = TodoReadError;
+    type Args = TodoReadArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::todo_read_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let context = self
+            .context
+            .as_ref()
+            .ok_or_else(|| TodoReadError("Tool context is missing".to_string()))?;
         let store = context
             .todo_store
             .as_ref()
-            .ok_or_else(|| TodoListError("Todo store is not configured".to_string()))?;
+            .ok_or_else(|| TodoReadError("Todo store is not configured".to_string()))?;
+        let state = store.snapshot(context.node_id).await;
+        Ok(state.format_markdown())
+    }
+}
 
-        let items: Vec<TodoItem> = args
-            .items
-            .into_iter()
-            .map(|item| TodoItem {
-                text: item.text,
-                status: item.status,
-            })
-            .collect();
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TodoWriteTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
 
-        let state = store
-            .update_node(context.node_id, items, args.confirmed_complete)
-            .await;
-
-        if let Some(tx) = &context.todo_tx {
-            let _ = tx.send(TodoListEvent::Updated {
-                node_id: context.node_id,
-                state: state.clone(),
-            });
+impl TodoWriteTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
         }
+    }
+}
 
-        if state.is_completed_and_confirmed() {
-            Ok("To Do list updated and confirmed complete.".to_string())
-        } else {
-            Ok("To Do list updated. Confirmation pending.".to_string())
+impl Tool for TodoWriteTool {
+    const NAME: &'static str = "todo_write";
+
+    type Error = TodoListError;
+    type Args = TodoListArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::todo_write_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
         }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let context = self
+            .context
+            .as_ref()
+            .ok_or_else(|| TodoListError("Tool context is missing".to_string()))?;
+        let state = update_todo_list(context, args).await?;
+        Ok(state.format_markdown())
     }
 }
 
@@ -1267,6 +1366,8 @@ pub fn create_tools(context: Arc<ToolContext>) -> RigTools {
         GrepTool::new(context.clone()),
         WriteFileTool::new(context.clone()),
         ListAgentsTool::new(context.clone()),
+        TodoReadTool::new(context.clone()),
+        TodoWriteTool::new(context.clone()),
         TodoListTool::new(context.clone()),
         InvokeAgentTool::new(context),
     )
@@ -1284,6 +1385,8 @@ pub type RigTools = (
     GrepTool,
     WriteFileTool,
     ListAgentsTool,
+    TodoReadTool,
+    TodoWriteTool,
     TodoListTool,
     InvokeAgentTool,
 );

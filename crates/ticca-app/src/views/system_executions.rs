@@ -4,7 +4,7 @@ use iced::widget::{Space, button, column, container, row, scrollable, text, text
 use iced::{Color, Element, Length};
 
 use crate::material_icons::{icon, icons};
-use crate::messages::{chat, Message};
+use crate::messages::{Message, chat};
 use crate::system_executions::SystemExecutionsState;
 use crate::theme::{AppTheme, styles};
 
@@ -52,15 +52,21 @@ pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Elemen
         let title = row![
             text(process_id.clone()).size(12).width(Length::Fill),
             button(row![icon(icons::CONTENT_COPY).size(16)].spacing(6))
-                .on_press(Message::Chat(chat::Msg::SystemExecCopyTerminal(process_id.clone())))
+                .on_press(Message::Chat(chat::Msg::SystemExecCopyTerminal(
+                    process_id.clone()
+                )))
                 .style(styles::secondary_button)
                 .padding([4, 8]),
             button(row![icon(icons::CANCEL).size(16)].spacing(6))
-                .on_press(Message::Chat(chat::Msg::SystemExecKillTerminal(process_id.clone())))
+                .on_press(Message::Chat(chat::Msg::SystemExecKillTerminal(
+                    process_id.clone()
+                )))
                 .style(styles::danger_icon_button)
                 .padding([4, 8]),
             button(row![icon(icons::CLOSE).size(16)].spacing(6))
-                .on_press(Message::Chat(chat::Msg::SystemExecCloseTerminal(process_id.clone())))
+                .on_press(Message::Chat(chat::Msg::SystemExecCloseTerminal(
+                    process_id.clone()
+                )))
                 .style(styles::secondary_button)
                 .padding([4, 8]),
         ]

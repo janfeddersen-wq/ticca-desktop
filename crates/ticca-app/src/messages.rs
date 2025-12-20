@@ -77,6 +77,8 @@ pub enum OAuthProvider {
 pub enum SettingsTab {
     Accounts,
     Models,
+    Agents,
+    McpServers,
     Tools,
     Appearance,
     Sessions,

@@ -324,7 +324,7 @@ pub fn invoke_agent_spec() -> ToolSpec {
     }
 }
 
-pub fn todo_list_spec() -> ToolSpec {
+fn todo_write_schema() -> (Value, ToolParameterSchema) {
     let mut item_props = std::collections::HashMap::new();
     item_props.insert(
         "text".to_string(),
@@ -358,29 +358,61 @@ pub fn todo_list_spec() -> ToolSpec {
         .with_default(json!(null)),
     );
 
+    let rig_parameters = json!({
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "description": "Ordered list of tasks for the current agent",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string", "description": "Task description (keep short)" },
+                        "status": { "type": "string", "description": "One of: pending | in_progress | completed" }
+                    },
+                    "required": ["text", "status"]
+                }
+            },
+            "confirmed_complete": { "type": "boolean", "description": "Set true to confirm all tasks are completed (only accepted if all items are completed)" }
+        },
+        "required": ["items"]
+    });
+
+    let registry_parameters = ToolParameterSchema::object(params, vec!["items".to_string()]);
+
+    (rig_parameters, registry_parameters)
+}
+
+pub fn todo_read_spec() -> ToolSpec {
+    ToolSpec {
+        name: "todo_read",
+        description: "Read the current agent-scoped To Do list (including confirmation state).",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }),
+        registry_parameters: ToolParameterSchema::object(std::collections::HashMap::new(), vec![]),
+    }
+}
+
+pub fn todo_write_spec() -> ToolSpec {
+    let (rig_parameters, registry_parameters) = todo_write_schema();
+    ToolSpec {
+        name: "todo_write",
+        description: "Update the agent-scoped To Do list. Replace the entire list each call; confirm completion by setting confirmed_complete=true when all items are completed.",
+        rig_parameters,
+        registry_parameters,
+    }
+}
+
+pub fn todo_list_spec() -> ToolSpec {
+    let (rig_parameters, registry_parameters) = todo_write_schema();
     ToolSpec {
         name: "todo_list",
         description: "Maintain an agent-scoped To Do list. Replace the entire list each call; confirm completion by setting confirmed_complete=true when all items are completed.",
-        rig_parameters: json!({
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "description": "Ordered list of tasks for the current agent",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "text": { "type": "string", "description": "Task description (keep short)" },
-                            "status": { "type": "string", "description": "One of: pending | in_progress | completed" }
-                        },
-                        "required": ["text", "status"]
-                    }
-                },
-                "confirmed_complete": { "type": "boolean", "description": "Set true to confirm all tasks are completed (only accepted if all items are completed)" }
-            },
-            "required": ["items"]
-        }),
-        registry_parameters: ToolParameterSchema::object(params, vec!["items".to_string()]),
+        rig_parameters,
+        registry_parameters,
     }
 }
 
@@ -400,6 +432,8 @@ pub fn tool_specs_for_names(names: &[&str]) -> Vec<ToolSpec> {
             "write_file" => Some(write_file_spec()),
             "list_agents" => Some(list_agents_spec()),
             "invoke_agent" => Some(invoke_agent_spec()),
+            "todo_read" => Some(todo_read_spec()),
+            "todo_write" => Some(todo_write_spec()),
             "todo_list" => Some(todo_list_spec()),
             _ => None,
         })

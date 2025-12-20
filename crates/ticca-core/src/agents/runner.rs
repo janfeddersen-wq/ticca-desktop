@@ -7,7 +7,7 @@
 
 use crate::agents::{AgentProfile, AgentType};
 use crate::config::models::providers;
-use crate::config::{ConfigDatabase, setting_keys};
+use crate::config::{ConfigDatabase, McpServer, McpTransport, setting_keys};
 use crate::llm;
 use crate::llm::auth::{self, AuthToken};
 use crate::llm::providers::GeminiCodeAssistRigClient;
@@ -15,8 +15,9 @@ use crate::llm::providers::chatgpt::ChatGptOAuthClient;
 use crate::llm::{ClaudeOAuthClient, ProviderId, ProviderRegistry};
 use crate::session::MessageRole;
 use crate::tools::{
-    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TodoListEvent, TodoStore,
-    ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy,
+    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TodoListEvent,
+    TodoListState, TodoStore, ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest,
+    ToolContext, ToolPolicy,
 };
 
 use futures::StreamExt;
@@ -27,11 +28,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
 use tokio::sync::mpsc;
+use tokio::time::Duration;
 
 const DEFAULT_COOLDOWN_SECS: i64 = 60;
 const CLAUDE_CODE_INSTRUCTIONS: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-const TODO_GUARD_PROMPT: &str = "You must not finish until your To Do list is confirmed complete.\n\nUse the `todo_list` tool now:\n- Provide the full `items` array (can be empty)\n- Set every item's status to `completed`\n- Set `confirmed_complete` to true\n\nIf there is remaining work, add/update items and continue working instead of finishing.";
+const TODO_GUARD_PROMPT: &str = "You must not finish until your To Do list is confirmed complete.\n\nUse the `todo_write` tool now (or `todo_list`):\n- Provide the full `items` array (can be empty)\n- Set every item's status to `completed`\n- Set `confirmed_complete` to true\n\nIf there is remaining work, add/update items and continue working instead of finishing.";
 const TODO_GUARD_MAX_PASSES: usize = 4;
+const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct ChatHistoryMessage {
@@ -186,6 +189,115 @@ fn prepend_system_to_first_user_message(
     }
 }
 
+fn list_active_mcp_servers(agent: AgentType) -> Vec<McpServer> {
+    let Ok(db) = ConfigDatabase::open() else {
+        return Vec::new();
+    };
+
+    let ids = db
+        .get_agent_mcp_server_ids(agent.as_str())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Vec::new();
+    }
+
+    let servers = db.list_mcp_servers().unwrap_or_default();
+    servers
+        .into_iter()
+        .filter(|s| s.is_enabled && ids.contains(&s.id))
+        .collect()
+}
+
+fn rmcp_client_info() -> rmcp::model::ClientInfo {
+    use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
+    ClientInfo {
+        protocol_version: Default::default(),
+        capabilities: ClientCapabilities::default(),
+        client_info: Implementation {
+            name: "ticca-desktop".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            ..Default::default()
+        },
+    }
+}
+
+async fn connect_mcp_server(
+    server: &McpServer,
+) -> anyhow::Result<(Vec<rmcp::model::Tool>, rmcp::service::ServerSink)> {
+    use rmcp::ServiceExt;
+
+    match server.transport {
+        McpTransport::StreamableHttp => {
+            let url = server
+                .endpoint_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("Missing endpoint_url for HTTP MCP server"))?;
+
+            let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(url);
+            let client = rmcp_client_info().serve(transport).await?;
+
+            let tools = client.list_tools(Default::default()).await?.tools;
+            Ok((tools, client.peer().to_owned()))
+        }
+        McpTransport::Stdio => {
+            let command = server
+                .command
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("Missing command for stdio MCP server"))?;
+
+            let mut cmd = tokio::process::Command::new(command);
+            cmd.args(&server.args);
+            cmd.envs(server.env.clone());
+
+            let transport = rmcp::transport::TokioChildProcess::new(cmd)
+                .map_err(|e| anyhow::anyhow!("Failed to spawn MCP server '{}': {}", command, e))?;
+
+            let client = rmcp_client_info().serve(transport).await?;
+            let tools = client.list_tools(Default::default()).await?.tools;
+            Ok((tools, client.peer().to_owned()))
+        }
+    }
+}
+
+async fn attach_mcp_tools_to_builder<M>(
+    mut builder: rig::agent::AgentBuilderSimple<M>,
+    agent: AgentType,
+) -> rig::agent::AgentBuilderSimple<M>
+where
+    M: rig::completion::CompletionModel + 'static,
+{
+    let servers = list_active_mcp_servers(agent);
+    if servers.is_empty() {
+        return builder;
+    }
+
+    for server in servers {
+        let res = tokio::time::timeout(MCP_CONNECT_TIMEOUT, connect_mcp_server(&server)).await;
+        match res {
+            Ok(Ok((tools, sink))) => {
+                if tools.is_empty() {
+                    tracing::info!("MCP server '{}' has no tools", server.name);
+                    continue;
+                }
+                tracing::info!("Loaded {} MCP tools from '{}'", tools.len(), server.name);
+                builder = builder.rmcp_tools(tools, sink);
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("Failed to connect to MCP server '{}': {}", server.name, e);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "Timed out connecting to MCP server '{}' ({}s)",
+                    server.name,
+                    MCP_CONNECT_TIMEOUT.as_secs()
+                );
+            }
+        }
+    }
+
+    builder
+}
+
 /// Run the Rig agent with streaming response and tools (ReAct loop).
 ///
 /// Routes to Claude, ChatGPT/Codex, or Gemini based on model name.
@@ -198,6 +310,7 @@ pub fn run_rig_agent_stream(
     working_directory: PathBuf,
     max_tool_rounds: u32,
     chat_history: Vec<ChatHistoryMessage>,
+    initial_todo_state: Option<TodoListState>,
     image_data: Vec<(String, String)>,
     yolo_mode_enabled: bool,
     current_agent: AgentType,
@@ -251,7 +364,10 @@ pub fn run_rig_agent_stream(
             Box::pin(invoke_agent(request))
         });
 
-        let initial_todo_state = todo_store.reset_node(0).await;
+        let initial_todo_state = match initial_todo_state {
+            Some(state) => todo_store.set_node_state(0, state).await,
+            None => todo_store.reset_node(0).await,
+        };
         let _ = todo_tx.send(TodoListEvent::Reset {
             node_id: 0,
             state: initial_todo_state,
@@ -463,11 +579,13 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 grep,
                 write_file,
                 list_agents,
+                todo_read,
+                todo_write,
                 todo_list,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context);
 
-            let agent = AgentBuilder::new(model)
+            let builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
                 .tool(execute_shell)
                 .tool(list_processes)
@@ -480,8 +598,14 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
                 .tool(todo_list)
-                .tool(invoke_agent_tool)
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
+
+            let agent = builder
                 .temperature(0.7)
                 .max_tokens(8192)
                 .additional_params(ChatGptOAuthClient::codex_params())
@@ -517,11 +641,13 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 grep,
                 write_file,
                 list_agents,
+                todo_read,
+                todo_write,
                 todo_list,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context);
 
-            let agent = AgentBuilder::new(model)
+            let builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
                 .tool(execute_shell)
                 .tool(list_processes)
@@ -534,11 +660,14 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
                 .tool(todo_list)
-                .tool(invoke_agent_tool)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .build();
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
+
+            let agent = builder.temperature(0.7).max_tokens(8192).build();
 
             stream_invoked_agent(
                 request.node_id,
@@ -571,6 +700,8 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 grep,
                 write_file,
                 list_agents,
+                todo_read,
+                todo_write,
                 todo_list,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context);
@@ -578,7 +709,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             let mut claude_history = history;
             prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
 
-            let agent = AgentBuilder::new(model)
+            let builder = AgentBuilder::new(model)
                 .preamble(CLAUDE_CODE_INSTRUCTIONS)
                 .tool(execute_shell)
                 .tool(list_processes)
@@ -591,11 +722,14 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
                 .tool(todo_list)
-                .tool(invoke_agent_tool)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .build();
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
+
+            let agent = builder.temperature(0.7).max_tokens(8192).build();
 
             stream_invoked_agent(
                 request.node_id,
@@ -797,11 +931,13 @@ async fn run_agent_stream(
                 grep,
                 write_file,
                 list_agents,
+                todo_read,
+                todo_write,
                 todo_list,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let agent = AgentBuilder::new(model)
+            let builder = AgentBuilder::new(model)
                 .preamble(&system_prompt)
                 .tool(execute_shell)
                 .tool(list_processes)
@@ -814,8 +950,14 @@ async fn run_agent_stream(
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
                 .tool(todo_list)
-                .tool(invoke_agent_tool)
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
+
+            let agent = builder
                 .temperature(0.7)
                 .max_tokens(8192)
                 .additional_params(ChatGptOAuthClient::codex_params())
@@ -948,11 +1090,13 @@ async fn run_agent_stream(
                 grep,
                 write_file,
                 list_agents,
+                todo_read,
+                todo_write,
                 todo_list,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let agent = AgentBuilder::new(model)
+            let builder = AgentBuilder::new(model)
                 .preamble(&system_prompt)
                 .tool(execute_shell)
                 .tool(list_processes)
@@ -965,11 +1109,14 @@ async fn run_agent_stream(
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
                 .tool(todo_list)
-                .tool(invoke_agent_tool)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .build();
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
+
+            let agent = builder.temperature(0.7).max_tokens(8192).build();
 
             use rig::agent::MultiTurnStreamItem;
             use rig::streaming::StreamingPrompt;
@@ -1099,6 +1246,8 @@ async fn run_agent_stream(
                 grep,
                 write_file,
                 list_agents,
+                todo_read,
+                todo_write,
                 todo_list,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
@@ -1106,7 +1255,7 @@ async fn run_agent_stream(
             let mut history = full_history;
             prepend_system_to_first_user_message(&system_prompt, &mut history);
 
-            let agent = AgentBuilder::new(model)
+            let builder = AgentBuilder::new(model)
                 .preamble(CLAUDE_CODE_INSTRUCTIONS)
                 .tool(execute_shell)
                 .tool(list_processes)
@@ -1119,11 +1268,14 @@ async fn run_agent_stream(
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
                 .tool(todo_list)
-                .tool(invoke_agent_tool)
-                .temperature(0.7)
-                .max_tokens(8192)
-                .build();
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
+
+            let agent = builder.temperature(0.7).max_tokens(8192).build();
 
             use rig::agent::MultiTurnStreamItem;
             use rig::message::Message as RigMessage;
@@ -1304,6 +1456,8 @@ mod tests {
             grep,
             write_file,
             list_agents,
+            todo_read,
+            todo_write,
             todo_list,
             invoke_agent_tool,
         ) = crate::tools::create_tools(tool_context.clone());
@@ -1326,6 +1480,8 @@ mod tests {
             .tool(grep)
             .tool(write_file)
             .tool(list_agents)
+            .tool(todo_read)
+            .tool(todo_write)
             .tool(todo_list)
             .tool(invoke_agent_tool)
             .temperature(0.1)
@@ -1376,6 +1532,8 @@ mod tests {
             grep,
             write_file,
             list_agents,
+            todo_read,
+            todo_write,
             todo_list,
             invoke_agent_tool,
         ) = crate::tools::create_tools(tool_context);
@@ -1393,6 +1551,8 @@ mod tests {
             .tool(grep)
             .tool(write_file)
             .tool(list_agents)
+            .tool(todo_read)
+            .tool(todo_write)
             .tool(todo_list)
             .tool(invoke_agent_tool)
             .temperature(0.1)

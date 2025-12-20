@@ -81,4 +81,3 @@ pub enum Msg {
     SystemExecKillTerminal(String),
     SystemExecCopyTerminal(String),
 }
-

@@ -8,14 +8,13 @@ use tokio::sync::mpsc;
 use crate::chat_message::ChatMessage;
 use crate::image_handler;
 use crate::llm_stream;
-use crate::messages::{chat, settings, Message, OAuthProvider};
+use crate::messages::{Message, OAuthProvider, chat, settings};
 use crate::oauth_handler;
 use crate::views::chat::CHAT_SCROLLABLE_ID;
 
 use ticca_core::agents::AgentType;
 use ticca_core::llm::ProviderId;
-use ticca_core::tools::{SystemExecRequest, SystemExecStore, ToolApprovalDecision};
-
+use ticca_core::tools::{SystemExecRequest, SystemExecStore, TodoListState, ToolApprovalDecision};
 
 #[derive(Debug)]
 pub(in crate::app) enum Effect {
@@ -26,6 +25,7 @@ pub(in crate::app) enum Effect {
         working_directory: PathBuf,
         max_tool_rounds: u32,
         history: Vec<ChatMessage>,
+        initial_todo_state: Option<TodoListState>,
         image_data: Vec<(String, String)>,
         yolo_mode_enabled: bool,
         current_agent: AgentType,
@@ -56,6 +56,7 @@ pub(in crate::app) fn task(effect: Effect) -> Task<Message> {
             working_directory,
             max_tool_rounds,
             history,
+            initial_todo_state,
             image_data,
             yolo_mode_enabled,
             current_agent,
@@ -71,6 +72,7 @@ pub(in crate::app) fn task(effect: Effect) -> Task<Message> {
                 working_directory,
                 max_tool_rounds,
                 history,
+                initial_todo_state,
                 image_data,
                 yolo_mode_enabled,
                 current_agent,

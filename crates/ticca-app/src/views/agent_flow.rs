@@ -1,7 +1,7 @@
 //! Agent call graph view (React Flow-style panel).
 
 use iced::widget::{canvas, column, container, row, scrollable, text};
-use iced::{Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size};
+use iced::{Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size, alignment};
 
 use crate::agent_graph::{AgentCallGraph, AgentNode};
 use crate::material_icons::{icon, icons};
@@ -209,7 +209,12 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
 
                 frame.fill_text(canvas::Text {
                     content: node.label.clone(),
-                    position: Point::new(position.x + 10.0, position.y + 30.0),
+                    position: Point::new(
+                        position.x + node_width / 2.0,
+                        position.y + node_height / 2.0,
+                    ),
+                    align_x: alignment::Horizontal::Center.into(),
+                    align_y: alignment::Vertical::Center.into(),
                     color: self.text_color(),
                     size: Pixels(14.0),
                     ..canvas::Text::default()

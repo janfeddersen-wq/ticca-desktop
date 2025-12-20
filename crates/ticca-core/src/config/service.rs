@@ -3,10 +3,11 @@ use uuid::Uuid;
 
 use ticca_oauth::TokenResponse;
 
-use crate::config::database::ConfigDatabase;
-use crate::config::models::{OAuthAccount, OAuthToken};
 use crate::config::TypedSettings;
+use crate::config::database::ConfigDatabase;
+use crate::config::mcp_import::parse_mcp_servers_json;
 use crate::config::models::providers;
+use crate::config::models::{McpServer, OAuthAccount, OAuthToken};
 
 pub struct ConfigService;
 
@@ -94,8 +95,11 @@ impl ConfigService {
         }
         let _ = db.upsert_oauth_token(&token);
 
-        let mut account =
-            OAuthAccount::new(Uuid::new_v4().to_string(), provider, &token_response.access_token);
+        let mut account = OAuthAccount::new(
+            Uuid::new_v4().to_string(),
+            provider,
+            &token_response.access_token,
+        );
         if let Some(refresh_token) = token_response
             .refresh_token
             .clone()
@@ -118,5 +122,47 @@ impl ConfigService {
         db.upsert_oauth_account(&account)?;
 
         Ok(())
+    }
+
+    // MCP servers
+
+    pub fn list_mcp_servers() -> Result<Vec<McpServer>> {
+        let db = ConfigDatabase::open()?;
+        db.list_mcp_servers()
+    }
+
+    pub fn upsert_mcp_server(server: &McpServer) -> Result<()> {
+        let db = ConfigDatabase::open()?;
+        db.upsert_mcp_server(server)
+    }
+
+    pub fn delete_mcp_server(server_id: &str) -> Result<bool> {
+        let db = ConfigDatabase::open()?;
+        db.delete_mcp_server(server_id)
+    }
+
+    pub fn set_mcp_server_enabled(server_id: &str, enabled: bool) -> Result<bool> {
+        let db = ConfigDatabase::open()?;
+        db.set_mcp_server_enabled(server_id, enabled)
+    }
+
+    pub fn get_agent_mcp_server_ids(agent_type: &str) -> Result<Vec<String>> {
+        let db = ConfigDatabase::open()?;
+        db.get_agent_mcp_server_ids(agent_type)
+    }
+
+    pub fn set_agent_mcp_server_ids(agent_type: &str, server_ids: &[String]) -> Result<()> {
+        let db = ConfigDatabase::open()?;
+        db.set_agent_mcp_server_ids(agent_type, server_ids)
+    }
+
+    pub fn import_mcp_servers_json(input: &str) -> Result<Vec<McpServer>> {
+        let existing = Self::list_mcp_servers().unwrap_or_default();
+        let servers = parse_mcp_servers_json(input, &existing)?;
+        let db = ConfigDatabase::open()?;
+        for server in &servers {
+            db.upsert_mcp_server(server)?;
+        }
+        Ok(servers)
     }
 }

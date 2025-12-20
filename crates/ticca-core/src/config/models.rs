@@ -2,6 +2,7 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// A key-value setting
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +228,100 @@ impl OAuthAccount {
         self.refresh_token
             .as_deref()
             .is_some_and(|token| !token.trim().is_empty())
+    }
+}
+
+/// MCP transport type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTransport {
+    Stdio,
+    StreamableHttp,
+}
+
+impl McpTransport {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Stdio => "stdio",
+            Self::StreamableHttp => "streamable_http",
+        }
+    }
+}
+
+impl std::fmt::Display for McpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for McpTransport {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "stdio" => Ok(Self::Stdio),
+            "streamable_http" | "streamable-http" | "http" => Ok(Self::StreamableHttp),
+            _ => Err(()),
+        }
+    }
+}
+
+/// MCP server configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServer {
+    pub id: String,
+    pub name: String,
+    pub transport: McpTransport,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub endpoint_url: Option<String>,
+    pub is_enabled: bool,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+impl McpServer {
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            transport: McpTransport::Stdio,
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            endpoint_url: None,
+            is_enabled: true,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    pub fn with_stdio_command(mut self, command: impl Into<String>) -> Self {
+        self.transport = McpTransport::Stdio;
+        self.command = Some(command.into());
+        self
+    }
+
+    pub fn with_streamable_http(mut self, url: impl Into<String>) -> Self {
+        self.transport = McpTransport::StreamableHttp;
+        self.endpoint_url = Some(url.into());
+        self
+    }
+
+    pub fn with_args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    pub fn with_env(mut self, env: BTreeMap<String, String>) -> Self {
+        self.env = env;
+        self
+    }
+
+    pub fn set_enabled(mut self, enabled: bool) -> Self {
+        self.is_enabled = enabled;
+        self
     }
 }
 

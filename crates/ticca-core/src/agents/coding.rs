@@ -15,6 +15,8 @@ impl Agent for CodingAgent {
 
     fn available_tools(&self) -> Vec<&'static str> {
         vec![
+            "todo_read",
+            "todo_write",
             "todo_list",
             "list_files",
             "read_file",
@@ -38,7 +40,7 @@ impl Agent for CodingAgent {
         let guidelines = PromptBlocks::agent_guidelines(
             &policy,
             &[
-                "Maintain a To Do list via todo_list; update it as you work and confirm completion before ending",
+                "Use todo_read to see the current To Do list; use todo_write (or todo_list) to update it and confirm completion before ending",
                 "Use list_files to explore project structure before modifying files",
                 "Follow DRY, YAGNI, and SOLID principles",
                 "Keep solutions simple and readable (KISS)",
@@ -76,6 +78,8 @@ mod tests {
         assert!(agent.can_use_tool("kill_process"));
         assert!(agent.can_use_tool("list_agents"));
         assert!(agent.can_use_tool("invoke_agent"));
+        assert!(agent.can_use_tool("todo_read"));
+        assert!(agent.can_use_tool("todo_write"));
         assert!(agent.can_use_tool("todo_list"));
     }
 
@@ -105,6 +109,8 @@ mod tests {
         let tools = agent.available_tools();
 
         // Coding agent should have all tools
+        assert!(tools.contains(&"todo_read"));
+        assert!(tools.contains(&"todo_write"));
         assert!(tools.contains(&"todo_list"));
         assert!(tools.contains(&"list_files"));
         assert!(tools.contains(&"read_file"));
@@ -118,7 +124,7 @@ mod tests {
         assert!(tools.contains(&"list_processes"));
         assert!(tools.contains(&"read_process_output"));
         assert!(tools.contains(&"kill_process"));
-        assert_eq!(tools.len(), 13);
+        assert_eq!(tools.len(), 15);
     }
 
     #[test]
@@ -127,6 +133,8 @@ mod tests {
         let prompt = agent.system_prompt();
 
         // Prompt should describe all available tools
+        assert!(prompt.contains("### todo_read"));
+        assert!(prompt.contains("### todo_write"));
         assert!(prompt.contains("### todo_list"));
         assert!(prompt.contains("### list_files"));
         assert!(prompt.contains("### read_file"));

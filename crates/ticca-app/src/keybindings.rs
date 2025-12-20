@@ -11,7 +11,7 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::window;
 
 use crate::image_handler;
-use crate::messages::{chat, settings, Message};
+use crate::messages::{Message, chat, settings};
 use ticca_core::agents::AgentType;
 
 /// A keyboard shortcut definition

@@ -1,8 +1,8 @@
 //! Provider registry and model routing
 
+use crate::config::models::providers;
 use crate::llm::providers::chatgpt::is_gpt_model;
 use crate::llm::providers::gemini::is_gemini_model;
-use crate::config::models::providers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderId {

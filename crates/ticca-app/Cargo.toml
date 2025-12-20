@@ -46,6 +46,9 @@ material-icons.workspace = true
 # Image processing
 image.workspace = true
 
+# SVG rasterization for window icons
+resvg = "0.45"
+
 # Base64 encoding for image data
 base64.workspace = true
 
@@ -60,3 +63,7 @@ http = "1"
 
 # Embedded terminals (System Executions)
 iced_term = { git = "https://github.com/janfeddersen-wq/iced_term.git", rev = "ea244f23afa20b368f44b573b9c893e12a6c74d3" }
+
+[build-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+resvg = "0.45"

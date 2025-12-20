@@ -39,6 +39,63 @@ impl TodoListState {
                 .iter()
                 .all(|item| item.status == TodoStatus::Completed)
     }
+
+    pub fn format_markdown(&self) -> String {
+        let total = self.items.len();
+        let completed = self
+            .items
+            .iter()
+            .filter(|item| item.status == TodoStatus::Completed)
+            .count();
+        let in_progress = self
+            .items
+            .iter()
+            .filter(|item| item.status == TodoStatus::InProgress)
+            .count();
+        let pending = self
+            .items
+            .iter()
+            .filter(|item| item.status == TodoStatus::Pending)
+            .count();
+
+        let status_line = if self.is_completed_and_confirmed() {
+            "✅ Confirmed complete"
+        } else {
+            "⚠️ Not confirmed"
+        };
+
+        let mut lines = Vec::new();
+        lines.push("## To Do".to_string());
+        lines.push(status_line.to_string());
+        lines.push(format!(
+            "{} items: {} completed, {} in progress, {} pending",
+            total, completed, in_progress, pending
+        ));
+        lines.push(String::new());
+
+        if self.items.is_empty() {
+            lines.push("No items.".to_string());
+        } else {
+            for item in &self.items {
+                let icon = match item.status {
+                    TodoStatus::Pending => "○",
+                    TodoStatus::InProgress => "→",
+                    TodoStatus::Completed => "✔",
+                };
+                lines.push(format!("{} {}", icon, item.text));
+            }
+        }
+
+        if !self.is_completed_and_confirmed() {
+            lines.push(String::new());
+            lines.push(
+                "When all items are completed, call todo_write (or todo_list) with confirmed_complete=true."
+                    .to_string(),
+            );
+        }
+
+        lines.join("\n")
+    }
 }
 
 impl Default for TodoListState {
@@ -67,6 +124,12 @@ pub struct TodoStore {
 impl TodoStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub async fn set_node_state(&self, node_id: usize, state: TodoListState) -> TodoListState {
+        let mut guard = self.inner.write().await;
+        guard.insert(node_id, state.clone());
+        state
     }
 
     pub async fn reset_node(&self, node_id: usize) -> TodoListState {

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Ticca Desktop
+Comment=AI-assisted coding desktop app
+TryExec=ticca
+Exec=ticca
+Icon=ticca-desktop
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true
+StartupWMClass=ticca-desktop

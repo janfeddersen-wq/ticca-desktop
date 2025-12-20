@@ -1,9 +1,11 @@
 use anyhow::Result;
 use chrono::{Local, Utc};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::session::database::SessionDatabase;
 use crate::session::models::{MessageRole, Session, SessionMessage};
+use crate::tools::TodoListState;
 
 pub struct SessionMessageInput {
     pub role: MessageRole,
@@ -96,5 +98,36 @@ impl SessionService {
 
         Ok(Some(session))
     }
-}
 
+    pub fn load_todo_lists(session_id: &str) -> Result<HashMap<usize, TodoListState>> {
+        let db = SessionDatabase::open()?;
+        let rows = db.get_todo_states(session_id)?;
+        let mut lists = HashMap::new();
+        for (node_id, json) in rows {
+            match serde_json::from_str::<TodoListState>(&json) {
+                Ok(state) => {
+                    lists.insert(node_id, state);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to parse todo state for session {} node {}: {}",
+                        session_id,
+                        node_id,
+                        error
+                    );
+                }
+            }
+        }
+        Ok(lists)
+    }
+
+    pub fn save_todo_lists(session_id: &str, lists: &HashMap<usize, TodoListState>) -> Result<()> {
+        let db = SessionDatabase::open()?;
+        let _ = db.clear_todo_states(session_id)?;
+        for (node_id, state) in lists {
+            let json = serde_json::to_string(state)?;
+            db.upsert_todo_state(session_id, *node_id, &json)?;
+        }
+        Ok(())
+    }
+}

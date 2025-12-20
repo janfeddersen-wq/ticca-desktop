@@ -12,7 +12,9 @@
 //! - `kill_process`: Terminate a UI terminal process
 //! - `list_agents`: List available agents
 //! - `invoke_agent`: Invoke another agent with its own history
-//! - `todo_list`: Track an agent-scoped to do list
+//! - `todo_read`: Read the agent-scoped To Do list
+//! - `todo_write`: Update the agent-scoped To Do list
+//! - `todo_list`: Legacy alias for `todo_write`
 
 pub mod approval;
 pub mod file_mods;

@@ -12,16 +12,18 @@ use crate::agent_graph::AgentCallGraph;
 use crate::app_config::AppConfig;
 use crate::chat_message::ChatMessage;
 use crate::helpers::format_tool_call_oneliner;
-use crate::messages::{chat, ImageAttachment, Message, RightSidebarTab};
+use crate::messages::{ImageAttachment, Message, RightSidebarTab, chat};
 use crate::session_manager;
 use crate::system_executions::SystemExecutionsState;
-use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentProfile, AgentType, ModelSelectionContext};
+use ticca_core::agents::{
+    AgentConfig as CoreAgentConfig, AgentProfile, AgentType, ModelSelectionContext,
+};
 use ticca_core::llm::{ProviderId, ProviderRegistry, auth};
 use ticca_core::session::Session;
 use ticca_core::tools::TodoListState;
 use ticca_core::tools::{SystemExecRequest, SystemExecResponse, SystemExecStore};
 
-use super::super::{effects::Effect, TiccaApp, View};
+use super::super::{TiccaApp, View, effects::Effect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatPane {
@@ -167,6 +169,7 @@ impl ChatState {
             self.current_session.as_ref(),
             &self.messages,
             self.current_agent,
+            &self.todo_lists,
         ) {
             self.current_session = Some(session);
         }
@@ -223,10 +226,7 @@ impl ChatState {
     }
 }
 
-pub(in crate::app) fn update(
-    app: &mut TiccaApp,
-    message: chat::Msg,
-) -> Vec<Effect> {
+pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effect> {
     let mut effects = Vec::new();
 
     match message {
@@ -281,6 +281,8 @@ pub(in crate::app) fn update(
             app.chat.user_at_bottom = true;
             app.chat.call_graph.reset(app.chat.current_agent);
             app.chat.subagent_message_indices.clear();
+            app.chat.todo_lists.retain(|node_id, _| *node_id == 0);
+            app.chat.todo_selected_node = 0;
 
             let profile = AgentProfile::for_type(app.chat.current_agent, app.chat.max_tool_rounds);
             let model_name = profile.resolve_model(ModelSelectionContext {
@@ -299,9 +301,15 @@ pub(in crate::app) fn update(
                 .unwrap_or(ProviderId::Claude);
 
             let provider_ok = match provider {
-                ProviderId::Claude => auth::has_valid_account(ticca_core::config::models::providers::CLAUDE),
-                ProviderId::Gemini => auth::has_valid_account(ticca_core::config::models::providers::GEMINI),
-                ProviderId::ChatGpt => auth::has_valid_account(ticca_core::config::models::providers::CHATGPT),
+                ProviderId::Claude => {
+                    auth::has_valid_account(ticca_core::config::models::providers::CLAUDE)
+                }
+                ProviderId::Gemini => {
+                    auth::has_valid_account(ticca_core::config::models::providers::GEMINI)
+                }
+                ProviderId::ChatGpt => {
+                    auth::has_valid_account(ticca_core::config::models::providers::CHATGPT)
+                }
             };
 
             if !provider_ok {
@@ -343,11 +351,12 @@ pub(in crate::app) fn update(
             let image_data: Vec<(String, String)> = attachments
                 .iter()
                 .map(|att| {
-                    let base64_data =
-                        base64::engine::general_purpose::STANDARD.encode(&*att.data);
+                    let base64_data = base64::engine::general_purpose::STANDARD.encode(&*att.data);
                     ("image/png".to_string(), base64_data)
                 })
                 .collect();
+
+            let initial_todo_state = app.chat.todo_lists.get(&0).cloned();
 
             effects.push(Effect::RunStream {
                 system_prompt,
@@ -356,6 +365,7 @@ pub(in crate::app) fn update(
                 working_directory: working_dir,
                 max_tool_rounds,
                 history,
+                initial_todo_state,
                 image_data,
                 yolo_mode_enabled: app.chat.yolo_mode_enabled,
                 current_agent: app.chat.current_agent,
@@ -598,17 +608,17 @@ pub(in crate::app) fn update(
                     .create_llm_terminal(process_id.clone(), command, cwd)
                 {
                     Ok(()) => {
-                        app.chat.system_exec.store.respond(
-                            request_id,
-                            SystemExecResponse::Started { process_id },
-                        );
+                        app.chat
+                            .system_exec
+                            .store
+                            .respond(request_id, SystemExecResponse::Started { process_id });
                         app.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
                     }
                     Err(e) => {
-                        app.chat.system_exec.store.respond(
-                            request_id,
-                            SystemExecResponse::Error { message: e },
-                        );
+                        app.chat
+                            .system_exec
+                            .store
+                            .respond(request_id, SystemExecResponse::Error { message: e });
                     }
                 }
             }
@@ -679,7 +689,10 @@ pub(in crate::app) fn update(
                         }
 
                         if let Some(code) = child_exit {
-                            app.chat.system_exec.store.mark_finished(&process_id, Some(code));
+                            app.chat
+                                .system_exec
+                                .store
+                                .mark_finished(&process_id, Some(code));
                             auto_close_if_fast = instance.auto_close_if_fast
                                 && instance.started_at.elapsed()
                                     < std::time::Duration::from_secs(30);
@@ -716,7 +729,7 @@ pub(in crate::app) fn update(
 
                 app.chat.raw_view_messages.clear();
                 app.chat.raw_view_editors.clear();
-                app.chat.todo_lists.clear();
+                app.chat.todo_lists = loaded.todo_lists;
                 app.chat.todo_selected_node = 0;
                 app.chat.sidebar_tab = RightSidebarTab::AgentsFlow;
 
@@ -756,7 +769,12 @@ pub(in crate::app) fn update(
                 TodoListEvent::Reset { node_id, state }
                 | TodoListEvent::Updated { node_id, state } => {
                     app.chat.todo_lists.insert(node_id, state);
-                    if node_id == 0 || !app.chat.todo_lists.contains_key(&app.chat.todo_selected_node) {
+                    if node_id == 0
+                        || !app
+                            .chat
+                            .todo_lists
+                            .contains_key(&app.chat.todo_selected_node)
+                    {
                         app.chat.todo_selected_node = node_id;
                     }
                 }
@@ -767,7 +785,10 @@ pub(in crate::app) fn update(
             use ticca_core::tools::AgentStreamEvent;
 
             match event {
-                AgentStreamEvent::Start { node_id, agent_type } => {
+                AgentStreamEvent::Start {
+                    node_id,
+                    agent_type,
+                } => {
                     let label = format!("{} - {}", agent_type.display_name(), node_id);
                     app.chat
                         .messages
@@ -801,7 +822,11 @@ pub(in crate::app) fn update(
                     }
                     app.chat.push_scroll_if_needed(&mut effects);
                 }
-                AgentStreamEvent::ToolCall { node_id, name, args } => {
+                AgentStreamEvent::ToolCall {
+                    node_id,
+                    name,
+                    args,
+                } => {
                     if let Some(&index) = app.chat.subagent_message_indices.get(&node_id)
                         && let Some(msg) = app.chat.messages.get_mut(index)
                     {
@@ -893,9 +918,7 @@ pub(in crate::app) fn update(
 
         chat::Msg::LinkClicked(url) => {
             effects.push(Effect::OpenUrl(url.as_str().to_string()));
-        }
-
-        // Reserved for future: we used to have ToolResult here.
+        } // Reserved for future: we used to have ToolResult here.
     }
 
     effects
@@ -1024,9 +1047,9 @@ fn view_approval_modal(prompt: &ToolApprovalPrompt) -> Element<'_, Message> {
                     }))
                     .style(crate::theme::styles::success_button)
                     .padding([6, 12]),
-                ]
-                .spacing(12),
             ]
+            .spacing(12),
+        ]
         .spacing(10),
     )
     .padding(20)

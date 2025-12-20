@@ -16,7 +16,7 @@ use ticca_core::session::MessageRole;
 
 use crate::chat_message::ChatMessage;
 use crate::material_icons::{icon, icons};
-use crate::messages::{chat, settings, ImageAttachment, Message};
+use crate::messages::{ImageAttachment, Message, chat, settings};
 use crate::theme::{AppTheme, styles};
 use crate::widgets::spinner;
 
