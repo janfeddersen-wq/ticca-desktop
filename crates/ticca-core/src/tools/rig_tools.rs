@@ -2,18 +2,23 @@
 //!
 //! These wrappers implement rig's `Tool` trait to enable the ReAct loop.
 
+use super::policy::ToolPolicy;
+use super::todo::{TodoItem, TodoListEvent, TodoStatus, TodoStore};
+use crate::agents::{AgentType, get_all_agents};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::future::Future;
+use std::sync::Mutex;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use tokio::sync::mpsc;
-use crate::agents::{AgentType, get_all_agents};
-use super::policy::ToolPolicy;
+
+use super::system_exec::{SystemExecRequest, SystemExecResponse, SystemExecStore};
 
 #[derive(Debug, Clone)]
 pub struct AgentCallEvent {
@@ -26,11 +31,26 @@ pub struct AgentCallEvent {
 
 #[derive(Debug, Clone)]
 pub enum AgentStreamEvent {
-    Start { node_id: usize, agent_type: AgentType },
-    Chunk { node_id: usize, text: String },
-    Reasoning { node_id: usize, text: String },
-    ToolCall { node_id: usize, name: String, args: String },
-    Complete { node_id: usize },
+    Start {
+        node_id: usize,
+        agent_type: AgentType,
+    },
+    Chunk {
+        node_id: usize,
+        text: String,
+    },
+    Reasoning {
+        node_id: usize,
+        text: String,
+    },
+    ToolCall {
+        node_id: usize,
+        name: String,
+        args: String,
+    },
+    Complete {
+        node_id: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -41,7 +61,9 @@ pub struct AgentInvokeRequest {
     pub node_id: usize,
 }
 
-pub type AgentInvoker = dyn Fn(AgentInvokeRequest) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync;
+pub type AgentInvoker = dyn Fn(AgentInvokeRequest) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+    + Send
+    + Sync;
 
 /// Shared context for all tools - primarily the working directory
 #[derive(Clone)]
@@ -58,12 +80,16 @@ pub struct ToolContext {
     pub call_graph_counter: Option<Arc<AtomicUsize>>,
     pub node_id: usize,
     pub agent_invoker: Option<Arc<AgentInvoker>>,
+    pub todo_store: Option<Arc<TodoStore>>,
+    pub todo_tx: Option<mpsc::UnboundedSender<TodoListEvent>>,
+    pub system_exec_store: Option<Arc<SystemExecStore>>,
+    pub system_exec_tx: Option<mpsc::UnboundedSender<SystemExecRequest>>,
+    pub process_output_offsets: Arc<Mutex<std::collections::HashMap<String, usize>>>,
 }
 
 impl Default for ToolContext {
     fn default() -> Self {
-        let working_directory =
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let working_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
             policy: ToolPolicy::allow_root(working_directory.clone()),
             working_directory,
@@ -77,6 +103,11 @@ impl Default for ToolContext {
             call_graph_counter: None,
             node_id: 0,
             agent_invoker: None,
+            todo_store: None,
+            todo_tx: None,
+            system_exec_store: None,
+            system_exec_tx: None,
+            process_output_offsets: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 }
@@ -113,30 +144,28 @@ impl ToolContext {
 }
 
 // ============================================================================
-// Shell Tool
+// System Execution Tools (UI-backed)
 // ============================================================================
 
 #[derive(Debug, thiserror::Error)]
-#[error("Shell error: {0}")]
-pub struct ShellError(String);
+#[error("execute_shell error: {0}")]
+pub struct ExecuteShellError(String);
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ShellArgs {
+pub struct ExecuteShellArgs {
     /// The shell command to execute
     pub command: String,
     /// Working directory override (optional)
     pub cwd: Option<String>,
-    /// Timeout in seconds (default: 60)
-    pub timeout: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ShellTool {
+pub struct ExecuteShellTool {
     #[serde(skip)]
     context: Option<Arc<ToolContext>>,
 }
 
-impl ShellTool {
+impl ExecuteShellTool {
     pub fn new(context: Arc<ToolContext>) -> Self {
         Self {
             context: Some(context),
@@ -144,15 +173,17 @@ impl ShellTool {
     }
 }
 
-impl Tool for ShellTool {
-    const NAME: &'static str = "shell";
+static SYSTEM_EXEC_REQUEST_ID: AtomicUsize = AtomicUsize::new(1);
 
-    type Error = ShellError;
-    type Args = ShellArgs;
+impl Tool for ExecuteShellTool {
+    const NAME: &'static str = "execute_shell";
+
+    type Error = ExecuteShellError;
+    type Args = ExecuteShellArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
-        let spec = super::spec::shell_spec(60, 256);
+        let spec = super::spec::execute_shell_spec(60);
         ToolDefinition {
             name: spec.name.to_string(),
             description: spec.description.to_string(),
@@ -161,35 +192,287 @@ impl Tool for ShellTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let cwd = args.cwd.unwrap_or_else(|| {
-            self.context
-                .as_ref()
-                .map(|c| c.working_directory.to_string_lossy().to_string())
-                .unwrap_or_else(|| ".".to_string())
-        });
-        let timeout = args.timeout.unwrap_or(60);
+        let Some(context) = &self.context else {
+            return Err(ExecuteShellError("Tool context not available".to_string()));
+        };
+        let Some(store) = &context.system_exec_store else {
+            return Err(ExecuteShellError("System execution store not configured".to_string()));
+        };
+        let Some(tx) = &context.system_exec_tx else {
+            return Err(ExecuteShellError("System execution UI channel not configured".to_string()));
+        };
 
-        if let Some(context) = &self.context {
-            if let Err(e) = context
-                .require_approval("shell", format!("command={}", args.command))
-                .await
-            {
-                return Err(ShellError(e));
+        if let Some(cwd) = &args.cwd {
+            let cwd_path = PathBuf::from(cwd);
+            let resolved = if cwd_path.is_absolute() {
+                cwd_path
+            } else {
+                context.working_directory.join(cwd_path)
+            };
+            if let Err(e) = context.enforce_path(&resolved) {
+                return Err(ExecuteShellError(e));
             }
         }
 
-        let result = super::shell::shell_impl(&args.command, Some(&cwd), timeout)
+        if let Err(e) = context
+            .require_approval("execute_shell", format!("command={}", args.command))
             .await
-            .map_err(|e| ShellError(e.to_string()))?;
+        {
+            return Err(ExecuteShellError(e));
+        }
 
-        if result.success {
-            Ok(result.content)
+        let request_id = SYSTEM_EXEC_REQUEST_ID.fetch_add(1, Ordering::SeqCst) as u64;
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel::<SystemExecResponse>();
+        store.register_pending(request_id, resp_tx);
+
+        tx.send(SystemExecRequest::ExecuteShell {
+            request_id,
+            command: args.command.clone(),
+            cwd: args.cwd.clone(),
+        })
+        .map_err(|_| ExecuteShellError("Failed to dispatch execute_shell request".to_string()))?;
+
+        let started = resp_rx
+            .await
+            .map_err(|_| ExecuteShellError("execute_shell request was dropped".to_string()))?;
+
+        let process_id = match started {
+            SystemExecResponse::Started { process_id } => process_id,
+            SystemExecResponse::Error { message } => return Err(ExecuteShellError(message)),
+            other => {
+                return Err(ExecuteShellError(format!(
+                    "Unexpected response for execute_shell: {:?}",
+                    other
+                )))
+            }
+        };
+
+        let completed = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(Some(code)) = store.exit_code(&process_id) {
+                    let output = store.output(&process_id).unwrap_or_default();
+                    return Ok::<_, String>((code, output));
+                }
+                store.wait_for_update(&process_id).await?;
+            }
+        })
+        .await;
+
+        match completed {
+            Ok(Ok((exit_code, output))) => Ok(json!({
+                "process_id": process_id,
+                "stdout": output,
+                "stderr": "",
+                "exit_code": exit_code,
+            })
+            .to_string()),
+            Ok(Err(e)) => Err(ExecuteShellError(e)),
+            Err(_) => Ok(format!(
+                "Process started successfully with ID: `{}`. It is still running. You can use other tools to monitor its output, send further commands, or terminate it.",
+                process_id
+            )),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("list_processes error: {0}")]
+pub struct ListProcessesError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListProcessesArgs {}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ListProcessesTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl ListProcessesTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for ListProcessesTool {
+    const NAME: &'static str = "list_processes";
+
+    type Error = ListProcessesError;
+    type Args = ListProcessesArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::list_processes_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let Some(context) = &self.context else {
+            return Err(ListProcessesError("Tool context not available".to_string()));
+        };
+        let Some(store) = &context.system_exec_store else {
+            return Err(ListProcessesError("System execution store not configured".to_string()));
+        };
+        Ok(json!(store.list_visible()).to_string())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("read_process_output error: {0}")]
+pub struct ReadProcessOutputError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReadProcessOutputArgs {
+    pub process_id: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ReadProcessOutputTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl ReadProcessOutputTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for ReadProcessOutputTool {
+    const NAME: &'static str = "read_process_output";
+
+    type Error = ReadProcessOutputError;
+    type Args = ReadProcessOutputArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::read_process_output_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let Some(context) = &self.context else {
+            return Err(ReadProcessOutputError("Tool context not available".to_string()));
+        };
+        let Some(store) = &context.system_exec_store else {
+            return Err(ReadProcessOutputError("System execution store not configured".to_string()));
+        };
+
+        let Some(output) = store.output(&args.process_id) else {
+            return Err(ReadProcessOutputError(format!(
+                "Unknown process: {}",
+                args.process_id
+            )));
+        };
+
+        let mut offsets = context
+            .process_output_offsets
+            .lock()
+            .map_err(|_| ReadProcessOutputError("Output offset mutex poisoned".to_string()))?;
+        let start = offsets.get(&args.process_id).copied().unwrap_or(0);
+
+        let (start, new_output) = if start <= output.len() && output.is_char_boundary(start) {
+            (start, output[start..].to_string())
         } else {
-            Ok(format!(
-                "{}\n\nError: {}",
-                result.content,
-                result.error.unwrap_or_default()
-            ))
+            (0, output.clone())
+        };
+
+        offsets.insert(args.process_id, start + new_output.len());
+
+        Ok(json!({
+            "stdout": new_output,
+            "stderr": "",
+        })
+        .to_string())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("kill_process error: {0}")]
+pub struct KillProcessError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KillProcessArgs {
+    pub process_id: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct KillProcessTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl KillProcessTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for KillProcessTool {
+    const NAME: &'static str = "kill_process";
+
+    type Error = KillProcessError;
+    type Args = KillProcessArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::kill_process_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let Some(context) = &self.context else {
+            return Err(KillProcessError("Tool context not available".to_string()));
+        };
+        let Some(store) = &context.system_exec_store else {
+            return Err(KillProcessError("System execution store not configured".to_string()));
+        };
+        let Some(tx) = &context.system_exec_tx else {
+            return Err(KillProcessError("System execution UI channel not configured".to_string()));
+        };
+
+        let request_id = SYSTEM_EXEC_REQUEST_ID.fetch_add(1, Ordering::SeqCst) as u64;
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel::<SystemExecResponse>();
+        store.register_pending(request_id, resp_tx);
+
+        tx.send(SystemExecRequest::KillProcess {
+            request_id,
+            process_id: args.process_id.clone(),
+        })
+        .map_err(|_| KillProcessError("Failed to dispatch kill_process request".to_string()))?;
+
+        let resp = resp_rx
+            .await
+            .map_err(|_| KillProcessError("kill_process request was dropped".to_string()))?;
+
+        match resp {
+            SystemExecResponse::Killed { process_id } => Ok(format!(
+                "Process `{}` terminated successfully.",
+                process_id
+            )),
+            SystemExecResponse::Error { message } => Err(KillProcessError(message)),
+            other => Err(KillProcessError(format!(
+                "Unexpected response for kill_process: {:?}",
+                other
+            ))),
         }
     }
 }
@@ -260,9 +543,7 @@ impl Tool for ReadFileTool {
         let num = args.num_lines;
 
         if let Some(context) = &self.context {
-            context
-                .enforce_path(&full_path)
-                .map_err(ReadFileError)?;
+            context.enforce_path(&full_path).map_err(ReadFileError)?;
         }
 
         // Run synchronous file read in blocking task
@@ -344,9 +625,7 @@ impl Tool for ListFilesTool {
         };
 
         if let Some(context) = &self.context {
-            context
-                .enforce_path(&full_path)
-                .map_err(ListFilesError)?;
+            context.enforce_path(&full_path).map_err(ListFilesError)?;
         }
 
         let path_str = full_path.to_string_lossy().to_string();
@@ -432,9 +711,7 @@ impl Tool for EditFileTool {
         };
 
         if let Some(context) = &self.context {
-            context
-                .enforce_path(&full_path)
-                .map_err(EditFileError)?;
+            context.enforce_path(&full_path).map_err(EditFileError)?;
             if let Err(e) = context
                 .require_approval("edit_file", format!("path={}", args.path))
                 .await
@@ -455,12 +732,10 @@ impl Tool for EditFileTool {
         });
 
         // Run synchronous edit in blocking task
-        let result = tokio::task::spawn_blocking(move || {
-            super::file_mods::edit_file_impl(params)
-        })
-        .await
-        .map_err(|e| EditFileError(format!("Task join error: {}", e)))?
-        .map_err(|e| EditFileError(e.to_string()))?;
+        let result = tokio::task::spawn_blocking(move || super::file_mods::edit_file_impl(params))
+            .await
+            .map_err(|e| EditFileError(format!("Task join error: {}", e)))?
+            .map_err(|e| EditFileError(e.to_string()))?;
 
         if result.success {
             Ok(result.content)
@@ -544,12 +819,11 @@ impl Tool for DeleteFileTool {
 
         let path_str = full_path.to_string_lossy().to_string();
 
-        let result = tokio::task::spawn_blocking(move || {
-            super::file_mods::delete_file_impl(&path_str)
-        })
-        .await
-        .map_err(|e| DeleteFileError(format!("Task join error: {}", e)))?
-        .map_err(|e| DeleteFileError(e.to_string()))?;
+        let result =
+            tokio::task::spawn_blocking(move || super::file_mods::delete_file_impl(&path_str))
+                .await
+                .map_err(|e| DeleteFileError(format!("Task join error: {}", e)))?
+                .map_err(|e| DeleteFileError(e.to_string()))?;
 
         if result.success {
             Ok(result.content)
@@ -620,9 +894,7 @@ impl Tool for GrepTool {
         };
 
         if let Some(context) = &self.context {
-            context
-                .enforce_path(&full_path)
-                .map_err(GrepError)?;
+            context.enforce_path(&full_path).map_err(GrepError)?;
         }
 
         let path_str = full_path.to_string_lossy().to_string();
@@ -635,12 +907,11 @@ impl Tool for GrepTool {
         };
 
         // Run synchronous grep in blocking task
-        let result = tokio::task::spawn_blocking(move || {
-            super::grep::grep_impl(&pattern, &path_str)
-        })
-        .await
-        .map_err(|e| GrepError(format!("Task join error: {}", e)))?
-        .map_err(|e| GrepError(e.to_string()))?;
+        let result =
+            tokio::task::spawn_blocking(move || super::grep::grep_impl(&pattern, &path_str))
+                .await
+                .map_err(|e| GrepError(format!("Task join error: {}", e)))?
+                .map_err(|e| GrepError(e.to_string()))?;
 
         if result.success {
             Ok(result.content)
@@ -712,9 +983,7 @@ impl Tool for WriteFileTool {
         };
 
         if let Some(context) = &self.context {
-            context
-                .enforce_path(&full_path)
-                .map_err(WriteFileError)?;
+            context.enforce_path(&full_path).map_err(WriteFileError)?;
             if let Err(e) = context
                 .require_approval("write_file", format!("path={}", args.path))
                 .await
@@ -887,9 +1156,104 @@ impl Tool for InvokeAgentTool {
     }
 }
 
+// ============================================================================
+// To Do List Tool
+// ============================================================================
+
+#[derive(Debug, thiserror::Error)]
+#[error("Todo list error: {0}")]
+pub struct TodoListError(String);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TodoListArgs {
+    /// Array of to-do items for this agent.
+    pub items: Vec<TodoListItemArgs>,
+    /// Set true to confirm all items are completed.
+    pub confirmed_complete: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TodoListItemArgs {
+    pub text: String,
+    pub status: TodoStatus,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TodoListTool {
+    #[serde(skip)]
+    context: Option<Arc<ToolContext>>,
+}
+
+impl TodoListTool {
+    pub fn new(context: Arc<ToolContext>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+}
+
+impl Tool for TodoListTool {
+    const NAME: &'static str = "todo_list";
+
+    type Error = TodoListError;
+    type Args = TodoListArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::todo_list_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let context = self
+            .context
+            .as_ref()
+            .ok_or_else(|| TodoListError("Tool context is missing".to_string()))?;
+        let store = context
+            .todo_store
+            .as_ref()
+            .ok_or_else(|| TodoListError("Todo store is not configured".to_string()))?;
+
+        let items: Vec<TodoItem> = args
+            .items
+            .into_iter()
+            .map(|item| TodoItem {
+                text: item.text,
+                status: item.status,
+            })
+            .collect();
+
+        let state = store
+            .update_node(context.node_id, items, args.confirmed_complete)
+            .await;
+
+        if let Some(tx) = &context.todo_tx {
+            let _ = tx.send(TodoListEvent::Updated {
+                node_id: context.node_id,
+                state: state.clone(),
+            });
+        }
+
+        if state.is_completed_and_confirmed() {
+            Ok("To Do list updated and confirmed complete.".to_string())
+        } else {
+            Ok("To Do list updated. Confirmation pending.".to_string())
+        }
+    }
+}
+
 /// Create all tools with the given context
-pub fn create_tools(context: Arc<ToolContext>) -> (
-    ShellTool,
+pub fn create_tools(
+    context: Arc<ToolContext>,
+) -> (
+    ExecuteShellTool,
+    ListProcessesTool,
+    ReadProcessOutputTool,
+    KillProcessTool,
     ReadFileTool,
     ListFilesTool,
     EditFileTool,
@@ -897,10 +1261,14 @@ pub fn create_tools(context: Arc<ToolContext>) -> (
     GrepTool,
     WriteFileTool,
     ListAgentsTool,
+    TodoListTool,
     InvokeAgentTool,
 ) {
     (
-        ShellTool::new(context.clone()),
+        ExecuteShellTool::new(context.clone()),
+        ListProcessesTool::new(context.clone()),
+        ReadProcessOutputTool::new(context.clone()),
+        KillProcessTool::new(context.clone()),
         ReadFileTool::new(context.clone()),
         ListFilesTool::new(context.clone()),
         EditFileTool::new(context.clone()),
@@ -908,6 +1276,7 @@ pub fn create_tools(context: Arc<ToolContext>) -> (
         GrepTool::new(context.clone()),
         WriteFileTool::new(context.clone()),
         ListAgentsTool::new(context.clone()),
+        TodoListTool::new(context.clone()),
         InvokeAgentTool::new(context),
     )
 }

@@ -1,36 +1,133 @@
 //! Iced Application state and main loop
 
-use iced::widget::{button, column, container, row, text, text_editor};
 use iced::widget::pane_grid;
 use iced::widget::scrollable::AbsoluteOffset;
-use iced::{Element, Length, Subscription, Task, Theme, widget, Color};
+use iced::widget::{button, column, container, row, text, text_editor};
+use iced::{Color, Element, Length, Subscription, Task, Theme, widget};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use base64::Engine as _;
 
-use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType, AgentProfile, ModelSelectionContext};
+use crate::oauth_handler;
+use crate::session_manager;
+use ticca_core::agents::{
+    AgentConfig as CoreAgentConfig, AgentProfile, AgentType, ModelSelectionContext,
+};
 use ticca_core::config::{ConfigDatabase, setting_keys};
 use ticca_core::llm::auth;
 use ticca_core::llm::{ProviderId, ProviderRegistry};
 use ticca_core::session::Session;
-use crate::oauth_handler;
-use crate::session_manager;
 
 use crate::agent_graph::AgentCallGraph;
-use crate::app_config::{load_config, AppConfig};
+use crate::app_config::{AppConfig, load_config};
 use crate::chat_message::ChatMessage;
 use crate::helpers::format_tool_call_oneliner;
 use crate::image_handler;
 use crate::llm_stream;
-use crate::messages::{Message, ImageAttachment};
+use crate::messages::SettingsTab;
+use crate::messages::{ImageAttachment, Message, RightSidebarTab};
 use crate::theme::AppTheme;
 use crate::views::chat::CHAT_SCROLLABLE_ID;
 use crate::views::config::ProviderAuthStatus;
-use crate::messages::SettingsTab;
+use crate::system_executions::SystemExecutionsState;
+use ticca_core::tools::{SystemExecRequest, SystemExecResponse, SystemExecStore};
+use ticca_core::tools::TodoListState;
 
 use tokio::sync::mpsc;
+
+#[derive(Clone)]
+struct SystemExecRequestSubscriptionData {
+    key: u64,
+    rx: std::sync::Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<SystemExecRequest>>>,
+}
+
+impl std::hash::Hash for SystemExecRequestSubscriptionData {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
+
+impl PartialEq for SystemExecRequestSubscriptionData {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for SystemExecRequestSubscriptionData {}
+
+fn system_exec_request_stream(
+    data: &SystemExecRequestSubscriptionData,
+) -> iced::futures::stream::BoxStream<'static, Message> {
+    let rx = data.rx.clone();
+    Box::pin(iced::stream::channel(100, async move |mut output| {
+        use iced::futures::SinkExt;
+
+        loop {
+            let req = {
+                let mut rx = rx.lock().await;
+                rx.recv().await
+            };
+
+            match req {
+                Some(req) => {
+                    let _ = output.send(Message::SystemExecRequest(req)).await;
+                }
+                None => break,
+            }
+        }
+    }))
+}
+
+#[derive(Clone)]
+struct TerminalBackendSubscriptionData {
+    terminal_id: u64,
+    rx: std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<iced_term::AlacrittyEvent>>>,
+}
+
+impl std::hash::Hash for TerminalBackendSubscriptionData {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.terminal_id.hash(state);
+    }
+}
+
+impl PartialEq for TerminalBackendSubscriptionData {
+    fn eq(&self, other: &Self) -> bool {
+        self.terminal_id == other.terminal_id
+    }
+}
+
+impl Eq for TerminalBackendSubscriptionData {}
+
+fn terminal_backend_stream(
+    data: &TerminalBackendSubscriptionData,
+) -> iced::futures::stream::BoxStream<'static, Message> {
+    let terminal_id = data.terminal_id;
+    let rx = data.rx.clone();
+    Box::pin(iced::stream::channel(100, async move |mut output| {
+        use iced::futures::SinkExt;
+
+        loop {
+            let ev = {
+                let mut rx = rx.lock().await;
+                rx.recv().await
+            };
+
+            match ev {
+                Some(ev) => {
+                    let _ = output
+                        .send(Message::SystemExecTerminalEvent(iced_term::Event::BackendCall(
+                            terminal_id,
+                            iced_term::backend::Command::ProcessAlacrittyEvent(ev),
+                        )))
+                        .await;
+                }
+                None => break,
+            }
+        }
+    }))
+}
 
 /// Main application state
 pub struct TiccaApp {
@@ -88,15 +185,30 @@ struct ChatState {
     panes: iced::widget::pane_grid::State<ChatPane>,
     chat_pane: iced::widget::pane_grid::Pane,
     flow_pane: Option<iced::widget::pane_grid::Pane>,
+    sidebar_tab: RightSidebarTab,
+    todo_selected_node: usize,
+    todo_lists: HashMap<usize, TodoListState>,
+    system_exec: SystemExecutionsState,
+    system_exec_request_tx: mpsc::UnboundedSender<SystemExecRequest>,
+    system_exec_request_rx: std::sync::Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<SystemExecRequest>>>,
 }
 
 impl ChatState {
     fn new(config: &AppConfig, working_directory: PathBuf) -> Self {
         let (mut panes, chat_pane) = iced::widget::pane_grid::State::new(ChatPane::Chat);
         let (flow_pane, split) = panes
-            .split(iced::widget::pane_grid::Axis::Vertical, chat_pane, ChatPane::Flow)
+            .split(
+                iced::widget::pane_grid::Axis::Vertical,
+                chat_pane,
+                ChatPane::Flow,
+            )
             .expect("initial pane split should succeed");
         panes.resize(split, 0.75);
+
+        let system_exec_store = std::sync::Arc::new(SystemExecStore::new());
+        let (system_exec_request_tx, system_exec_request_rx) = mpsc::unbounded_channel();
+        let system_exec_request_rx =
+            std::sync::Arc::new(tokio::sync::Mutex::new(system_exec_request_rx));
 
         Self {
             input_value: String::new(),
@@ -134,6 +246,12 @@ impl ChatState {
             panes,
             chat_pane,
             flow_pane: Some(flow_pane),
+            sidebar_tab: RightSidebarTab::AgentsFlow,
+            todo_selected_node: 0,
+            todo_lists: HashMap::new(),
+            system_exec: SystemExecutionsState::new(system_exec_store),
+            system_exec_request_tx,
+            system_exec_request_rx,
         }
     }
 }
@@ -174,6 +292,8 @@ enum AppCommand {
         current_agent: AgentType,
         approval_rx: mpsc::UnboundedReceiver<ticca_core::tools::ToolApprovalDecision>,
         cancel_rx: tokio::sync::oneshot::Receiver<()>,
+        system_exec_store: std::sync::Arc<SystemExecStore>,
+        system_exec_tx: mpsc::UnboundedSender<SystemExecRequest>,
     },
     ScrollToBottom,
     StartOAuth(crate::messages::OAuthProvider),
@@ -185,6 +305,7 @@ enum AppCommand {
     LoadImage(PathBuf),
     PasteImage,
     OpenUrl(String),
+    FocusTerminal(u64),
 }
 
 /// Check if all providers have valid (non-expired) tokens
@@ -288,9 +409,14 @@ impl TiccaApp {
                 self.chat.call_graph.reset(self.chat.current_agent);
                 self.chat.subagent_message_indices.clear();
 
-                let profile = AgentProfile::for_type(self.chat.current_agent, self.chat.max_tool_rounds);
+                let profile =
+                    AgentProfile::for_type(self.chat.current_agent, self.chat.max_tool_rounds);
                 let model_name = profile.resolve_model(ModelSelectionContext {
-                    pinned: self.chat.agent_pinned_models.get(&self.chat.current_agent).map(String::as_str),
+                    pinned: self
+                        .chat
+                        .agent_pinned_models
+                        .get(&self.chat.current_agent)
+                        .map(String::as_str),
                     default_model: self.chat.default_model.as_deref(),
                     available_models: &self.chat.available_models,
                 });
@@ -301,16 +427,23 @@ impl TiccaApp {
                     .unwrap_or(ProviderId::Claude);
 
                 let provider_ok = match provider {
-                    ProviderId::Claude => auth::has_valid_account(ticca_core::config::models::providers::CLAUDE),
-                    ProviderId::Gemini => auth::has_valid_account(ticca_core::config::models::providers::GEMINI),
-                    ProviderId::ChatGpt => auth::has_valid_account(ticca_core::config::models::providers::CHATGPT),
+                    ProviderId::Claude => {
+                        auth::has_valid_account(ticca_core::config::models::providers::CLAUDE)
+                    }
+                    ProviderId::Gemini => {
+                        auth::has_valid_account(ticca_core::config::models::providers::GEMINI)
+                    }
+                    ProviderId::ChatGpt => {
+                        auth::has_valid_account(ticca_core::config::models::providers::CHATGPT)
+                    }
                 };
 
                 if !provider_ok {
                     let provider_name = ProviderRegistry::info(provider).display_name;
-                    self.chat.messages.push(ChatMessage::assistant(
-                        format!("⚠️ No {} accounts available. Please authenticate in Settings.", provider_name)
-                    ));
+                    self.chat.messages.push(ChatMessage::assistant(format!(
+                        "⚠️ No {} accounts available. Please authenticate in Settings.",
+                        provider_name
+                    )));
                     return self.execute_commands(commands);
                 }
 
@@ -332,15 +465,20 @@ impl TiccaApp {
                 self.chat.pending_approvals.clear();
                 self.chat.active_approval = None;
 
-                let history: Vec<_> = self.chat.messages.iter()
+                let history: Vec<_> = self
+                    .chat
+                    .messages
+                    .iter()
                     .take(self.chat.messages.len().saturating_sub(2))
                     .filter(|m| !m.is_streaming)
                     .cloned()
                     .collect();
 
-                let image_data: Vec<(String, String)> = attachments.iter()
+                let image_data: Vec<(String, String)> = attachments
+                    .iter()
                     .map(|att| {
-                        let base64_data = base64::engine::general_purpose::STANDARD.encode(&*att.data);
+                        let base64_data =
+                            base64::engine::general_purpose::STANDARD.encode(&*att.data);
                         ("image/png".to_string(), base64_data)
                     })
                     .collect();
@@ -357,6 +495,8 @@ impl TiccaApp {
                     current_agent: self.chat.current_agent,
                     approval_rx,
                     cancel_rx,
+                    system_exec_store: self.chat.system_exec.store.clone(),
+                    system_exec_tx: self.chat.system_exec_request_tx.clone(),
                 });
                 commands.push(AppCommand::ScrollToBottom);
             }
@@ -415,7 +555,10 @@ impl TiccaApp {
                 self.push_scroll_if_needed(&mut commands);
             }
 
-            Message::StreamStats { chars_in_window, window_ms } => {
+            Message::StreamStats {
+                chars_in_window,
+                window_ms,
+            } => {
                 self.chat.stream_chars_received = chars_in_window;
                 self.chat.stream_pulse = !self.chat.stream_pulse;
 
@@ -560,6 +703,9 @@ impl TiccaApp {
                 self.chat.agent_config = CoreAgentConfig::new(agent_type);
                 self.chat.call_graph.reset(agent_type);
                 self.chat.subagent_message_indices.clear();
+                self.chat.todo_lists.clear();
+                self.chat.todo_selected_node = 0;
+                self.chat.sidebar_tab = RightSidebarTab::AgentsFlow;
             }
 
             Message::ToggleFlowPanel => {
@@ -568,17 +714,182 @@ impl TiccaApp {
                         self.chat.chat_pane = remaining;
                     }
                 } else {
-                    if let Some((new_pane, split)) = self
-                        .chat
-                        .panes
-                    .split(
+                    if let Some((new_pane, split)) = self.chat.panes.split(
                         iced::widget::pane_grid::Axis::Vertical,
                         self.chat.chat_pane,
                         ChatPane::Flow,
-                    )
-                    {
+                    ) {
                         self.chat.panes.resize(split, 0.75);
                         self.chat.flow_pane = Some(new_pane);
+                    }
+                }
+            }
+
+            Message::SelectSidebarTab(tab) => {
+                self.chat.sidebar_tab = tab;
+            }
+
+            Message::SelectTodoNode(option) => {
+                self.chat.todo_selected_node = option.node_id;
+            }
+
+            Message::SystemExecNewTerminalNameChanged(name) => {
+                self.chat.system_exec.new_terminal_name = name;
+                self.chat.system_exec.ui_error = None;
+            }
+
+            Message::SystemExecCreateUserTerminal => {
+                let name = self.chat.system_exec.new_terminal_name.trim().to_string();
+                let name_key = name.clone();
+                self.chat.system_exec.ui_error = None;
+                match self.chat.system_exec.create_user_terminal(
+                    name,
+                    Some(self.chat.working_directory.clone()),
+                ) {
+                    Ok(()) => {
+                        if let Some(instance) = self.chat.system_exec.terminals.get(&name_key) {
+                            commands.push(AppCommand::FocusTerminal(instance.terminal_id));
+                        }
+                        self.chat.system_exec.new_terminal_name.clear();
+                        self.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
+                    }
+                    Err(e) => {
+                        self.chat.system_exec.ui_error = Some(e);
+                        self.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
+                    }
+                }
+            }
+
+            Message::SystemExecCloseTerminal(process_id) => {
+                let _ = self.chat.system_exec.shutdown_terminal(&process_id);
+                self.chat.system_exec.remove_terminal(&process_id);
+            }
+
+            Message::SystemExecKillTerminal(process_id) => {
+                let _ = self.chat.system_exec.shutdown_terminal(&process_id);
+                self.chat.system_exec.remove_terminal(&process_id);
+            }
+
+            Message::SystemExecCopyTerminal(process_id) => {
+                if let Some(output) = self.chat.system_exec.store.output(&process_id) {
+                    commands.push(AppCommand::CopyToClipboard(output));
+                }
+            }
+
+            Message::SystemExecRequest(request) => {
+                match request {
+                    SystemExecRequest::ExecuteShell {
+                        request_id,
+                        command,
+                        cwd,
+                    } => {
+                        let process_id = self.chat.system_exec.generate_llm_process_id();
+                        let cwd = cwd
+                            .map(PathBuf::from)
+                            .or_else(|| Some(self.chat.working_directory.clone()));
+
+                        match self.chat.system_exec.create_llm_terminal(
+                            process_id.clone(),
+                            command,
+                            cwd,
+                        ) {
+                            Ok(()) => {
+                                self.chat
+                                    .system_exec
+                                    .store
+                                    .respond(request_id, SystemExecResponse::Started { process_id });
+                                self.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
+                            }
+                            Err(e) => {
+                                self.chat.system_exec.store.respond(
+                                    request_id,
+                                    SystemExecResponse::Error { message: e },
+                                );
+                            }
+                        }
+                    }
+                    SystemExecRequest::KillProcess {
+                        request_id,
+                        process_id,
+                    } => {
+                        let resp = match self.chat.system_exec.shutdown_terminal(&process_id) {
+                            Ok(()) => {
+                                self.chat.system_exec.remove_terminal(&process_id);
+                                SystemExecResponse::Killed { process_id }
+                            }
+                            Err(e) => SystemExecResponse::Error { message: e },
+                        };
+                        self.chat.system_exec.store.respond(request_id, resp);
+                    }
+                }
+            }
+
+            Message::SystemExecTerminalEvent(event) => {
+                match event {
+                    iced_term::Event::Focus(terminal_id) => {
+                        commands.push(AppCommand::FocusTerminal(terminal_id));
+                    }
+                    iced_term::Event::BackendCall(terminal_id, cmd) => {
+                        let process_id =
+                            self.chat.system_exec.terminal_index.get(&terminal_id).cloned();
+                        if let Some(process_id) = process_id {
+                            let mut child_exit: Option<i32> = None;
+                            let mut should_update_output = false;
+
+                            if let iced_term::backend::Command::ProcessAlacrittyEvent(ref ev) = cmd
+                            {
+                                match ev {
+                                    iced_term::AlacrittyEvent::Wakeup
+                                    | iced_term::AlacrittyEvent::PtyWrite(_)
+                                    | iced_term::AlacrittyEvent::Title(_)
+                                    | iced_term::AlacrittyEvent::ResetTitle => {
+                                        should_update_output = true;
+                                    }
+                                    iced_term::AlacrittyEvent::ChildExit(code) => {
+                                        should_update_output = true;
+                                        child_exit = Some(*code);
+                                    }
+                                    iced_term::AlacrittyEvent::Exit => {
+                                        should_update_output = true;
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            let mut remove_terminal = false;
+                            let mut auto_close_if_fast = false;
+
+                            if let Some(instance) =
+                                self.chat.system_exec.terminals.get_mut(&process_id)
+                            {
+                                let action = instance
+                                    .terminal
+                                    .handle(iced_term::Command::ProxyToBackend(cmd));
+
+                                if should_update_output {
+                                    let output = instance.terminal.dump_text();
+                                    self.chat.system_exec.store.set_output(&process_id, output);
+                                }
+
+                                if matches!(action, iced_term::actions::Action::Shutdown) {
+                                    remove_terminal = true;
+                                }
+
+                                if let Some(code) = child_exit {
+                                    self.chat
+                                        .system_exec
+                                        .store
+                                        .mark_finished(&process_id, Some(code));
+                                    auto_close_if_fast = instance.auto_close_if_fast
+                                        && instance.started_at.elapsed()
+                                            < std::time::Duration::from_secs(30);
+                                }
+                            }
+
+                            if remove_terminal || auto_close_if_fast {
+                                self.chat.system_exec.remove_terminal(&process_id);
+                            }
+                        }
                     }
                 }
             }
@@ -587,22 +898,20 @@ impl TiccaApp {
                 commands.push(AppCommand::StartOAuth(provider));
             }
 
-            Message::OAuthComplete(provider, result) => {
-                match result {
-                    Ok(()) => {
-                        self.error_message = None;
-                        self.settings.provider_auth_status = check_provider_auth_status();
-                        commands.push(AppCommand::RefreshModelsForProvider(match provider {
-                            crate::messages::OAuthProvider::Claude => ProviderId::Claude,
-                            crate::messages::OAuthProvider::Gemini => ProviderId::Gemini,
-                            crate::messages::OAuthProvider::ChatGpt => ProviderId::ChatGpt,
-                        }));
-                    }
-                    Err(e) => {
-                        self.error_message = Some(e);
-                    }
+            Message::OAuthComplete(provider, result) => match result {
+                Ok(()) => {
+                    self.error_message = None;
+                    self.settings.provider_auth_status = check_provider_auth_status();
+                    commands.push(AppCommand::RefreshModelsForProvider(match provider {
+                        crate::messages::OAuthProvider::Claude => ProviderId::Claude,
+                        crate::messages::OAuthProvider::Gemini => ProviderId::Gemini,
+                        crate::messages::OAuthProvider::ChatGpt => ProviderId::ChatGpt,
+                    }));
                 }
-            }
+                Err(e) => {
+                    self.error_message = Some(e);
+                }
+            },
 
             Message::RemoveOAuthAccount(account_id) => {
                 if let Ok(db) = ConfigDatabase::open() {
@@ -611,7 +920,10 @@ impl TiccaApp {
                 self.settings.provider_auth_status = check_provider_auth_status();
             }
 
-            Message::ToggleOAuthAccountActive { account_id, is_active } => {
+            Message::ToggleOAuthAccountActive {
+                account_id,
+                is_active,
+            } => {
                 if let Ok(db) = ConfigDatabase::open() {
                     let _ = db.set_oauth_account_active(&account_id, is_active);
                 }
@@ -637,6 +949,9 @@ impl TiccaApp {
                 self.chat.messages.clear();
                 self.chat.raw_view_messages.clear();
                 self.chat.raw_view_editors.clear();
+                self.chat.todo_lists.clear();
+                self.chat.todo_selected_node = 0;
+                self.chat.sidebar_tab = RightSidebarTab::AgentsFlow;
                 self.chat.messages.push(ChatMessage::assistant(
                     "New session started. How can I help you?",
                 ));
@@ -653,6 +968,9 @@ impl TiccaApp {
 
                     self.chat.raw_view_messages.clear();
                     self.chat.raw_view_editors.clear();
+                    self.chat.todo_lists.clear();
+                    self.chat.todo_selected_node = 0;
+                    self.chat.sidebar_tab = RightSidebarTab::AgentsFlow;
 
                     if let Some(agent_type) = loaded.agent_type {
                         self.chat.current_agent = agent_type;
@@ -716,24 +1034,24 @@ impl TiccaApp {
                 tracing::info!("Set default model: {}", model_name);
             }
 
-            Message::SetAgentModel(agent_type, model) => {
-                match &model {
-                    Some(model_name) => {
-                        self.chat.agent_pinned_models.insert(agent_type, model_name.clone());
-                        if let Ok(db) = ConfigDatabase::open() {
-                            let _ = db.set_agent_pinned_model(agent_type.as_str(), model_name);
-                        }
-                        tracing::info!("Pinned {} to model: {}", agent_type.as_str(), model_name);
+            Message::SetAgentModel(agent_type, model) => match &model {
+                Some(model_name) => {
+                    self.chat
+                        .agent_pinned_models
+                        .insert(agent_type, model_name.clone());
+                    if let Ok(db) = ConfigDatabase::open() {
+                        let _ = db.set_agent_pinned_model(agent_type.as_str(), model_name);
                     }
-                    None => {
-                        self.chat.agent_pinned_models.remove(&agent_type);
-                        if let Ok(db) = ConfigDatabase::open() {
-                            let _ = db.clear_agent_pinned_model(agent_type.as_str());
-                        }
-                        tracing::info!("Cleared pinned model for {}", agent_type.as_str());
-                    }
+                    tracing::info!("Pinned {} to model: {}", agent_type.as_str(), model_name);
                 }
-            }
+                None => {
+                    self.chat.agent_pinned_models.remove(&agent_type);
+                    if let Ok(db) = ConfigDatabase::open() {
+                        let _ = db.clear_agent_pinned_model(agent_type.as_str());
+                    }
+                    tracing::info!("Cleared pinned model for {}", agent_type.as_str());
+                }
+            },
 
             Message::ToolCall { name, args } => {
                 if let Some(last) = self.chat.messages.last_mut() {
@@ -755,13 +1073,37 @@ impl TiccaApp {
                 self.chat.call_graph.record_call(&event);
             }
 
+            Message::TodoEvent(event) => {
+                use ticca_core::tools::TodoListEvent;
+
+                match event {
+                    TodoListEvent::Reset { node_id, state }
+                    | TodoListEvent::Updated { node_id, state } => {
+                        self.chat.todo_lists.insert(node_id, state);
+                        if node_id == 0
+                            || !self
+                                .chat
+                                .todo_lists
+                                .contains_key(&self.chat.todo_selected_node)
+                        {
+                            self.chat.todo_selected_node = node_id;
+                        }
+                    }
+                }
+            }
+
             Message::SubagentStream(event) => {
                 use ticca_core::tools::AgentStreamEvent;
 
                 match event {
-                    AgentStreamEvent::Start { node_id, agent_type } => {
+                    AgentStreamEvent::Start {
+                        node_id,
+                        agent_type,
+                    } => {
                         let label = format!("{} - {}", agent_type.display_name(), node_id);
-                        self.chat.messages.push(ChatMessage::assistant_streaming_named(label));
+                        self.chat
+                            .messages
+                            .push(ChatMessage::assistant_streaming_named(label));
                         let index = self.chat.messages.len().saturating_sub(1);
                         self.chat.subagent_message_indices.insert(node_id, index);
                         self.chat.user_at_bottom = true;
@@ -791,7 +1133,11 @@ impl TiccaApp {
                         }
                         self.push_scroll_if_needed(&mut commands);
                     }
-                    AgentStreamEvent::ToolCall { node_id, name, args } => {
+                    AgentStreamEvent::ToolCall {
+                        node_id,
+                        name,
+                        args,
+                    } => {
                         if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
                             if let Some(msg) = self.chat.messages.get_mut(index) {
                                 let tool_line = format_tool_call_oneliner(
@@ -820,7 +1166,9 @@ impl TiccaApp {
             Message::ToolResult { name: _, result: _ } => {}
 
             Message::ToolApprovalRequested { id, name, args } => {
-                self.chat.pending_approvals.push_back(ToolApprovalPrompt { id, name, args });
+                self.chat
+                    .pending_approvals
+                    .push_back(ToolApprovalPrompt { id, name, args });
                 if self.chat.active_approval.is_none() {
                     self.chat.active_approval = self.chat.pending_approvals.pop_front();
                 }
@@ -849,35 +1197,31 @@ impl TiccaApp {
                 commands.push(AppCommand::LoadImage(path));
             }
 
-            Message::ImageLoaded(result) => {
-                match result {
-                    Ok(attachment) => {
-                        self.chat.pending_attachments.push(attachment);
-                    }
-                    Err(e) => {
-                        if !e.contains("No file selected") {
-                            self.error_message = Some(format!("Failed to load image: {}", e));
-                        }
+            Message::ImageLoaded(result) => match result {
+                Ok(attachment) => {
+                    self.chat.pending_attachments.push(attachment);
+                }
+                Err(e) => {
+                    if !e.contains("No file selected") {
+                        self.error_message = Some(format!("Failed to load image: {}", e));
                     }
                 }
-            }
+            },
 
             Message::PasteImage => {
                 commands.push(AppCommand::PasteImage);
             }
 
-            Message::ImagePasted(result) => {
-                match result {
-                    Ok(attachment) => {
-                        self.chat.pending_attachments.push(attachment);
-                    }
-                    Err(e) => {
-                        if !e.contains("No image") {
-                            self.error_message = Some(format!("Failed to paste image: {}", e));
-                        }
+            Message::ImagePasted(result) => match result {
+                Ok(attachment) => {
+                    self.chat.pending_attachments.push(attachment);
+                }
+                Err(e) => {
+                    if !e.contains("No image") {
+                        self.error_message = Some(format!("Failed to paste image: {}", e));
                     }
                 }
-            }
+            },
 
             Message::RemoveAttachment(index) => {
                 if index < self.chat.pending_attachments.len() {
@@ -920,6 +1264,8 @@ impl TiccaApp {
                 current_agent,
                 approval_rx,
                 cancel_rx,
+                system_exec_store,
+                system_exec_tx,
             } => Task::run(
                 llm_stream::run_rig_agent_stream(
                     system_prompt,
@@ -933,17 +1279,23 @@ impl TiccaApp {
                     current_agent,
                     approval_rx,
                     cancel_rx,
+                    system_exec_store,
+                    system_exec_tx,
                 ),
                 |event| event,
             ),
             AppCommand::ScrollToBottom => widget::operation::scroll_to(
                 widget::Id::new(CHAT_SCROLLABLE_ID),
-                AbsoluteOffset { x: 0.0, y: f32::MAX },
+                AbsoluteOffset {
+                    x: 0.0,
+                    y: f32::MAX,
+                },
             ),
-            AppCommand::StartOAuth(provider) => Task::perform(
-                oauth_handler::start_oauth(provider),
-                move |result| Message::OAuthComplete(provider, result),
-            ),
+            AppCommand::StartOAuth(provider) => {
+                Task::perform(oauth_handler::start_oauth(provider), move |result| {
+                    Message::OAuthComplete(provider, result)
+                })
+            }
             AppCommand::RefreshModels => Task::perform(
                 async move { ticca_core::llm::ModelService::fetch_all().await },
                 Message::ModelsLoaded,
@@ -968,6 +1320,9 @@ impl TiccaApp {
                 },
                 |_| Message::Noop,
             ),
+            AppCommand::FocusTerminal(terminal_id) => {
+                widget::operation::focus(widget::Id::from(terminal_id.to_string()))
+            }
             AppCommand::PickWorkingDirectory => Task::perform(
                 async {
                     let dialog = rfd::AsyncFileDialog::new()
@@ -1031,32 +1386,26 @@ impl TiccaApp {
             View::Chat => self.view_chat(),
             View::Settings => self.view_settings(),
         };
-        
+
         // Wrap in container with error overlay if needed
         let main = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0);
-        
+
         let base: Element<Message> = if let Some(ref error) = self.error_message {
             // Show error toast at top
             let error_banner = container(
                 row![
                     text(error).size(14),
-                    button("×")
-                        .on_press(Message::DismissError)
-                        .padding(4)
+                    button("×").on_press(Message::DismissError).padding(4)
                 ]
-                .spacing(10)
+                .spacing(10),
             )
             .padding(10)
             .style(container::rounded_box);
-            
-            column![
-                error_banner,
-                main,
-            ]
-            .into()
+
+            column![error_banner, main,].into()
         } else {
             main.into()
         };
@@ -1073,40 +1422,68 @@ impl TiccaApp {
     pub fn theme(&self) -> Theme {
         self.theme.to_iced_theme()
     }
-    
+
     /// Get subscriptions (keyboard shortcuts, file drop events, and streaming stats timer)
     pub fn subscription(&self) -> Subscription<Message> {
         use iced::time;
 
         let keybindings = crate::keybindings::subscription();
 
+        let mut subs: Vec<Subscription<Message>> = vec![keybindings];
+
+        // Receive system execution requests from LLM tools
+        subs.push(Subscription::run_with(
+            SystemExecRequestSubscriptionData {
+                key: 0,
+                rx: self.chat.system_exec_request_rx.clone(),
+            },
+            system_exec_request_stream,
+        ));
+
+        // Terminal backend events (PTY output, exit codes, etc.)
+        for instance in self.chat.system_exec.terminals.values() {
+            subs.push(
+                Subscription::run_with(
+                    TerminalBackendSubscriptionData {
+                        terminal_id: instance.terminal_id,
+                        rx: instance.terminal.event_receiver(),
+                    },
+                    terminal_backend_stream,
+                ),
+            );
+        }
+
         // Add timer subscriptions while streaming
         if self.chat.is_streaming {
             // Stats polling every 1 second
-            let stats_timer = time::every(std::time::Duration::from_secs(1))
-                .map(|_| Message::PollStreamStats);
+            subs.push(
+                time::every(std::time::Duration::from_secs(1)).map(|_| Message::PollStreamStats),
+            );
 
             // Fast animation timer (~60 FPS) for smooth spinner when waiting
-            let is_waiting = self.chat.last_bytes_time
+            let is_waiting = self
+                .chat
+                .last_bytes_time
                 .map(|t| t.elapsed().as_secs() >= 2)
                 .unwrap_or(false);
 
             if is_waiting {
-                let animation_timer = time::every(std::time::Duration::from_millis(16))
-                    .map(|_| Message::AnimationTick);
-                Subscription::batch([keybindings, stats_timer, animation_timer])
-            } else {
-                Subscription::batch([keybindings, stats_timer])
+                subs.push(
+                    time::every(std::time::Duration::from_millis(16))
+                        .map(|_| Message::AnimationTick),
+                );
             }
-        } else {
-            keybindings
         }
+
+        Subscription::batch(subs)
     }
-    
+
     /// Render the chat view
     fn view_chat(&self) -> Element<'_, Message> {
         // Calculate seconds since last bytes received (for "waiting" indicator)
-        let secs_since_bytes = self.chat.last_bytes_time
+        let secs_since_bytes = self
+            .chat
+            .last_bytes_time
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
 
@@ -1129,7 +1506,14 @@ impl TiccaApp {
                     self.chat.spinner_frame,
                     self.chat.flow_pane.is_some(),
                 ),
-                ChatPane::Flow => crate::views::agent_flow::view(&self.chat.call_graph, self.theme),
+                ChatPane::Flow => crate::views::right_sidebar::view(
+                    &self.chat.call_graph,
+                    &self.chat.todo_lists,
+                    &self.chat.system_exec,
+                    self.chat.sidebar_tab,
+                    self.chat.todo_selected_node,
+                    self.theme,
+                ),
             };
             iced::widget::pane_grid::Content::new(content)
         })
@@ -1147,7 +1531,7 @@ impl TiccaApp {
             self.chat.current_session = Some(session);
         }
     }
-    
+
     /// Render the settings view
     fn view_settings(&self) -> Element<'_, Message> {
         crate::views::config::view(
@@ -1170,17 +1554,23 @@ impl TiccaApp {
                 text(prompt.args.clone()).size(12),
                 row![
                     button("Deny")
-                        .on_press(Message::ToolApprovalDecision { id: prompt.id, approved: false })
+                        .on_press(Message::ToolApprovalDecision {
+                            id: prompt.id,
+                            approved: false
+                        })
                         .style(crate::theme::styles::secondary_button)
                         .padding([6, 12]),
                     button("Approve")
-                        .on_press(Message::ToolApprovalDecision { id: prompt.id, approved: true })
+                        .on_press(Message::ToolApprovalDecision {
+                            id: prompt.id,
+                            approved: true
+                        })
                         .style(crate::theme::styles::success_button)
                         .padding([6, 12]),
                 ]
                 .spacing(12),
             ]
-            .spacing(10)
+            .spacing(10),
         )
         .padding(20)
         .style(crate::theme::styles::card_container);

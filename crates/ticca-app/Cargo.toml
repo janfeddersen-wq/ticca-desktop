@@ -57,3 +57,6 @@ open.workspace = true
 
 # HTTP types for custom headers
 http = "1"
+
+# Embedded terminals (System Executions)
+iced_term = { git = "https://github.com/janfeddersen-wq/iced_term.git", rev = "a895f40209581ce709a48586032c75a877e82b0b" }

@@ -18,9 +18,7 @@ pub fn format_tool_call_oneliner(
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .join(path)
         };
-        full_path
-            .to_string_lossy()
-            .replace('\\', "/")
+        full_path.to_string_lossy().replace('\\', "/")
     };
 
     let link_path = |display: String, full_path: &str| {
@@ -34,9 +32,13 @@ pub fn format_tool_call_oneliner(
     let param_display = match name {
         "list_files" => {
             // Show directory, limited to 80 chars
-            if let Some(dir) = parsed.get("directory").or(parsed.get("path")).and_then(|v| v.as_str()) {
+            if let Some(dir) = parsed
+                .get("directory")
+                .or(parsed.get("path"))
+                .and_then(|v| v.as_str())
+            {
                 let display = if dir.len() > 80 {
-                    format!("...{}", &dir[dir.len()-77..])
+                    format!("...{}", &dir[dir.len() - 77..])
                 } else {
                     dir.to_string()
                 };
@@ -49,7 +51,7 @@ pub fn format_tool_call_oneliner(
             // Show just the path (clickable)
             if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
                 let display = if path.len() > 80 {
-                    format!("...{}", &path[path.len()-77..])
+                    format!("...{}", &path[path.len() - 77..])
                 } else {
                     path.to_string()
                 };
@@ -73,7 +75,7 @@ pub fn format_tool_call_oneliner(
                 String::new()
             }
         }
-        "shell" => {
+        "execute_shell" => {
             // Show command, limited to 80 chars
             if let Some(cmd) = parsed.get("command").and_then(|v| v.as_str()) {
                 let display = if cmd.len() > 80 {
@@ -86,6 +88,12 @@ pub fn format_tool_call_oneliner(
                 String::new()
             }
         }
+        "read_process_output" | "kill_process" => parsed
+            .get("process_id")
+            .and_then(|v| v.as_str())
+            .map(|id| format!("Process: {}", id))
+            .unwrap_or_default(),
+        "list_processes" => "Show active processes".to_string(),
         "grep" => {
             // Show pattern and optionally path
             let pattern = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
@@ -93,7 +101,7 @@ pub fn format_tool_call_oneliner(
             let mut display = format!("\"{}\"", pattern);
             if let Some(p) = path {
                 let short_path = if p.len() > 40 {
-                    format!("...{}", &p[p.len()-37..])
+                    format!("...{}", &p[p.len() - 37..])
                 } else {
                     p.to_string()
                 };
@@ -116,7 +124,11 @@ pub fn format_tool_call_oneliner(
 
             if !prompt.is_empty() {
                 let preview: String = prompt.chars().take(60).collect();
-                let suffix = if prompt.chars().count() > 60 { "..." } else { "" };
+                let suffix = if prompt.chars().count() > 60 {
+                    "..."
+                } else {
+                    ""
+                };
                 if !display.is_empty() {
                     display.push_str(" • ");
                 }

@@ -9,18 +9,18 @@
 use crate::chat_message::ChatMessage;
 use crate::messages::Message;
 
+use ticca_core::agents::{AgentProfile, AgentType};
 use ticca_core::config::models::providers;
+use ticca_core::config::{ConfigDatabase, setting_keys};
 use ticca_core::llm;
-use ticca_core::llm::auth::{self, AuthToken};
-use ticca_core::llm::providers::chatgpt::ChatGptOAuthClient;
-use ticca_core::llm::providers::GeminiCodeAssistRigClient;
 use ticca_core::llm::ClaudeOAuthClient;
+use ticca_core::llm::auth::{self, AuthToken};
+use ticca_core::llm::providers::GeminiCodeAssistRigClient;
+use ticca_core::llm::providers::chatgpt::ChatGptOAuthClient;
 use ticca_core::llm::{ProviderId, ProviderRegistry};
 use ticca_core::session::MessageRole;
-use ticca_core::agents::{AgentProfile, AgentType};
-use ticca_core::config::{ConfigDatabase, setting_keys};
 use ticca_core::tools::{
-    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent,
+    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TodoListEvent, TodoStore,
     ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy,
 };
 
@@ -36,6 +36,8 @@ use tokio::sync::mpsc;
 
 const DEFAULT_COOLDOWN_SECS: i64 = 60;
 const CLAUDE_CODE_INSTRUCTIONS: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+const TODO_GUARD_PROMPT: &str = "You must not finish until your To Do list is confirmed complete.\n\nUse the `todo_list` tool now:\n- Provide the full `items` array (can be empty)\n- Set every item's status to `completed`\n- Set `confirmed_complete` to true\n\nIf there is remaining work, add/update items and continue working instead of finishing.";
+const TODO_GUARD_MAX_PASSES: usize = 4;
 
 /// Fetch the best available model from the Claude API
 pub async fn fetch_best_model(auth_token: &AuthToken) -> Result<String, String> {
@@ -68,8 +70,9 @@ async fn resolve_model_name(model_name: Option<String>) -> Result<String, String
             Ok(name)
         }
         None => {
-            let claude_token = auth::select_token(providers::CLAUDE)
-                .ok_or_else(|| "Claude authentication required to auto-select a model".to_string())?;
+            let claude_token = auth::select_token(providers::CLAUDE).ok_or_else(|| {
+                "Claude authentication required to auto-select a model".to_string()
+            })?;
             match fetch_best_model(&claude_token).await {
                 Ok(name) => {
                     tracing::info!("Using auto-detected model: {}", name);
@@ -96,7 +99,10 @@ fn build_chat_history(chat_history: Vec<ChatMessage>) -> Vec<rig::message::Messa
 }
 
 /// Build user message with optional images
-fn build_user_message(user_message: &str, image_data: Vec<(String, String)>) -> rig::message::Message {
+fn build_user_message(
+    user_message: &str,
+    image_data: Vec<(String, String)>,
+) -> rig::message::Message {
     use rig::message::Message as RigMessage;
     use rig::message::{ImageMediaType, UserContent};
     use rig::one_or_many::OneOrMany;
@@ -159,7 +165,9 @@ fn prepend_system_to_first_user_message(
 mod tests {
     use super::*;
     use futures::stream;
-    use rig::completion::{CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage};
+    use rig::completion::{
+        CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage,
+    };
     use rig::message::AssistantContent;
     use rig::one_or_many::OneOrMany;
     use rig::streaming::{RawStreamingChoice, StreamingCompletionResponse};
@@ -180,8 +188,9 @@ mod tests {
         fn completion(
             &self,
             _request: CompletionRequest,
-        ) -> impl std::future::Future<Output = Result<CompletionResponse<Self::Response>, CompletionError>>
-        + Send {
+        ) -> impl std::future::Future<
+            Output = Result<CompletionResponse<Self::Response>, CompletionError>,
+        > + Send {
             async move {
                 Ok(CompletionResponse {
                     choice: OneOrMany::one(AssistantContent::text("mock response")),
@@ -211,8 +220,21 @@ mod tests {
     #[tokio::test]
     async fn mock_stream_smoke_test() {
         let tool_context = Arc::new(ToolContext::default());
-        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
-            ticca_core::tools::create_tools(tool_context);
+        let (
+            execute_shell,
+            list_processes,
+            read_process_output,
+            kill_process,
+            read_file,
+            list_files,
+            edit_file,
+            delete_file,
+            grep,
+            write_file,
+            list_agents,
+            todo_list,
+            invoke_agent,
+        ) = ticca_core::tools::create_tools(tool_context.clone());
 
         let history = build_chat_history(Vec::new());
         let user_msg = build_user_message("hello", Vec::new());
@@ -221,7 +243,10 @@ mod tests {
 
         let agent = AgentBuilder::new(MockModel)
             .preamble("test system")
-            .tool(shell)
+            .tool(execute_shell)
+            .tool(list_processes)
+            .tool(read_process_output)
+            .tool(kill_process)
             .tool(read_file)
             .tool(list_files)
             .tool(edit_file)
@@ -229,14 +254,15 @@ mod tests {
             .tool(grep)
             .tool(write_file)
             .tool(list_agents)
+            .tool(todo_list)
             .tool(invoke_agent)
             .temperature(0.1)
             .max_tokens(64)
             .build();
 
         use rig::agent::MultiTurnStreamItem;
-        use rig::streaming::StreamingPrompt;
         use rig::streaming::StreamedAssistantContent;
+        use rig::streaming::StreamingPrompt;
 
         let mut stream = agent
             .stream_prompt("")
@@ -246,9 +272,9 @@ mod tests {
 
         let mut collected = String::new();
         while let Some(chunk_result) = stream.next().await {
-            if let Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Text(text_chunk),
-            )) = chunk_result
+            if let Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
+                text_chunk,
+            ))) = chunk_result
             {
                 collected.push_str(&text_chunk.text);
             }
@@ -276,6 +302,8 @@ pub fn run_rig_agent_stream(
     current_agent: AgentType,
     mut approval_decision_rx: mpsc::UnboundedReceiver<ToolApprovalDecision>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    system_exec_store: std::sync::Arc<ticca_core::tools::SystemExecStore>,
+    system_exec_tx: mpsc::UnboundedSender<ticca_core::tools::SystemExecRequest>,
 ) -> impl futures::Stream<Item = Message> {
     async_stream::stream! {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Message>();
@@ -293,7 +321,9 @@ pub fn run_rig_agent_stream(
 
         let (call_graph_tx, mut call_graph_rx) = mpsc::unbounded_channel::<AgentCallEvent>();
         let (agent_stream_tx, mut agent_stream_rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
+        let (todo_tx, mut todo_rx) = mpsc::unbounded_channel::<TodoListEvent>();
         let call_graph_counter = Arc::new(AtomicUsize::new(1));
+        let todo_store = Arc::new(TodoStore::new());
 
         let event_tx_for_graph = event_tx.clone();
         tokio::spawn(async move {
@@ -309,8 +339,21 @@ pub fn run_rig_agent_stream(
             }
         });
 
+        let event_tx_for_todos = event_tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = todo_rx.recv().await {
+                let _ = event_tx_for_todos.send(Message::TodoEvent(event));
+            }
+        });
+
         let agent_invoker: Arc<AgentInvoker> = Arc::new(|request: AgentInvokeRequest| {
             Box::pin(invoke_agent(request))
+        });
+
+        let initial_todo_state = todo_store.reset_node(0).await;
+        let _ = todo_tx.send(TodoListEvent::Reset {
+            node_id: 0,
+            state: initial_todo_state,
         });
 
         let tool_context = Arc::new(ToolContext {
@@ -326,6 +369,11 @@ pub fn run_rig_agent_stream(
             call_graph_counter: Some(call_graph_counter),
             node_id: 0,
             agent_invoker: Some(agent_invoker),
+            todo_store: Some(todo_store),
+            todo_tx: Some(todo_tx),
+            system_exec_store: Some(system_exec_store.clone()),
+            system_exec_tx: Some(system_exec_tx.clone()),
+            process_output_offsets: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         });
 
         let mut pending_approvals: HashMap<u64, tokio::sync::oneshot::Sender<bool>> = HashMap::new();
@@ -398,7 +446,10 @@ pub fn run_rig_agent_stream(
     }
 }
 
-fn resolve_invocation_model(agent_type: AgentType, parent_context: &ToolContext) -> Result<String, String> {
+fn resolve_invocation_model(
+    agent_type: AgentType,
+    parent_context: &ToolContext,
+) -> Result<String, String> {
     if let Ok(db) = ConfigDatabase::open() {
         if let Ok(Some(model)) = db.get_agent_pinned_model(agent_type.as_str()) {
             if !model.trim().is_empty() {
@@ -440,7 +491,8 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
     let max_tool_rounds = parent_context.max_tool_rounds.max(1);
 
     let mut profile = AgentProfile::for_type(agent_type, max_tool_rounds);
-    profile.system_prompt = append_agents_md(&profile.system_prompt, &parent_context.working_directory).await;
+    profile.system_prompt =
+        append_agents_md(&profile.system_prompt, &parent_context.working_directory).await;
     if let Some(tx) = &parent_context.agent_stream_tx {
         let _ = tx.send(AgentStreamEvent::Start {
             node_id: request.node_id,
@@ -460,7 +512,22 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
         call_graph_counter: parent_context.call_graph_counter.clone(),
         node_id: request.node_id,
         agent_invoker: parent_context.agent_invoker.clone(),
+        todo_store: parent_context.todo_store.clone(),
+        todo_tx: parent_context.todo_tx.clone(),
+        system_exec_store: parent_context.system_exec_store.clone(),
+        system_exec_tx: parent_context.system_exec_tx.clone(),
+        process_output_offsets: parent_context.process_output_offsets.clone(),
     });
+
+    if let Some(store) = &tool_context.todo_store {
+        let state = store.reset_node(request.node_id).await;
+        if let Some(tx) = &tool_context.todo_tx {
+            let _ = tx.send(TodoListEvent::Reset {
+                node_id: request.node_id,
+                state,
+            });
+        }
+    }
 
     let invoke_prompt = format!(
         "You are assisting the {}. Provide a concise, actionable response for the invoking agent.\n\nTask:\n{}",
@@ -472,22 +539,39 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
 
     let result = match ProviderRegistry::resolve_provider(&model_name) {
         ProviderId::ChatGpt => {
-            let token = auth::select_token(providers::CHATGPT)
-                .ok_or_else(|| "ChatGPT authentication required. Please authenticate in Settings.".to_string())?;
-            let id_token = token
-                .id_token
-                .ok_or_else(|| "ChatGPT id_token not found. Please re-authenticate in Settings.".to_string())?;
+            let token = auth::select_token(providers::CHATGPT).ok_or_else(|| {
+                "ChatGPT authentication required. Please authenticate in Settings.".to_string()
+            })?;
+            let id_token = token.id_token.ok_or_else(|| {
+                "ChatGPT id_token not found. Please re-authenticate in Settings.".to_string()
+            })?;
 
             let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
                 .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
 
             let model = client.completion_model(&model_name);
-            let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent_tool) =
-                ticca_core::tools::create_tools(tool_context);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_list,
+                invoke_agent_tool,
+            ) = ticca_core::tools::create_tools(tool_context);
 
             let agent = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
-                .tool(shell)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
                 .tool(read_file)
                 .tool(list_files)
                 .tool(edit_file)
@@ -495,6 +579,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_list)
                 .tool(invoke_agent_tool)
                 .temperature(0.7)
                 .max_tokens(8192)
@@ -512,17 +597,34 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             .await
         }
         ProviderId::Gemini => {
-            let token = auth::select_token(providers::GEMINI)
-                .ok_or_else(|| "Gemini authentication required. Please authenticate in Settings.".to_string())?;
+            let token = auth::select_token(providers::GEMINI).ok_or_else(|| {
+                "Gemini authentication required. Please authenticate in Settings.".to_string()
+            })?;
 
             let client = GeminiCodeAssistRigClient::new(token.access_token);
             let model = client.completion_model(&model_name);
-            let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent_tool) =
-                ticca_core::tools::create_tools(tool_context);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_list,
+                invoke_agent_tool,
+            ) = ticca_core::tools::create_tools(tool_context);
 
             let agent = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
-                .tool(shell)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
                 .tool(read_file)
                 .tool(list_files)
                 .tool(edit_file)
@@ -530,6 +632,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_list)
                 .tool(invoke_agent_tool)
                 .temperature(0.7)
                 .max_tokens(8192)
@@ -546,22 +649,39 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             .await
         }
         ProviderId::Claude => {
-            let token = auth::select_token(providers::CLAUDE)
-                .ok_or_else(|| "Claude authentication required. Please authenticate in Settings.".to_string())?;
+            let token = auth::select_token(providers::CLAUDE).ok_or_else(|| {
+                "Claude authentication required. Please authenticate in Settings.".to_string()
+            })?;
 
             let client = ClaudeOAuthClient::new(token.access_token)
                 .map_err(|e| format!("Failed to create Claude client: {}", e))?;
 
             let model = client.completion_model(&model_name);
-            let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent_tool) =
-                ticca_core::tools::create_tools(tool_context);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_list,
+                invoke_agent_tool,
+            ) = ticca_core::tools::create_tools(tool_context);
 
             let mut claude_history = history;
             prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
 
             let agent = AgentBuilder::new(model)
                 .preamble(CLAUDE_CODE_INSTRUCTIONS)
-                .tool(shell)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
                 .tool(read_file)
                 .tool(list_files)
                 .tool(edit_file)
@@ -569,6 +689,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(grep)
                 .tool(write_file)
                 .tool(list_agents)
+                .tool(todo_list)
                 .tool(invoke_agent_tool)
                 .temperature(0.7)
                 .max_tokens(8192)
@@ -608,74 +729,103 @@ where
     M::StreamingResponse: rig::completion::GetTokenUsage,
 {
     use rig::agent::MultiTurnStreamItem;
+    use rig::message::Message as RigMessage;
     use rig::streaming::StreamingPrompt;
     use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-    let mut stream = agent
-        .stream_prompt("")
-        .with_history(history)
-        .multi_turn(max_tool_rounds as usize)
-        .await;
+    let mut passes = 0usize;
+    let mut history = history;
+    let mut collected_all = String::new();
+    let max_turns = max_tool_rounds.max(1) as usize;
 
-    let mut collected = String::new();
+    loop {
+        passes += 1;
 
-    while let Some(chunk_result) = stream.next().await {
-        match chunk_result {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Text(text_chunk),
-            )) => {
-                if !text_chunk.text.is_empty() {
-                    collected.push_str(&text_chunk.text);
+        let mut stream = agent
+            .stream_prompt("")
+            .with_history(history.clone())
+            .multi_turn(max_turns)
+            .await;
+
+        let mut collected_pass = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
+                    text_chunk,
+                ))) => {
+                    if !text_chunk.text.is_empty() {
+                        collected_pass.push_str(&text_chunk.text);
+                        if let Some(tx) = &parent_context.agent_stream_tx {
+                            let _ = tx.send(AgentStreamEvent::Chunk {
+                                node_id,
+                                text: text_chunk.text,
+                            });
+                        }
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Reasoning(reasoning),
+                )) => {
+                    let text = reasoning.reasoning.join("");
+                    if !text.is_empty() {
+                        if let Some(tx) = &parent_context.agent_stream_tx {
+                            let _ = tx.send(AgentStreamEvent::Reasoning { node_id, text });
+                        }
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ToolCall(tool_call),
+                )) => {
+                    if let Some(tx) = &parent_context.agent_stream_tx {
+                        let name = tool_call.function.name;
+                        let args = tool_call.function.arguments.to_string();
+                        let _ = tx.send(AgentStreamEvent::ToolCall {
+                            node_id,
+                            name,
+                            args,
+                        });
+                    }
+                }
+                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
+                Ok(_) => {}
+                Err(e) => {
+                    let error_msg = format!("{} invoke error: {}", provider_label, e);
                     if let Some(tx) = &parent_context.agent_stream_tx {
                         let _ = tx.send(AgentStreamEvent::Chunk {
                             node_id,
-                            text: text_chunk.text,
+                            text: format!("❌ {}", error_msg),
                         });
                     }
+                    return Err(error_msg);
                 }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Reasoning(reasoning),
-            )) => {
-                let text = reasoning.reasoning.join("");
-                if !text.is_empty() {
-                    if let Some(tx) = &parent_context.agent_stream_tx {
-                        let _ = tx.send(AgentStreamEvent::Reasoning {
-                            node_id,
-                            text,
-                        });
-                    }
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::ToolCall(tool_call),
-            )) => {
-                if let Some(tx) = &parent_context.agent_stream_tx {
-                    let name = tool_call.function.name;
-                    let args = tool_call.function.arguments.to_string();
-                    let _ = tx.send(AgentStreamEvent::ToolCall {
-                        node_id,
-                        name,
-                        args,
-                    });
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
-            Ok(_) => {}
-            Err(e) => {
-                let error_msg = format!("{} invoke error: {}", provider_label, e);
-                if let Some(tx) = &parent_context.agent_stream_tx {
-                    let _ = tx.send(AgentStreamEvent::Chunk {
-                        node_id,
-                        text: format!("❌ {}", error_msg),
-                    });
-                }
-                return Err(error_msg);
             }
         }
+
+        if !collected_pass.is_empty() {
+            collected_all.push_str(&collected_pass);
+            history.push(RigMessage::assistant(&collected_pass));
+        }
+
+        let todo_ok = match &parent_context.todo_store {
+            Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
+            None => true,
+        };
+
+        if todo_ok {
+            break;
+        }
+
+        if passes >= TODO_GUARD_MAX_PASSES {
+            return Err(
+                "To Do list was not confirmed complete after multiple attempts.".to_string(),
+            );
+        }
+
+        history.push(RigMessage::user(TODO_GUARD_PROMPT));
     }
 
-    Ok(collected)
+    Ok(collected_all)
 }
 
 async fn run_agent_stream(
@@ -692,298 +842,489 @@ async fn run_agent_stream(
     let mut stats_window_chars: usize = 0;
     const STATS_WINDOW_MIN_MS: u64 = 200;
 
-    let mut emit_stream_stats = |stats_window_chars: &mut usize,
-                                 stats_window_start: &mut Instant|
-     -> Option<Message> {
-        if *stats_window_chars == 0 {
-            return None;
-        }
-        let elapsed = stats_window_start.elapsed();
-        let window_ms = elapsed.as_millis() as u64;
-        if window_ms < STATS_WINDOW_MIN_MS {
-            return None;
-        }
-        let chars = *stats_window_chars;
-        *stats_window_chars = 0;
-        *stats_window_start = Instant::now();
-        Some(Message::StreamStats {
-            chars_in_window: chars,
-            window_ms,
-        })
-    };
+    let mut emit_stream_stats =
+        |stats_window_chars: &mut usize, stats_window_start: &mut Instant| -> Option<Message> {
+            if *stats_window_chars == 0 {
+                return None;
+            }
+            let elapsed = stats_window_start.elapsed();
+            let window_ms = elapsed.as_millis() as u64;
+            if window_ms < STATS_WINDOW_MIN_MS {
+                return None;
+            }
+            let chars = *stats_window_chars;
+            *stats_window_chars = 0;
+            *stats_window_start = Instant::now();
+            Some(Message::StreamStats {
+                chars_in_window: chars,
+                window_ms,
+            })
+        };
 
     let history = build_chat_history(chat_history);
     let user_msg = build_user_message(&user_message, image_data);
     let mut full_history = history;
     full_history.push(user_msg);
+    let node_id = tool_context.node_id;
 
     match ProviderRegistry::resolve_provider(&model_name) {
-    ProviderId::ChatGpt => {
-        tracing::info!("Using ChatGPT/Codex backend for model: {}", model_name);
+        ProviderId::ChatGpt => {
+            tracing::info!("Using ChatGPT/Codex backend for model: {}", model_name);
 
-        let token = auth::select_token(providers::CHATGPT)
-            .ok_or_else(|| "ChatGPT authentication required. Please authenticate in Settings.".to_string())?;
-        let id_token = token
-            .id_token
-            .ok_or_else(|| "ChatGPT id_token not found. Please re-authenticate in Settings.".to_string())?;
+            let token = auth::select_token(providers::CHATGPT).ok_or_else(|| {
+                "ChatGPT authentication required. Please authenticate in Settings.".to_string()
+            })?;
+            let id_token = token.id_token.ok_or_else(|| {
+                "ChatGPT id_token not found. Please re-authenticate in Settings.".to_string()
+            })?;
 
-        let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
-            .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
+            let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
+                .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
 
-        let model = client.completion_model(&model_name);
-        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
-            ticca_core::tools::create_tools(tool_context);
+            let model = client.completion_model(&model_name);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_list,
+                invoke_agent,
+            ) = ticca_core::tools::create_tools(tool_context.clone());
 
-        let agent = AgentBuilder::new(model)
-            .preamble(&system_prompt)
-            .tool(shell)
-            .tool(read_file)
-            .tool(list_files)
-            .tool(edit_file)
-            .tool(delete_file)
-            .tool(grep)
-            .tool(write_file)
-            .tool(list_agents)
-            .tool(invoke_agent)
-            .temperature(0.7)
-            .max_tokens(8192)
-            .additional_params(ChatGptOAuthClient::codex_params())
-            .build();
+            let agent = AgentBuilder::new(model)
+                .preamble(&system_prompt)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(todo_list)
+                .tool(invoke_agent)
+                .temperature(0.7)
+                .max_tokens(8192)
+                .additional_params(ChatGptOAuthClient::codex_params())
+                .build();
 
-        use rig::agent::MultiTurnStreamItem;
-        use rig::streaming::StreamingPrompt;
-        use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+            use rig::agent::MultiTurnStreamItem;
+            use rig::streaming::StreamingPrompt;
+            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-        let mut stream = agent
-            .stream_prompt("")
-            .with_history(full_history)
-            .multi_turn(max_tool_rounds as usize)
-            .await;
+            use rig::message::Message as RigMessage;
 
-        let mut chunk_count = 0u32;
-        while let Some(chunk_result) = stream.next().await {
-            chunk_count += 1;
-            match chunk_result {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::Text(text_chunk),
-                )) => {
-                    if !text_chunk.text.is_empty() {
-                        let chunk_len = text_chunk.text.len();
-                        tracing::trace!("ChatGPT text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
-                        let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
-                        stats_window_chars += chunk_len;
-                        if let Some(stats) =
-                            emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
-                        {
-                            let _ = event_tx.send(stats);
+            let mut passes = 0usize;
+            let mut history = full_history;
+            let max_turns = max_tool_rounds.max(1) as usize;
+
+            loop {
+                passes += 1;
+                let mut stream = agent
+                    .stream_prompt("")
+                    .with_history(history.clone())
+                    .multi_turn(max_turns)
+                    .await;
+
+                let mut collected_pass = String::new();
+                let mut chunk_count = 0u32;
+                while let Some(chunk_result) = stream.next().await {
+                    chunk_count += 1;
+                    match chunk_result {
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Text(text_chunk),
+                        )) => {
+                            if !text_chunk.text.is_empty() {
+                                let chunk_len = text_chunk.text.len();
+                                collected_pass.push_str(&text_chunk.text);
+                                tracing::trace!(
+                                    "ChatGPT text chunk #{}: {} chars",
+                                    chunk_count,
+                                    text_chunk.text.len()
+                                );
+                                let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
+                                stats_window_chars += chunk_len;
+                                if let Some(stats) = emit_stream_stats(
+                                    &mut stats_window_chars,
+                                    &mut stats_window_start,
+                                ) {
+                                    let _ = event_tx.send(stats);
+                                }
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Reasoning(reasoning),
+                        )) => {
+                            let text = reasoning.reasoning.join("");
+                            if !text.is_empty() {
+                                tracing::debug!(
+                                    "ChatGPT reasoning chunk #{}: {} chars",
+                                    chunk_count,
+                                    text.len()
+                                );
+                                let _ = event_tx.send(Message::Reasoning(text));
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::ToolCall(tool_call),
+                        )) => {
+                            let name = tool_call.function.name;
+                            let args = tool_call.function.arguments.to_string();
+                            let _ = event_tx.send(Message::ToolCall { name, args });
+                        }
+                        Ok(MultiTurnStreamItem::StreamUserItem(
+                            StreamedUserContent::ToolResult(_),
+                        )) => {}
+                        Ok(_) => {}
+                        Err(e) => {
+                            let error_msg = format!("ChatGPT stream error: {}", e);
+                            if is_rate_limit_error(&error_msg) {
+                                auth::mark_cooldown(
+                                    &token.account_id,
+                                    &error_msg,
+                                    DEFAULT_COOLDOWN_SECS,
+                                );
+                            }
+                            return Err(error_msg);
                         }
                     }
                 }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::Reasoning(reasoning),
-                )) => {
-                    let text = reasoning.reasoning.join("");
-                    if !text.is_empty() {
-                        tracing::debug!("ChatGPT reasoning chunk #{}: {} chars", chunk_count, text.len());
-                        let _ = event_tx.send(Message::Reasoning(text));
-                    }
+
+                if !collected_pass.is_empty() {
+                    history.push(RigMessage::assistant(&collected_pass));
                 }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCall(tool_call),
-                )) => {
-                    let name = tool_call.function.name;
-                    let args = tool_call.function.arguments.to_string();
-                    let _ = event_tx.send(Message::ToolCall { name, args });
+
+                let todo_ok = match &tool_context.todo_store {
+                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
+                    None => true,
+                };
+
+                if todo_ok {
+                    return Ok(());
                 }
-                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
-                Ok(_) => {}
-                Err(e) => {
-                    let error_msg = format!("ChatGPT stream error: {}", e);
-                    if is_rate_limit_error(&error_msg) {
-                        auth::mark_cooldown(&token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
-                    }
-                    return Err(error_msg);
+
+                if passes >= TODO_GUARD_MAX_PASSES {
+                    return Err(
+                        "To Do list was not confirmed complete after multiple attempts."
+                            .to_string(),
+                    );
                 }
+
+                history.push(RigMessage::user(TODO_GUARD_PROMPT));
             }
         }
+        ProviderId::Gemini => {
+            tracing::info!("Using Gemini backend for model: {}", model_name);
 
-        return Ok(());
-    }
-    ProviderId::Gemini => {
-        tracing::info!("Using Gemini backend for model: {}", model_name);
+            let token = auth::select_token(providers::GEMINI).ok_or_else(|| {
+                "Gemini authentication required. Please authenticate in Settings.".to_string()
+            })?;
 
-        let token = auth::select_token(providers::GEMINI)
-            .ok_or_else(|| "Gemini authentication required. Please authenticate in Settings.".to_string())?;
+            let client = GeminiCodeAssistRigClient::new(token.access_token);
 
-        let client = GeminiCodeAssistRigClient::new(token.access_token);
+            let model = client.completion_model(&model_name);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_list,
+                invoke_agent,
+            ) = ticca_core::tools::create_tools(tool_context.clone());
 
-        let model = client.completion_model(&model_name);
-        let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
-            ticca_core::tools::create_tools(tool_context);
+            let agent = AgentBuilder::new(model)
+                .preamble(&system_prompt)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(todo_list)
+                .tool(invoke_agent)
+                .temperature(0.7)
+                .max_tokens(8192)
+                .build();
 
-        let agent = AgentBuilder::new(model)
-            .preamble(&system_prompt)
-            .tool(shell)
-            .tool(read_file)
-            .tool(list_files)
-            .tool(edit_file)
-            .tool(delete_file)
-            .tool(grep)
-            .tool(write_file)
-            .tool(list_agents)
-            .tool(invoke_agent)
-            .temperature(0.7)
-            .max_tokens(8192)
-            .build();
+            use rig::agent::MultiTurnStreamItem;
+            use rig::streaming::StreamingPrompt;
+            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-        use rig::agent::MultiTurnStreamItem;
-        use rig::streaming::StreamingPrompt;
-        use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+            use rig::message::Message as RigMessage;
 
-        let mut stream = agent
-            .stream_prompt("")
-            .with_history(full_history)
-            .multi_turn(max_tool_rounds as usize)
-            .await;
+            let mut passes = 0usize;
+            let mut history = full_history;
+            let max_turns = max_tool_rounds.max(1) as usize;
 
-        let mut chunk_count = 0u32;
-        while let Some(chunk_result) = stream.next().await {
-            chunk_count += 1;
-            match chunk_result {
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::Text(text_chunk),
-                )) => {
-                    if !text_chunk.text.is_empty() {
-                        let chunk_len = text_chunk.text.len();
-                        tracing::trace!("Gemini text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
-                        let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
-                        stats_window_chars += chunk_len;
-                        if let Some(stats) =
-                            emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
-                        {
-                            let _ = event_tx.send(stats);
+            loop {
+                passes += 1;
+                let mut stream = agent
+                    .stream_prompt("")
+                    .with_history(history.clone())
+                    .multi_turn(max_turns)
+                    .await;
+
+                let mut collected_pass = String::new();
+                let mut chunk_count = 0u32;
+                while let Some(chunk_result) = stream.next().await {
+                    chunk_count += 1;
+                    match chunk_result {
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Text(text_chunk),
+                        )) => {
+                            if !text_chunk.text.is_empty() {
+                                let chunk_len = text_chunk.text.len();
+                                collected_pass.push_str(&text_chunk.text);
+                                tracing::trace!(
+                                    "Gemini text chunk #{}: {} chars",
+                                    chunk_count,
+                                    text_chunk.text.len()
+                                );
+                                let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
+                                stats_window_chars += chunk_len;
+                                if let Some(stats) = emit_stream_stats(
+                                    &mut stats_window_chars,
+                                    &mut stats_window_start,
+                                ) {
+                                    let _ = event_tx.send(stats);
+                                }
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Reasoning(reasoning),
+                        )) => {
+                            let text = reasoning.reasoning.join("");
+                            if !text.is_empty() {
+                                tracing::debug!(
+                                    "Gemini reasoning chunk #{}: {} chars",
+                                    chunk_count,
+                                    text.len()
+                                );
+                                let _ = event_tx.send(Message::Reasoning(text));
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::ToolCall(tool_call),
+                        )) => {
+                            let name = tool_call.function.name;
+                            let args = tool_call.function.arguments.to_string();
+                            let _ = event_tx.send(Message::ToolCall { name, args });
+                        }
+                        Ok(MultiTurnStreamItem::StreamUserItem(
+                            StreamedUserContent::ToolResult(_),
+                        )) => {}
+                        Ok(_) => {}
+                        Err(e) => {
+                            let error_msg = format!("Gemini stream error: {}", e);
+                            if is_rate_limit_error(&error_msg) {
+                                auth::mark_cooldown(
+                                    &token.account_id,
+                                    &error_msg,
+                                    DEFAULT_COOLDOWN_SECS,
+                                );
+                            }
+                            return Err(error_msg);
                         }
                     }
                 }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::Reasoning(reasoning),
-                )) => {
-                    let text = reasoning.reasoning.join("");
-                    if !text.is_empty() {
-                        tracing::debug!("Gemini reasoning chunk #{}: {} chars", chunk_count, text.len());
-                        let _ = event_tx.send(Message::Reasoning(text));
-                    }
+
+                if !collected_pass.is_empty() {
+                    history.push(RigMessage::assistant(&collected_pass));
                 }
-                Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCall(tool_call),
-                )) => {
-                    let name = tool_call.function.name;
-                    let args = tool_call.function.arguments.to_string();
-                    let _ = event_tx.send(Message::ToolCall { name, args });
+
+                let todo_ok = match &tool_context.todo_store {
+                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
+                    None => true,
+                };
+
+                if todo_ok {
+                    return Ok(());
                 }
-                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
-                Ok(_) => {}
-                Err(e) => {
-                    let error_msg = format!("Gemini stream error: {}", e);
-                    if is_rate_limit_error(&error_msg) {
-                        auth::mark_cooldown(&token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
-                    }
-                    return Err(error_msg);
+
+                if passes >= TODO_GUARD_MAX_PASSES {
+                    return Err(
+                        "To Do list was not confirmed complete after multiple attempts."
+                            .to_string(),
+                    );
                 }
+
+                history.push(RigMessage::user(TODO_GUARD_PROMPT));
             }
         }
+        ProviderId::Claude => {
+            tracing::info!("Using Claude backend for model: {}", model_name);
 
-        return Ok(());
-    }
-    ProviderId::Claude => {
-    tracing::info!("Using Claude backend for model: {}", model_name);
+            let token = auth::select_token(providers::CLAUDE).ok_or_else(|| {
+                "Claude authentication required. Please authenticate in Settings.".to_string()
+            })?;
 
-    let token = auth::select_token(providers::CLAUDE)
-        .ok_or_else(|| "Claude authentication required. Please authenticate in Settings.".to_string())?;
+            let client = ClaudeOAuthClient::new(token.access_token)
+                .map_err(|e| format!("Failed to create Claude client: {}", e))?;
 
-    let client = ClaudeOAuthClient::new(token.access_token)
-        .map_err(|e| format!("Failed to create Claude client: {}", e))?;
+            let model = client.completion_model(&model_name);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_list,
+                invoke_agent,
+            ) = ticca_core::tools::create_tools(tool_context.clone());
 
-    let model = client.completion_model(&model_name);
-    let (shell, read_file, list_files, edit_file, delete_file, grep, write_file, list_agents, invoke_agent) =
-        ticca_core::tools::create_tools(tool_context);
+            let mut history = full_history;
+            prepend_system_to_first_user_message(&system_prompt, &mut history);
 
-    let mut claude_history = full_history;
-    prepend_system_to_first_user_message(&system_prompt, &mut claude_history);
+            let agent = AgentBuilder::new(model)
+                .preamble(CLAUDE_CODE_INSTRUCTIONS)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(todo_list)
+                .tool(invoke_agent)
+                .temperature(0.7)
+                .max_tokens(8192)
+                .build();
 
-    let agent = AgentBuilder::new(model)
-        .preamble(CLAUDE_CODE_INSTRUCTIONS)
-        .tool(shell)
-        .tool(read_file)
-        .tool(list_files)
-        .tool(edit_file)
-        .tool(delete_file)
-        .tool(grep)
-        .tool(write_file)
-        .tool(list_agents)
-        .tool(invoke_agent)
-        .temperature(0.7)
-        .max_tokens(8192)
-        .build();
+            use rig::agent::MultiTurnStreamItem;
+            use rig::message::Message as RigMessage;
+            use rig::streaming::StreamingPrompt;
+            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-    use rig::agent::MultiTurnStreamItem;
-    use rig::streaming::StreamingPrompt;
-    use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+            let mut passes = 0usize;
+            let max_turns = max_tool_rounds.max(1) as usize;
 
-    let mut stream = agent
-        .stream_prompt("")
-        .with_history(claude_history)
-        .multi_turn(max_tool_rounds as usize)
-        .await;
+            loop {
+                passes += 1;
 
-    let mut chunk_count = 0u32;
-    while let Some(chunk_result) = stream.next().await {
-        chunk_count += 1;
-        match chunk_result {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Text(text_chunk),
-            )) => {
-                if !text_chunk.text.is_empty() {
-                    let chunk_len = text_chunk.text.len();
-                    tracing::trace!("Claude text chunk #{}: {} chars", chunk_count, text_chunk.text.len());
-                    let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
-                    stats_window_chars += chunk_len;
-                    if let Some(stats) =
-                        emit_stream_stats(&mut stats_window_chars, &mut stats_window_start)
-                    {
-                        let _ = event_tx.send(stats);
+                let mut stream = agent
+                    .stream_prompt("")
+                    .with_history(history.clone())
+                    .multi_turn(max_turns)
+                    .await;
+
+                let mut collected_pass = String::new();
+                let mut chunk_count = 0u32;
+                while let Some(chunk_result) = stream.next().await {
+                    chunk_count += 1;
+                    match chunk_result {
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Text(text_chunk),
+                        )) => {
+                            if !text_chunk.text.is_empty() {
+                                let chunk_len = text_chunk.text.len();
+                                collected_pass.push_str(&text_chunk.text);
+                                tracing::trace!(
+                                    "Claude text chunk #{}: {} chars",
+                                    chunk_count,
+                                    text_chunk.text.len()
+                                );
+                                let _ = event_tx.send(Message::StreamChunk(text_chunk.text));
+                                stats_window_chars += chunk_len;
+                                if let Some(stats) = emit_stream_stats(
+                                    &mut stats_window_chars,
+                                    &mut stats_window_start,
+                                ) {
+                                    let _ = event_tx.send(stats);
+                                }
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Reasoning(reasoning),
+                        )) => {
+                            let text = reasoning.reasoning.join("");
+                            if !text.is_empty() {
+                                tracing::debug!(
+                                    "Claude reasoning chunk #{}: {} chars",
+                                    chunk_count,
+                                    text.len()
+                                );
+                                let _ = event_tx.send(Message::Reasoning(text));
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::ToolCall(tool_call),
+                        )) => {
+                            let name = tool_call.function.name;
+                            let args = tool_call.function.arguments.to_string();
+                            let _ = event_tx.send(Message::ToolCall { name, args });
+                        }
+                        Ok(MultiTurnStreamItem::StreamUserItem(
+                            StreamedUserContent::ToolResult(_),
+                        )) => {}
+                        Ok(_) => {}
+                        Err(e) => {
+                            let error_msg = format!("Claude stream error: {}", e);
+                            if is_rate_limit_error(&error_msg) {
+                                auth::mark_cooldown(
+                                    &token.account_id,
+                                    &error_msg,
+                                    DEFAULT_COOLDOWN_SECS,
+                                );
+                            }
+                            return Err(error_msg);
+                        }
                     }
                 }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Reasoning(reasoning),
-            )) => {
-                let text = reasoning.reasoning.join("");
-                if !text.is_empty() {
-                    tracing::debug!("Claude reasoning chunk #{}: {} chars", chunk_count, text.len());
-                    let _ = event_tx.send(Message::Reasoning(text));
+
+                if !collected_pass.is_empty() {
+                    history.push(RigMessage::assistant(&collected_pass));
                 }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::ToolCall(tool_call),
-            )) => {
-                let name = tool_call.function.name;
-                let args = tool_call.function.arguments.to_string();
-                let _ = event_tx.send(Message::ToolCall { name, args });
-            }
-            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
-            Ok(_) => {}
-            Err(e) => {
-                let error_msg = format!("Claude stream error: {}", e);
-                if is_rate_limit_error(&error_msg) {
-                    auth::mark_cooldown(&token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+
+                let todo_ok = match &tool_context.todo_store {
+                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
+                    None => true,
+                };
+
+                if todo_ok {
+                    return Ok(());
                 }
-                return Err(error_msg);
+
+                if passes >= TODO_GUARD_MAX_PASSES {
+                    return Err(
+                        "To Do list was not confirmed complete after multiple attempts."
+                            .to_string(),
+                    );
+                }
+
+                history.push(RigMessage::user(TODO_GUARD_PROMPT));
             }
         }
-    }
-
-    Ok(())
-    }
     }
 }

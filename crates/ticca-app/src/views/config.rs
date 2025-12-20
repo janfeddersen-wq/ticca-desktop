@@ -524,7 +524,7 @@ fn build_tools_section(yolo_mode_enabled: bool) -> Element<'static, Message> {
                 icon(icons::SECURITY).size(16),
                 text("Yolo Mode:").size(14).width(Length::Fixed(120.0)),
                 status_button,
-                text("Require approval for edit/delete/shell when Off.")
+                text("Require approval for edit/delete/execute_shell when Off.")
                     .size(12)
                     .style(|_theme: &iced::Theme| iced::widget::text::Style {
                         color: Some(Color::from_rgb8(120, 120, 120)),

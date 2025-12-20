@@ -1,10 +1,10 @@
 //! Iced Message types for the application
 
 use crate::theme::AppTheme;
-use ticca_core::agents::AgentType;
-use ticca_core::tools::{AgentCallEvent, AgentStreamEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
+use ticca_core::agents::AgentType;
+use ticca_core::tools::{AgentCallEvent, AgentStreamEvent, SystemExecRequest, TodoListEvent};
 
 /// Image attachment data for sending to the LLM
 #[derive(Debug, Clone)]
@@ -54,7 +54,10 @@ pub enum Message {
     StreamError(String),
 
     /// Tool call started
-    ToolCall { name: String, args: String },
+    ToolCall {
+        name: String,
+        args: String,
+    },
 
     /// Agent invocation event for the call graph
     AgentCall(AgentCallEvent),
@@ -62,20 +65,57 @@ pub enum Message {
     /// Streaming output from an invoked agent
     SubagentStream(AgentStreamEvent),
 
+    /// To Do list events (agent-scoped)
+    TodoEvent(TodoListEvent),
+
     /// Tool result received
-    ToolResult { name: String, result: String },
+    ToolResult {
+        name: String,
+        result: String,
+    },
+
+    /// System execution request (from LLM tools)
+    SystemExecRequest(SystemExecRequest),
+
+    /// Terminal widget event (System Executions)
+    SystemExecTerminalEvent(iced_term::Event),
+
+    /// New terminal name changed
+    SystemExecNewTerminalNameChanged(String),
+
+    /// Create user terminal
+    SystemExecCreateUserTerminal,
+
+    /// Close terminal UI panel
+    SystemExecCloseTerminal(String),
+
+    /// Kill/terminate terminal process
+    SystemExecKillTerminal(String),
+
+    /// Copy current terminal output to clipboard
+    SystemExecCopyTerminal(String),
 
     /// Approval required before running a protected tool
-    ToolApprovalRequested { id: u64, name: String, args: String },
+    ToolApprovalRequested {
+        id: u64,
+        name: String,
+        args: String,
+    },
     /// User decision for a tool approval
-    ToolApprovalDecision { id: u64, approved: bool },
+    ToolApprovalDecision {
+        id: u64,
+        approved: bool,
+    },
 
     /// Reasoning/thinking content from the model
     Reasoning(String),
 
     /// Stream statistics - emitted periodically during streaming
     /// Contains chars received in the last interval
-    StreamStats { chars_in_window: usize, window_ms: u64 },
+    StreamStats {
+        chars_in_window: usize,
+        window_ms: u64,
+    },
 
     /// Poll the byte counter for streaming stats (from iced subscription timer)
     PollStreamStats,
@@ -98,15 +138,23 @@ pub enum Message {
 
     // OAuth accounts
     RemoveOAuthAccount(String),
-    ToggleOAuthAccountActive { account_id: String, is_active: bool },
+    ToggleOAuthAccountActive {
+        account_id: String,
+        is_active: bool,
+    },
     ResetOAuthCooldown(String),
-    AdjustOAuthAccountPriority { account_id: String, delta: i64 },
+    AdjustOAuthAccountPriority {
+        account_id: String,
+        delta: i64,
+    },
 
     // Agent selection
     SwitchAgent(AgentType),
 
     // UI layout
     ToggleFlowPanel,
+    SelectSidebarTab(RightSidebarTab),
+    SelectTodoNode(TodoNodeOption),
 
     // Working directory
     SelectWorkingDirectory,
@@ -149,6 +197,37 @@ pub enum Message {
     /// Internal no-op for async command completions
     Noop,
     DismissError,
+}
+
+/// Right sidebar tab selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RightSidebarTab {
+    AgentsFlow,
+    TodoList,
+    SystemExecutions,
+}
+
+/// Pick-list option for selecting an agent node's To Do list
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoNodeOption {
+    pub node_id: usize,
+    pub label: String,
+}
+
+impl std::fmt::Display for RightSidebarTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RightSidebarTab::AgentsFlow => write!(f, "Agents Flow"),
+            RightSidebarTab::TodoList => write!(f, "To Do List"),
+            RightSidebarTab::SystemExecutions => write!(f, "System Executions"),
+        }
+    }
+}
+
+impl std::fmt::Display for TodoNodeOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
 }
 
 /// OAuth provider selection

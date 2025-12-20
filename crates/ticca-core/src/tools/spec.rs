@@ -1,6 +1,6 @@
 //! Shared tool specifications for registry and rig tools
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::registry::ToolParameterSchema;
 
@@ -15,13 +15,17 @@ pub fn list_files_spec() -> ToolSpec {
     let mut params = std::collections::HashMap::new();
     params.insert(
         "directory".to_string(),
-        ToolParameterSchema::string("Path to the directory to list. Defaults to current directory.")
-            .with_default(json!(".")),
+        ToolParameterSchema::string(
+            "Path to the directory to list. Defaults to current directory.",
+        )
+        .with_default(json!(".")),
     );
     params.insert(
         "recursive".to_string(),
-        ToolParameterSchema::boolean("Whether to recursively list subdirectories. Defaults to true.")
-            .with_default(json!(true)),
+        ToolParameterSchema::boolean(
+            "Whether to recursively list subdirectories. Defaults to true.",
+        )
+        .with_default(json!(true)),
     );
 
     ToolSpec {
@@ -52,8 +56,10 @@ pub fn read_file_spec() -> ToolSpec {
     );
     params.insert(
         "num_lines".to_string(),
-        ToolParameterSchema::integer("Number of lines to read from start_line. Required if start_line is set.")
-            .with_default(json!(null)),
+        ToolParameterSchema::integer(
+            "Number of lines to read from start_line. Required if start_line is set.",
+        )
+        .with_default(json!(null)),
     );
 
     ToolSpec {
@@ -89,7 +95,9 @@ pub fn edit_file_spec() -> ToolSpec {
     );
     params.insert(
         "replacements".to_string(),
-        ToolParameterSchema::string("Array of {old_str, new_str} objects for text replacement. Optional."),
+        ToolParameterSchema::string(
+            "Array of {old_str, new_str} objects for text replacement. Optional.",
+        ),
     );
     params.insert(
         "delete_snippet".to_string(),
@@ -163,39 +171,84 @@ pub fn grep_spec(_max_matches: usize) -> ToolSpec {
     }
 }
 
-pub fn shell_spec(default_timeout: u64, _max_output_lines: usize) -> ToolSpec {
+pub fn execute_shell_spec(_default_timeout: u64) -> ToolSpec {
     let mut params = std::collections::HashMap::new();
     params.insert(
         "command".to_string(),
-        ToolParameterSchema::string("The shell command to execute."),
+        ToolParameterSchema::string("The shell command to execute in a visible UI terminal."),
     );
     params.insert(
         "cwd".to_string(),
-        ToolParameterSchema::string("Working directory for command execution. Defaults to current directory.")
+        ToolParameterSchema::string("Working directory for command execution (optional).")
             .with_default(json!(null)),
-    );
-    params.insert(
-        "timeout".to_string(),
-        ToolParameterSchema::integer(format!(
-            "Timeout in seconds. Defaults to {} seconds.",
-            default_timeout
-        ))
-        .with_default(json!(default_timeout)),
     );
 
     ToolSpec {
-        name: "shell",
-        description: "Execute a shell command with configurable timeout and working directory.",
+        name: "execute_shell",
+        description: "Execute a shell command in a UI terminal instance (shown in System Executions). Short commands may return completed output; long-running commands return immediately with a process ID.",
         rig_parameters: json!({
             "type": "object",
             "properties": {
                 "command": { "type": "string", "description": "The shell command to execute" },
-                "cwd": { "type": "string", "description": "Working directory for command execution (optional)" },
-                "timeout": { "type": "integer", "description": "Timeout in seconds (default: 60)" }
+                "cwd": { "type": "string", "description": "Working directory for command execution (optional)" }
             },
             "required": ["command"]
         }),
         registry_parameters: ToolParameterSchema::object(params, vec!["command".to_string()]),
+    }
+}
+
+pub fn list_processes_spec() -> ToolSpec {
+    ToolSpec {
+        name: "list_processes",
+        description: "List all active terminal process IDs in the System Executions tab.",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {}
+        }),
+        registry_parameters: ToolParameterSchema::object(std::collections::HashMap::new(), vec![]),
+    }
+}
+
+pub fn read_process_output_spec() -> ToolSpec {
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "process_id".to_string(),
+        ToolParameterSchema::string("Process ID to read output from."),
+    );
+
+    ToolSpec {
+        name: "read_process_output",
+        description: "Read only new output from a terminal process since the last read for that process.",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {
+                "process_id": { "type": "string", "description": "The process ID to read from" }
+            },
+            "required": ["process_id"]
+        }),
+        registry_parameters: ToolParameterSchema::object(params, vec!["process_id".to_string()]),
+    }
+}
+
+pub fn kill_process_spec() -> ToolSpec {
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "process_id".to_string(),
+        ToolParameterSchema::string("Process ID to terminate."),
+    );
+
+    ToolSpec {
+        name: "kill_process",
+        description: "Terminate a terminal process and remove it from the System Executions tab.",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {
+                "process_id": { "type": "string", "description": "The process ID to terminate" }
+            },
+            "required": ["process_id"]
+        }),
+        registry_parameters: ToolParameterSchema::object(params, vec!["process_id".to_string()]),
     }
 }
 
@@ -264,7 +317,70 @@ pub fn invoke_agent_spec() -> ToolSpec {
             },
             "required": ["agent", "prompt"]
         }),
-        registry_parameters: ToolParameterSchema::object(params, vec!["agent".to_string(), "prompt".to_string()]),
+        registry_parameters: ToolParameterSchema::object(
+            params,
+            vec!["agent".to_string(), "prompt".to_string()],
+        ),
+    }
+}
+
+pub fn todo_list_spec() -> ToolSpec {
+    let mut item_props = std::collections::HashMap::new();
+    item_props.insert(
+        "text".to_string(),
+        ToolParameterSchema::string("Task description (keep short)."),
+    );
+    item_props.insert(
+        "status".to_string(),
+        ToolParameterSchema::string("One of: pending | in_progress | completed."),
+    );
+
+    let item_schema =
+        ToolParameterSchema::object(item_props, vec!["text".to_string(), "status".to_string()]);
+
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "items".to_string(),
+        ToolParameterSchema {
+            param_type: "array".to_string(),
+            description: Some("Ordered list of tasks for the current agent.".to_string()),
+            default: None,
+            properties: None,
+            required: None,
+            items: Some(Box::new(item_schema)),
+        },
+    );
+    params.insert(
+        "confirmed_complete".to_string(),
+        ToolParameterSchema::boolean(
+            "Set true to confirm all tasks are completed. Will only be accepted if every item status is completed.",
+        )
+        .with_default(json!(null)),
+    );
+
+    ToolSpec {
+        name: "todo_list",
+        description: "Maintain an agent-scoped To Do list. Replace the entire list each call; confirm completion by setting confirmed_complete=true when all items are completed.",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": "Ordered list of tasks for the current agent",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": { "type": "string", "description": "Task description (keep short)" },
+                            "status": { "type": "string", "description": "One of: pending | in_progress | completed" }
+                        },
+                        "required": ["text", "status"]
+                    }
+                },
+                "confirmed_complete": { "type": "boolean", "description": "Set true to confirm all tasks are completed (only accepted if all items are completed)" }
+            },
+            "required": ["items"]
+        }),
+        registry_parameters: ToolParameterSchema::object(params, vec!["items".to_string()]),
     }
 }
 
@@ -277,10 +393,14 @@ pub fn tool_specs_for_names(names: &[&str]) -> Vec<ToolSpec> {
             "edit_file" => Some(edit_file_spec()),
             "delete_file" => Some(delete_file_spec()),
             "grep" => Some(grep_spec(200)),
-            "shell" => Some(shell_spec(60, 256)),
+            "execute_shell" => Some(execute_shell_spec(60)),
+            "list_processes" => Some(list_processes_spec()),
+            "read_process_output" => Some(read_process_output_spec()),
+            "kill_process" => Some(kill_process_spec()),
             "write_file" => Some(write_file_spec()),
             "list_agents" => Some(list_agents_spec()),
             "invoke_agent" => Some(invoke_agent_spec()),
+            "todo_list" => Some(todo_list_spec()),
             _ => None,
         })
         .collect()

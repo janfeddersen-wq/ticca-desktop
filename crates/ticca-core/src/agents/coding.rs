@@ -1,8 +1,8 @@
 //! Coding Agent - Code generation and modification
 
+use super::PromptBlocks;
 use super::base::{Agent, AgentType};
 use super::profile::ToolUsagePolicy;
-use super::PromptBlocks;
 use crate::tools::spec::tool_specs_for_names;
 
 /// Coding Agent - code generation and modification
@@ -12,9 +12,10 @@ impl Agent for CodingAgent {
     fn agent_type(&self) -> AgentType {
         AgentType::Coding
     }
-    
+
     fn available_tools(&self) -> Vec<&'static str> {
         vec![
+            "todo_list",
             "list_files",
             "read_file",
             "grep",
@@ -23,7 +24,10 @@ impl Agent for CodingAgent {
             "edit_file",
             "delete_file",
             "write_file",
-            "shell",
+            "execute_shell",
+            "list_processes",
+            "read_process_output",
+            "kill_process",
         ]
     }
 
@@ -34,6 +38,7 @@ impl Agent for CodingAgent {
         let guidelines = PromptBlocks::agent_guidelines(
             &policy,
             &[
+                "Maintain a To Do list via todo_list; update it as you work and confirm completion before ending",
                 "Use list_files to explore project structure before modifying files",
                 "Follow DRY, YAGNI, and SOLID principles",
                 "Keep solutions simple and readable (KISS)",
@@ -44,7 +49,7 @@ impl Agent for CodingAgent {
         );
 
         format!(
-            "You are a coding assistant with access to file and shell tools. Use these tools to complete coding tasks - do not just describe what to do.\n\n{}\n{}",
+            "You are a coding assistant with access to file tools and system execution tools. Use these tools to complete coding tasks - do not just describe what to do.\n\n{}\n{}",
             tool_docs, guidelines
         )
     }
@@ -65,9 +70,13 @@ mod tests {
         assert!(agent.can_use_tool("edit_file"));
         assert!(agent.can_use_tool("delete_file"));
         assert!(agent.can_use_tool("write_file"));
-        assert!(agent.can_use_tool("shell"));
+        assert!(agent.can_use_tool("execute_shell"));
+        assert!(agent.can_use_tool("list_processes"));
+        assert!(agent.can_use_tool("read_process_output"));
+        assert!(agent.can_use_tool("kill_process"));
         assert!(agent.can_use_tool("list_agents"));
         assert!(agent.can_use_tool("invoke_agent"));
+        assert!(agent.can_use_tool("todo_list"));
     }
 
     #[test]
@@ -96,6 +105,7 @@ mod tests {
         let tools = agent.available_tools();
 
         // Coding agent should have all tools
+        assert!(tools.contains(&"todo_list"));
         assert!(tools.contains(&"list_files"));
         assert!(tools.contains(&"read_file"));
         assert!(tools.contains(&"grep"));
@@ -104,8 +114,11 @@ mod tests {
         assert!(tools.contains(&"edit_file"));
         assert!(tools.contains(&"delete_file"));
         assert!(tools.contains(&"write_file"));
-        assert!(tools.contains(&"shell"));
-        assert_eq!(tools.len(), 9);
+        assert!(tools.contains(&"execute_shell"));
+        assert!(tools.contains(&"list_processes"));
+        assert!(tools.contains(&"read_process_output"));
+        assert!(tools.contains(&"kill_process"));
+        assert_eq!(tools.len(), 13);
     }
 
     #[test]
@@ -114,13 +127,17 @@ mod tests {
         let prompt = agent.system_prompt();
 
         // Prompt should describe all available tools
+        assert!(prompt.contains("### todo_list"));
         assert!(prompt.contains("### list_files"));
         assert!(prompt.contains("### read_file"));
         assert!(prompt.contains("### write_file"));
         assert!(prompt.contains("### edit_file"));
         assert!(prompt.contains("### delete_file"));
         assert!(prompt.contains("### grep"));
-        assert!(prompt.contains("### shell"));
+        assert!(prompt.contains("### execute_shell"));
+        assert!(prompt.contains("### list_processes"));
+        assert!(prompt.contains("### read_process_output"));
+        assert!(prompt.contains("### kill_process"));
         assert!(prompt.contains("### list_agents"));
         assert!(prompt.contains("### invoke_agent"));
     }

@@ -1,8 +1,8 @@
 //! Planning Agent - Strategic task breakdown and roadmap creation
 
+use super::PromptBlocks;
 use super::base::{Agent, AgentType};
 use super::profile::ToolUsagePolicy;
-use super::PromptBlocks;
 use crate::tools::spec::tool_specs_for_names;
 
 /// Planning Agent - breaks down complex tasks into actionable steps
@@ -12,9 +12,10 @@ impl Agent for PlanningAgent {
     fn agent_type(&self) -> AgentType {
         AgentType::Planning
     }
-    
+
     fn available_tools(&self) -> Vec<&'static str> {
         vec![
+            "todo_list",
             "list_files",
             "read_file",
             "grep",
@@ -31,6 +32,7 @@ impl Agent for PlanningAgent {
             &policy,
             &[
                 "Always explore the codebase before planning",
+                "Maintain a To Do list via todo_list; update it as you refine the plan and confirm completion before ending",
                 "Be specific - each task should be concrete and actionable",
                 "Consider task dependencies and ordering",
                 "Include testing and validation steps",
@@ -106,6 +108,7 @@ mod tests {
         assert!(agent.can_use_tool("grep"));
         assert!(agent.can_use_tool("list_agents"));
         assert!(agent.can_use_tool("invoke_agent"));
+        assert!(agent.can_use_tool("todo_list"));
         assert!(!agent.can_use_tool("edit_file")); // Planning can't edit
         assert!(!agent.can_use_tool("write_file"));
     }
@@ -126,6 +129,7 @@ mod tests {
         let tools = agent.available_tools();
 
         // Planning agent should have limited, read-only tools
+        assert!(tools.contains(&"todo_list"));
         assert!(tools.contains(&"list_files"));
         assert!(tools.contains(&"read_file"));
         assert!(tools.contains(&"grep"));
@@ -133,7 +137,10 @@ mod tests {
         assert!(tools.contains(&"invoke_agent"));
         assert!(!tools.contains(&"edit_file"));
         assert!(!tools.contains(&"write_file"));
-        assert!(!tools.contains(&"shell"));
-        assert_eq!(tools.len(), 5);
+        assert!(!tools.contains(&"execute_shell"));
+        assert!(!tools.contains(&"list_processes"));
+        assert!(!tools.contains(&"read_process_output"));
+        assert!(!tools.contains(&"kill_process"));
+        assert_eq!(tools.len(), 6);
     }
 }

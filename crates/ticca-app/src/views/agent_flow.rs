@@ -1,34 +1,33 @@
 //! Agent call graph view (React Flow-style panel).
 
 use iced::widget::{canvas, column, container, row, scrollable, text};
-use iced::{Element, Length, Point, Rectangle, Renderer, Size, Pixels, Color};
+use iced::{Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size};
 
 use crate::agent_graph::{AgentCallGraph, AgentNode};
 use crate::material_icons::{icon, icons};
 use crate::messages::Message;
-use crate::theme::{styles, AppTheme};
+use crate::theme::{AppTheme, styles};
 
-pub fn view<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Message> {
-    let header = row![
+pub fn contents<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Message> {
+    let subtitle = row![
         icon(icons::FORUM).size(16),
-        text("Agents Flow").size(14),
+        text("Live call graph").size(11),
     ]
-    .spacing(6);
-    let subtitle = text("Live call graph").size(11);
+    .spacing(6)
+    .align_y(iced::Alignment::Center);
 
     let canvas = canvas::Canvas::new(FlowCanvas::new(graph.clone(), theme))
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let content = column![
-        header,
-        subtitle,
-        scrollable(canvas).height(Length::Fill),
-    ]
-    .spacing(6)
-    .padding(12);
+    column![subtitle, scrollable(canvas).height(Length::Fill)]
+        .spacing(6)
+        .padding(12)
+        .into()
+}
 
-    container(content)
+pub fn view<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Message> {
+    container(contents(graph, theme))
         .width(Length::Fixed(280.0))
         .height(Length::Fill)
         .style(styles::flow_panel_container)
@@ -127,7 +126,8 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
         node_width *= scale;
         h_gap *= scale;
 
-        let mut positions: std::collections::HashMap<usize, Point> = std::collections::HashMap::new();
+        let mut positions: std::collections::HashMap<usize, Point> =
+            std::collections::HashMap::new();
         for (index, node_id) in self.graph.order().iter().enumerate() {
             if let Some(node) = self.graph.nodes().get(node_id) {
                 let node_depth = depth.get(node_id).copied().unwrap_or(0);
@@ -166,12 +166,13 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
                         end,
                     );
                 });
-                let glow = Color { a: 0.25, ..self.edge_color() };
+                let glow = Color {
+                    a: 0.25,
+                    ..self.edge_color()
+                };
                 frame.stroke(
                     &path,
-                    canvas::Stroke::default()
-                        .with_width(6.0)
-                        .with_color(glow),
+                    canvas::Stroke::default().with_width(6.0).with_color(glow),
                 );
                 frame.stroke(
                     &path,
@@ -199,9 +200,10 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
                 frame.fill(&rounded, self.node_color(node));
                 frame.stroke(
                     &rounded,
-                    canvas::Stroke::default()
-                        .with_width(1.2)
-                        .with_color(Color { a: 0.6, ..self.edge_color() }),
+                    canvas::Stroke::default().with_width(1.2).with_color(Color {
+                        a: 0.6,
+                        ..self.edge_color()
+                    }),
                 );
 
                 frame.fill_text(canvas::Text {

@@ -378,6 +378,50 @@ pub fn tab_button(theme: &Theme, status: button::Status, is_active: bool) -> but
     }
 }
 
+/// Sidebar tab button - classic "tabs" look (not pill buttons)
+pub fn sidebar_tab_button(theme: &Theme, status: button::Status, is_active: bool) -> button::Style {
+    let base = button::Style {
+        background: Some((if is_active { bg_surface(theme) } else { bg_elevated(theme) }).into()),
+        text_color: if is_active {
+            text_primary(theme)
+        } else {
+            text_secondary(theme)
+        },
+        border: Border {
+            color: if is_active {
+                border_default(theme)
+            } else {
+                border_subtle(theme)
+            },
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..button::Style::default()
+    };
+
+    match status {
+        button::Status::Active => base,
+        button::Status::Hovered => button::Style {
+            background: Some((if is_active { bg_surface(theme) } else { bg_hover(theme) }).into()),
+            text_color: text_primary(theme),
+            border: Border {
+                color: border_default(theme),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(bg_hover(theme).into()),
+            ..base
+        },
+        button::Status::Disabled => button::Style {
+            text_color: text_muted(theme),
+            ..base
+        },
+    }
+}
+
 /// Send button - circular accent button
 pub fn send_button(theme: &Theme, status: button::Status) -> button::Style {
     let base = button::Style {
@@ -469,6 +513,43 @@ pub fn remove_attachment_button(theme: &Theme, status: button::Status) -> button
             ..base
         },
         button::Status::Disabled => base,
+    }
+}
+
+/// Danger icon button - used for destructive actions in tool panels
+pub fn danger_icon_button(theme: &Theme, status: button::Status) -> button::Style {
+    let base = button::Style {
+        background: Some(bg_surface(theme).into()),
+        text_color: danger(theme),
+        border: Border {
+            color: border_subtle(theme),
+            width: 1.0,
+            radius: RADIUS_FULL.into(),
+        },
+        ..button::Style::default()
+    };
+
+    match status {
+        button::Status::Active => base,
+        button::Status::Hovered => button::Style {
+            background: Some(danger(theme).into()),
+            text_color: Color::WHITE,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_FULL.into(),
+            },
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(Color::from_rgb(0.7, 0.25, 0.25).into()),
+            text_color: Color::WHITE,
+            ..base
+        },
+        button::Status::Disabled => button::Style {
+            text_color: text_muted(theme),
+            ..base
+        },
     }
 }
 
