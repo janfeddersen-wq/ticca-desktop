@@ -1,9 +1,35 @@
 //! Helper functions for the application
 
 /// Format a tool call as a concise one-liner for display
-pub fn format_tool_call_oneliner(name: &str, args: &str) -> String {
+pub fn format_tool_call_oneliner(
+    name: &str,
+    args: &str,
+    working_directory: Option<&std::path::Path>,
+) -> String {
     // Try to parse the args as JSON to extract relevant fields
     let parsed: serde_json::Value = serde_json::from_str(args).unwrap_or(serde_json::Value::Null);
+
+    let resolve_path = |path: &str| {
+        let path = std::path::Path::new(path);
+        let full_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            working_directory
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(path)
+        };
+        full_path
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+
+    let link_path = |display: String, full_path: &str| {
+        if full_path.is_empty() {
+            display
+        } else {
+            format!("[{}](<{}>)", display, full_path)
+        }
+    };
 
     let param_display = match name {
         "list_files" => {
@@ -20,26 +46,29 @@ pub fn format_tool_call_oneliner(name: &str, args: &str) -> String {
             }
         }
         "read_file" => {
-            // Show just the path
+            // Show just the path (clickable)
             if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
                 let display = if path.len() > 80 {
                     format!("...{}", &path[path.len()-77..])
                 } else {
                     path.to_string()
                 };
-                display
+                let full_path = resolve_path(path);
+                link_path(display, &full_path)
             } else {
                 String::new()
             }
         }
         "edit_file" | "write_file" => {
-            // Show just the filename
+            // Show just the filename (clickable)
             if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
-                std::path::Path::new(path)
+                let filename = std::path::Path::new(path)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(path)
-                    .to_string()
+                    .to_string();
+                let full_path = resolve_path(path);
+                link_path(filename, &full_path)
             } else {
                 String::new()
             }

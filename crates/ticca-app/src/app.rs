@@ -738,7 +738,11 @@ impl TiccaApp {
             Message::ToolCall { name, args } => {
                 if let Some(last) = self.chat.messages.last_mut() {
                     if last.is_streaming {
-                        let tool_line = format_tool_call_oneliner(&name, &args);
+                        let tool_line = format_tool_call_oneliner(
+                            &name,
+                            &args,
+                            Some(&self.chat.working_directory),
+                        );
                         last.content.push_str(&format!("\n\n{}", tool_line));
                         last.last_was_tool_call = true;
                         last.update_parsed_items();
@@ -790,7 +794,11 @@ impl TiccaApp {
                     AgentStreamEvent::ToolCall { node_id, name, args } => {
                         if let Some(&index) = self.chat.subagent_message_indices.get(&node_id) {
                             if let Some(msg) = self.chat.messages.get_mut(index) {
-                                let tool_line = format_tool_call_oneliner(&name, &args);
+                                let tool_line = format_tool_call_oneliner(
+                                    &name,
+                                    &args,
+                                    Some(&self.chat.working_directory),
+                                );
                                 msg.content.push_str(&format!("\n\n{}", tool_line));
                                 msg.last_was_tool_call = true;
                                 msg.update_parsed_items();

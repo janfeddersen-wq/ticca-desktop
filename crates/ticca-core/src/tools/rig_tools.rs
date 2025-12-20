@@ -435,6 +435,12 @@ impl Tool for EditFileTool {
             context
                 .enforce_path(&full_path)
                 .map_err(EditFileError)?;
+            if let Err(e) = context
+                .require_approval("edit_file", format!("path={}", args.path))
+                .await
+            {
+                return Err(EditFileError(e));
+            }
         }
 
         let path_str = full_path.to_string_lossy().to_string();
@@ -709,6 +715,12 @@ impl Tool for WriteFileTool {
             context
                 .enforce_path(&full_path)
                 .map_err(WriteFileError)?;
+            if let Err(e) = context
+                .require_approval("write_file", format!("path={}", args.path))
+                .await
+            {
+                return Err(WriteFileError(e));
+            }
         }
 
         // Create parent directories if they don't exist
