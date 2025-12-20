@@ -59,4 +59,4 @@ open.workspace = true
 http = "1"
 
 # Embedded terminals (System Executions)
-iced_term = { git = "https://github.com/janfeddersen-wq/iced_term.git", rev = "a895f40209581ce709a48586032c75a877e82b0b" }
+iced_term = { git = "https://github.com/janfeddersen-wq/iced_term.git", rev = "ea244f23afa20b368f44b573b9c893e12a6c74d3" }
