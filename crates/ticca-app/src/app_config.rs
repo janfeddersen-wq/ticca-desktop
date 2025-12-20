@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{ConfigDatabase, TypedSettings};
+use ticca_core::config::ConfigService;
 
 use crate::theme::AppTheme;
 
@@ -18,8 +18,8 @@ pub struct AppConfig {
 
 /// Load configuration from database
 pub fn load_config() -> AppConfig {
-    let db = match ConfigDatabase::open() {
-        Ok(db) => db,
+    let snapshot = match ConfigService::load_settings_snapshot() {
+        Ok(snapshot) => snapshot,
         Err(_) => {
             return AppConfig {
                 theme: AppTheme::Dark,
@@ -31,17 +31,13 @@ pub fn load_config() -> AppConfig {
         }
     };
 
-    let settings = TypedSettings::load(&db);
-    let theme = AppTheme::parse(&settings.theme);
-    let default_model = settings.default_model;
-    let max_tool_rounds = settings.max_tool_rounds;
-    let yolo_mode_enabled = settings.yolo_mode_enabled;
-
-    // Load agent pinned models
-    let pinned_map = db.get_all_agent_pinned_models().ok().unwrap_or_default();
+    let theme = AppTheme::parse(&snapshot.settings.theme);
+    let default_model = snapshot.settings.default_model;
+    let max_tool_rounds = snapshot.settings.max_tool_rounds;
+    let yolo_mode_enabled = snapshot.settings.yolo_mode_enabled;
 
     let mut agent_pinned_models = HashMap::new();
-    for (agent_str, model) in pinned_map {
+    for (agent_str, model) in snapshot.agent_pinned_models {
         if let Some(agent_type) = AgentType::parse(&agent_str) {
             agent_pinned_models.insert(agent_type, model);
         }

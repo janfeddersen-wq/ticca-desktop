@@ -6,12 +6,12 @@ use iced::{Border, Color, Element, Length};
 use std::collections::HashMap;
 
 use crate::material_icons::{icon, icons};
-use crate::messages::{Message, OAuthProvider, SettingsTab};
+use crate::messages::{chat, settings, Message, OAuthProvider, SettingsTab};
 use crate::theme::{AppTheme, styles};
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{ConfigDatabase, OAuthAccount};
-use ticca_core::session::SessionDatabase;
+use ticca_core::config::OAuthAccount;
+use ticca_core::session::Session;
 
 /// Create horizontal space that fills available width (iced 0.14 helper)
 fn horizontal_space() -> Space {
@@ -35,12 +35,16 @@ pub fn view<'a>(
     agent_pinned_models: &'a HashMap<AgentType, String>,
     is_loading_models: bool,
     auth_status: &ProviderAuthStatus,
+    claude_accounts: &'a [OAuthAccount],
+    gemini_accounts: &'a [OAuthAccount],
+    chatgpt_accounts: &'a [OAuthAccount],
     yolo_mode_enabled: bool,
+    recent_sessions: &'a [Session],
     active_tab: SettingsTab,
 ) -> Element<'a, Message> {
     let header = row![
         button(row![icon(icons::ARROW_BACK).size(16), text(" Back").size(14),].spacing(4))
-            .on_press(Message::CloseSettings)
+            .on_press(Message::Settings(settings::Msg::CloseSettings))
             .style(styles::secondary_button)
             .padding([8, 12]),
         text("Settings").size(24),
@@ -78,7 +82,9 @@ pub fn view<'a>(
             row![
                 icon(theme_icon).size(16),
                 text("Theme:").size(14).width(Length::Fixed(80.0)),
-                pick_list(theme_options, Some(theme), Message::SetTheme)
+                pick_list(theme_options, Some(theme), |t| {
+                    Message::Settings(settings::Msg::SetTheme(t))
+                })
                     .width(Length::Fixed(200.0)),
             ]
             .spacing(10)
@@ -97,8 +103,9 @@ pub fn view<'a>(
         is_loading_models,
     );
     let tools_section = build_tools_section(yolo_mode_enabled);
-    let sessions_section = build_sessions_section();
-    let accounts_section = build_accounts_section(auth_status);
+    let sessions_section = build_sessions_section(recent_sessions);
+    let accounts_section =
+        build_accounts_section(auth_status, claude_accounts, gemini_accounts, chatgpt_accounts);
 
     let content = match active_tab {
         SettingsTab::Accounts => accounts_section,
@@ -145,7 +152,7 @@ fn build_model_settings_section<'a>(
         .on_press_maybe(if is_loading_models {
             None
         } else {
-            Some(Message::RefreshModels)
+            Some(Message::Settings(settings::Msg::RefreshModels))
         })
         .style(styles::secondary_button)
         .padding([6, 10]),
@@ -166,7 +173,7 @@ fn build_model_settings_section<'a>(
         row![
             text("Default Model:").size(14).width(Length::Fixed(140.0)),
             pick_list(model_options.clone(), selected_default, |model| {
-                Message::SetDefaultModel(model)
+                Message::Settings(settings::Msg::SetDefaultModel(model))
             })
             .placeholder("Select default model...")
             .width(Length::Fixed(300.0)),
@@ -210,8 +217,13 @@ fn build_model_settings_section<'a>(
             text("Coding Agent:").size(14).width(Length::Fixed(120.0)),
             pick_list(agent_model_options.clone(), Some(selected), move |opt| {
                 match opt {
-                    ModelOption::UseDefault => Message::SetAgentModel(AgentType::Coding, None),
-                    ModelOption::Model(m) => Message::SetAgentModel(AgentType::Coding, Some(m)),
+                    ModelOption::UseDefault => {
+                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, None))
+                    }
+                    ModelOption::Model(m) => Message::Settings(settings::Msg::SetAgentModel(
+                        AgentType::Coding,
+                        Some(m),
+                    )),
                 }
             })
             .width(Length::Fixed(300.0)),
@@ -237,8 +249,13 @@ fn build_model_settings_section<'a>(
             text("Planning Agent:").size(14).width(Length::Fixed(120.0)),
             pick_list(agent_model_options.clone(), Some(selected), move |opt| {
                 match opt {
-                    ModelOption::UseDefault => Message::SetAgentModel(AgentType::Planning, None),
-                    ModelOption::Model(m) => Message::SetAgentModel(AgentType::Planning, Some(m)),
+                    ModelOption::UseDefault => {
+                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Planning, None))
+                    }
+                    ModelOption::Model(m) => Message::Settings(settings::Msg::SetAgentModel(
+                        AgentType::Planning,
+                        Some(m),
+                    )),
                 }
             })
             .width(Length::Fixed(300.0)),
@@ -289,7 +306,7 @@ fn build_tabs(active: SettingsTab) -> Element<'static, Message> {
             ]
             .spacing(4),
         )
-        .on_press(Message::SwitchSettingsTab(tab))
+        .on_press(Message::Settings(settings::Msg::SwitchSettingsTab(tab)))
         .style(style)
         .padding([6, 10])
     };
@@ -305,7 +322,12 @@ fn build_tabs(active: SettingsTab) -> Element<'static, Message> {
     .into()
 }
 
-fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, Message> {
+fn build_accounts_section(
+    auth_status: &ProviderAuthStatus,
+    claude_accounts: &[OAuthAccount],
+    gemini_accounts: &[OAuthAccount],
+    chatgpt_accounts: &[OAuthAccount],
+) -> Element<'static, Message> {
     let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
         let auth_icon = if is_authenticated {
             icons::CHECK_CIRCLE
@@ -324,32 +346,19 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
             ]
             .spacing(4),
         )
-        .on_press(Message::StartOAuth(provider))
+        .on_press(Message::Settings(settings::Msg::StartOAuth(provider)))
         .style(style_fn)
         .padding([8, 12])
     };
 
-    let db = ConfigDatabase::open().ok();
-    let claude_accounts = db
-        .as_ref()
-        .and_then(|db| db.list_oauth_accounts_pruned(Some("claude")).ok())
-        .unwrap_or_default();
-    let gemini_accounts = db
-        .as_ref()
-        .and_then(|db| db.list_oauth_accounts_pruned(Some("gemini")).ok())
-        .unwrap_or_default();
-    let chatgpt_accounts = db
-        .as_ref()
-        .and_then(|db| db.list_oauth_accounts_pruned(Some("chatgpt")).ok())
-        .unwrap_or_default();
-
-    let accounts_section = |label: &str, accounts: Vec<OAuthAccount>| -> Element<Message> {
+    let accounts_section = |label: &str, accounts: &[OAuthAccount]| -> Element<Message> {
         let label = label.to_string();
         let rows: Vec<Element<Message>> = if accounts.is_empty() {
             vec![text("No accounts yet.").size(13).into()]
         } else {
             accounts
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|account| {
                     let status = if !account.is_active {
                         "inactive"
@@ -399,10 +408,10 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                                     ]
                                     .spacing(4)
                                 )
-                                .on_press(Message::ToggleOAuthAccountActive {
+                                .on_press(Message::Settings(settings::Msg::ToggleOAuthAccountActive {
                                     account_id: account.id.clone(),
                                     is_active: !account.is_active,
-                                })
+                                }))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
@@ -412,10 +421,10 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                                     ]
                                     .spacing(4)
                                 )
-                                .on_press(Message::AdjustOAuthAccountPriority {
+                                .on_press(Message::Settings(settings::Msg::AdjustOAuthAccountPriority {
                                     account_id: account.id.clone(),
                                     delta: -1,
-                                })
+                                }))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
@@ -425,10 +434,10 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                                     ]
                                     .spacing(4)
                                 )
-                                .on_press(Message::AdjustOAuthAccountPriority {
+                                .on_press(Message::Settings(settings::Msg::AdjustOAuthAccountPriority {
                                     account_id: account.id.clone(),
                                     delta: 1,
-                                })
+                                }))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
@@ -438,14 +447,18 @@ fn build_accounts_section(auth_status: &ProviderAuthStatus) -> Element<'static, 
                                     ]
                                     .spacing(4)
                                 )
-                                .on_press(Message::ResetOAuthCooldown(account.id.clone()))
+                                .on_press(Message::Settings(settings::Msg::ResetOAuthCooldown(
+                                    account.id.clone(),
+                                )))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                                 button(
                                     row![icon(icons::DELETE).size(14), text(" Remove").size(12),]
                                         .spacing(4)
                                 )
-                                .on_press(Message::RemoveOAuthAccount(account.id))
+                                .on_press(Message::Settings(settings::Msg::RemoveOAuthAccount(
+                                    account.id,
+                                )))
                                 .style(styles::secondary_button)
                                 .padding([6, 10]),
                             ]
@@ -511,12 +524,12 @@ fn build_tools_section(yolo_mode_enabled: bool) -> Element<'static, Message> {
 
     let status_button = if yolo_mode_enabled {
         button(text(status_label).size(12))
-            .on_press(Message::SetYoloMode(!yolo_mode_enabled))
+            .on_press(Message::Settings(settings::Msg::SetYoloMode(!yolo_mode_enabled)))
             .style(styles::success_button)
             .padding([6, 10])
     } else {
         button(text(status_label).size(12))
-            .on_press(Message::SetYoloMode(!yolo_mode_enabled))
+            .on_press(Message::Settings(settings::Msg::SetYoloMode(!yolo_mode_enabled)))
             .style(styles::secondary_button)
             .padding([6, 10])
     };
@@ -545,17 +558,13 @@ fn build_tools_section(yolo_mode_enabled: bool) -> Element<'static, Message> {
 }
 
 /// Build the recent sessions section
-fn build_sessions_section<'a>() -> Element<'a, Message> {
-    let sessions = SessionDatabase::open()
-        .ok()
-        .and_then(|db| db.list_sessions().ok())
-        .unwrap_or_default();
-
+fn build_sessions_section<'a>(sessions: &'a [Session]) -> Element<'a, Message> {
     let session_list: Vec<Element<'a, Message>> = if sessions.is_empty() {
         vec![text("No saved sessions yet.").size(14).into()]
     } else {
         sessions
-            .into_iter()
+            .iter()
+            .cloned()
             .take(10) // Show last 10 sessions
             .map(|session| {
                 let session_id = session.id.clone();
@@ -585,7 +594,7 @@ fn build_sessions_section<'a>() -> Element<'a, Message> {
                             row![icon(icons::FOLDER_OPEN).size(14), text(" Load").size(12),]
                                 .spacing(4)
                         )
-                        .on_press(Message::LoadSession(session_id))
+                        .on_press(Message::Chat(chat::Msg::LoadSession(session_id)))
                         .style(styles::secondary_button)
                         .padding([6, 10]),
                     ]

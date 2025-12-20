@@ -4,7 +4,7 @@ use iced::widget::{Space, button, column, container, row, scrollable, text, text
 use iced::{Color, Element, Length};
 
 use crate::material_icons::{icon, icons};
-use crate::messages::Message;
+use crate::messages::{chat, Message};
 use crate::system_executions::SystemExecutionsState;
 use crate::theme::{AppTheme, styles};
 
@@ -29,14 +29,14 @@ pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Elemen
     let header = column![
         row![
             text_input("New terminal name", &state.new_terminal_name)
-                .on_input(Message::SystemExecNewTerminalNameChanged)
+                .on_input(|value| Message::Chat(chat::Msg::SystemExecNewTerminalNameChanged(value)))
                 .width(Length::Fill),
             button(
                 row![icon(icons::ADD).size(14), text("New Terminal").size(12),]
                     .spacing(6)
                     .align_y(iced::Alignment::Center),
             )
-            .on_press(Message::SystemExecCreateUserTerminal)
+            .on_press(Message::Chat(chat::Msg::SystemExecCreateUserTerminal))
             .style(styles::secondary_button)
             .padding([6, 10]),
         ]
@@ -52,15 +52,15 @@ pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Elemen
         let title = row![
             text(process_id.clone()).size(12).width(Length::Fill),
             button(row![icon(icons::CONTENT_COPY).size(16)].spacing(6))
-                .on_press(Message::SystemExecCopyTerminal(process_id.clone()))
+                .on_press(Message::Chat(chat::Msg::SystemExecCopyTerminal(process_id.clone())))
                 .style(styles::secondary_button)
                 .padding([4, 8]),
             button(row![icon(icons::CANCEL).size(16)].spacing(6))
-                .on_press(Message::SystemExecKillTerminal(process_id.clone()))
+                .on_press(Message::Chat(chat::Msg::SystemExecKillTerminal(process_id.clone())))
                 .style(styles::danger_icon_button)
                 .padding([4, 8]),
             button(row![icon(icons::CLOSE).size(16)].spacing(6))
-                .on_press(Message::SystemExecCloseTerminal(process_id.clone()))
+                .on_press(Message::Chat(chat::Msg::SystemExecCloseTerminal(process_id.clone())))
                 .style(styles::secondary_button)
                 .padding([4, 8]),
         ]
@@ -69,7 +69,8 @@ pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Elemen
         .align_y(iced::Alignment::Center);
 
         let terminal = container(
-            iced_term::TerminalView::show(&instance.terminal).map(Message::SystemExecTerminalEvent),
+            iced_term::TerminalView::show(&instance.terminal)
+                .map(|event| Message::Chat(chat::Msg::SystemExecTerminalEvent(event))),
         )
         .width(Length::Fill)
         .height(Length::Fixed(220.0));

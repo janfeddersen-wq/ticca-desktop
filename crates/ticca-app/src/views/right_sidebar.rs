@@ -5,7 +5,7 @@ use iced::{Element, Length, Padding};
 
 use crate::agent_graph::AgentCallGraph;
 use crate::material_icons::{icon, icons};
-use crate::messages::{Message, RightSidebarTab, TodoNodeOption};
+use crate::messages::{chat, Message, RightSidebarTab, TodoNodeOption};
 use crate::system_executions::SystemExecutionsState;
 use crate::theme::{AppTheme, styles};
 use crate::views::{agent_flow, system_executions, todo_list};
@@ -30,7 +30,7 @@ pub fn view<'a>(
         button(row![icon(tab_icon).size(14), text(label).size(14)].spacing(6))
             .style(move |theme, status| styles::sidebar_tab_button(theme, status, is_active))
             .padding([8, 12])
-            .on_press(Message::SelectSidebarTab(tab))
+            .on_press(Message::Chat(chat::Msg::SelectSidebarTab(tab)))
             .into()
     };
 
@@ -87,7 +87,10 @@ pub fn view<'a>(
                 .as_ref()
                 .and_then(|opt| todo_lists.get(&opt.node_id));
 
-            let picker = pick_list(node_options, selected_option, Message::SelectTodoNode)
+            let picker =
+                pick_list(node_options, selected_option, |opt| {
+                    Message::Chat(chat::Msg::SelectTodoNode(opt))
+                })
                 .width(Length::Fill);
 
             column![

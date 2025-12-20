@@ -16,7 +16,7 @@ use ticca_core::session::MessageRole;
 
 use crate::chat_message::ChatMessage;
 use crate::material_icons::{icon, icons};
-use crate::messages::{ImageAttachment, Message};
+use crate::messages::{chat, settings, ImageAttachment, Message};
 use crate::theme::{AppTheme, styles};
 use crate::widgets::spinner;
 
@@ -56,13 +56,13 @@ pub fn view<'a>(
             // Agent selector tabs
             row![
                 button(row![icon(icons::CODE).size(14), text(" Coding").size(14),].spacing(4))
-                    .on_press(Message::SwitchAgent(AgentType::Coding))
+                    .on_press(Message::Chat(chat::Msg::SwitchAgent(AgentType::Coding)))
                     .style(move |theme, status| styles::tab_button(theme, status, is_coding))
                     .padding([8, 12]),
                 button(
                     row![icon(icons::CHECKLIST).size(14), text(" Planning").size(14),].spacing(4)
                 )
-                .on_press(Message::SwitchAgent(AgentType::Planning))
+                .on_press(Message::Chat(chat::Msg::SwitchAgent(AgentType::Planning)))
                 .style(move |theme, status| styles::tab_button(theme, status, is_planning))
                 .padding([8, 12]),
             ]
@@ -79,19 +79,19 @@ pub fn view<'a>(
                     })
                     .size(18)
                 )
-                .on_press(Message::ToggleFlowPanel)
+                .on_press(Message::Chat(chat::Msg::ToggleFlowPanel))
                 .style(styles::icon_button)
                 .padding(8),
                 button(icon(icons::CONTRAST).size(18))
-                    .on_press(Message::ThemeToggle)
+                    .on_press(Message::Settings(settings::Msg::ThemeToggle))
                     .style(styles::icon_button)
                     .padding(8),
                 button(icon(icons::SETTINGS).size(18))
-                    .on_press(Message::OpenSettings)
+                    .on_press(Message::Settings(settings::Msg::OpenSettings))
                     .style(styles::icon_button)
                     .padding(8),
                 button(icon(icons::ADD).size(18))
-                    .on_press(Message::NewSession)
+                    .on_press(Message::Chat(chat::Msg::NewSession))
                     .style(styles::icon_button)
                     .padding(8),
             ]
@@ -111,7 +111,7 @@ pub fn view<'a>(
             text(format!(" {}", dir_display)).size(12),
             horizontal_space(),
             button(text("Change").size(12))
-                .on_press(Message::SelectWorkingDirectory)
+                .on_press(Message::Chat(chat::Msg::SelectWorkingDirectory))
                 .style(styles::secondary_button)
                 .padding([4, 8]),
         ]
@@ -134,7 +134,7 @@ pub fn view<'a>(
             .padding(20),
     )
     .id(widget::Id::new(CHAT_SCROLLABLE_ID))
-    .on_scroll(Message::ChatScrolled)
+    .on_scroll(|viewport| Message::Chat(chat::Msg::ChatScrolled(viewport)))
     .height(Length::Fill)
     .into();
 
@@ -202,7 +202,7 @@ pub fn view<'a>(
     let mut input_row = row![
         // Add image button (works on Wayland via xdg-portal)
         button(icon(icons::ATTACH_FILE).size(20))
-            .on_press(Message::SelectImageFile)
+            .on_press(Message::Chat(chat::Msg::SelectImageFile))
             .style(styles::icon_button)
             .padding([8, 8]),
     ]
@@ -218,11 +218,11 @@ pub fn view<'a>(
     input_row = input_row
         .push(
             text_input("Type a message...", input_value)
-                .on_input(Message::InputChanged)
+                .on_input(|value| Message::Chat(chat::Msg::InputChanged(value)))
                 .on_submit(if is_streaming {
-                    Message::StopStreaming
+                    Message::Chat(chat::Msg::StopStreaming)
                 } else {
-                    Message::SendMessage
+                    Message::Chat(chat::Msg::SendMessage)
                 })
                 .style(styles::text_input_style)
                 .padding(12)
@@ -236,9 +236,9 @@ pub fn view<'a>(
                 icon(icons::ARROW_UPWARD).size(20)
             })
             .on_press_maybe(if is_streaming {
-                Some(Message::StopStreaming)
+                Some(Message::Chat(chat::Msg::StopStreaming))
             } else if can_send {
-                Some(Message::SendMessage)
+                Some(Message::Chat(chat::Msg::SendMessage))
             } else {
                 None
             })
@@ -290,7 +290,7 @@ fn build_attachment_preview(
                         container(thumbnail).style(styles::image_thumbnail_container),
                         container(
                             button(icon(icons::CLOSE).size(12))
-                                .on_press(Message::RemoveAttachment(idx))
+                                .on_press(Message::Chat(chat::Msg::RemoveAttachment(idx)))
                                 .style(styles::remove_attachment_button)
                                 .padding(2)
                         )
@@ -356,12 +356,14 @@ fn render_message<'a>(
             &msg.parsed_items,
             markdown::Settings::with_text_size(14, theme.to_iced_theme()),
         )
-        .map(Message::LinkClicked)
+        .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri)))
     } else if is_raw_view {
         // Raw view: show selectable plain text
         if let Some(editor_content) = raw_view_editors.get(&index) {
             text_editor(editor_content)
-                .on_action(move |action| Message::RawViewEditorAction(index, action))
+                .on_action(move |action| {
+                    Message::Chat(chat::Msg::RawViewEditorAction(index, action))
+                })
                 .style(move |theme, _status| styles::raw_text_editor(theme, is_dark))
                 .into()
         } else {
@@ -374,7 +376,7 @@ fn render_message<'a>(
             &msg.parsed_items,
             markdown::Settings::with_text_size(14, theme.to_iced_theme()),
         )
-        .map(Message::LinkClicked)
+        .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri)))
     };
 
     // Toggle icon: CODE for raw view, DESCRIPTION for markdown view
@@ -390,12 +392,12 @@ fn render_message<'a>(
         horizontal_space(),
         // Raw/Markdown toggle button
         button(icon(toggle_icon).size(16))
-            .on_press(Message::ToggleRawView(index))
+            .on_press(Message::Chat(chat::Msg::ToggleRawView(index)))
             .style(styles::icon_button)
             .padding([4, 6]),
         // Copy button
         button(icon(icons::CONTENT_COPY).size(16))
-            .on_press(Message::CopyMessage(index))
+            .on_press(Message::Chat(chat::Msg::CopyMessage(index)))
             .style(styles::icon_button)
             .padding([4, 6]),
     ]

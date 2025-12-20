@@ -11,7 +11,7 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 use iced::window;
 
 use crate::image_handler;
-use crate::messages::Message;
+use crate::messages::{chat, settings, Message};
 use ticca_core::agents::AgentType;
 
 /// A keyboard shortcut definition
@@ -118,7 +118,7 @@ pub fn subscription() -> Subscription<Message> {
             // Handle file drops for drag & drop images (X11 only - not implemented on Wayland)
             Event::Window(window::Event::FileDropped(path)) => {
                 if image_handler::is_image_file(&path) {
-                    Some(Message::FileDropped(path))
+                    Some(Message::Chat(chat::Msg::FileDropped(path)))
                 } else {
                     None
                 }
@@ -131,29 +131,29 @@ pub fn subscription() -> Subscription<Message> {
                     && let iced::keyboard::Key::Character(c) = &key
                     && c.as_str() == "v"
                 {
-                    return Some(Message::PasteImage);
+                    return Some(Message::Chat(chat::Msg::PasteImage));
                 }
 
                 if bindings.send_message.matches(&key, modifiers) {
-                    return Some(Message::SendMessage);
+                    return Some(Message::Chat(chat::Msg::SendMessage));
                 }
                 if bindings.new_session.matches(&key, modifiers) {
-                    return Some(Message::NewSession);
+                    return Some(Message::Chat(chat::Msg::NewSession));
                 }
                 if bindings.open_settings.matches(&key, modifiers) {
-                    return Some(Message::OpenSettings);
+                    return Some(Message::Settings(settings::Msg::OpenSettings));
                 }
                 if bindings.toggle_theme.matches(&key, modifiers) {
-                    return Some(Message::ThemeToggle);
+                    return Some(Message::Settings(settings::Msg::ThemeToggle));
                 }
                 if bindings.close_panel.matches(&key, modifiers) {
-                    return Some(Message::CloseSettings);
+                    return Some(Message::Settings(settings::Msg::CloseSettings));
                 }
                 if bindings.switch_to_coding.matches(&key, modifiers) {
-                    return Some(Message::SwitchAgent(AgentType::Coding));
+                    return Some(Message::Chat(chat::Msg::SwitchAgent(AgentType::Coding)));
                 }
                 if bindings.switch_to_planning.matches(&key, modifiers) {
-                    return Some(Message::SwitchAgent(AgentType::Planning));
+                    return Some(Message::Chat(chat::Msg::SwitchAgent(AgentType::Planning)));
                 }
 
                 None

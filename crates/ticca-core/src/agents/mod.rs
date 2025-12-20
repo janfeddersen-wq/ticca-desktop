@@ -9,6 +9,7 @@ pub mod coding;
 pub mod planning;
 pub mod profile;
 pub mod prompt_blocks;
+pub mod runner;
 
 pub use base::{Agent, AgentConfig, AgentType, get_agent, get_all_agents};
 pub use coding::CodingAgent;
@@ -18,3 +19,4 @@ pub use profile::{
     ToolUsagePolicy,
 };
 pub use prompt_blocks::PromptBlocks;
+pub use runner::{ChatHistoryMessage, RunnerEvent, run_rig_agent_stream};

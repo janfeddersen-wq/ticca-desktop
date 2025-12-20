@@ -2,6 +2,7 @@
 
 use crate::llm::providers::chatgpt::is_gpt_model;
 use crate::llm::providers::gemini::is_gemini_model;
+use crate::config::models::providers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderId {
@@ -13,9 +14,9 @@ pub enum ProviderId {
 impl ProviderId {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ProviderId::Claude => "claude",
-            ProviderId::Gemini => "gemini",
-            ProviderId::ChatGpt => "chatgpt",
+            ProviderId::Claude => providers::CLAUDE,
+            ProviderId::Gemini => providers::GEMINI,
+            ProviderId::ChatGpt => providers::CHATGPT,
         }
     }
 
