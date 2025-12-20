@@ -7,7 +7,7 @@ use crate::agent_graph::AgentCallGraph;
 use crate::material_icons::{icon, icons};
 use crate::messages::{Message, RightSidebarTab, TodoNodeOption};
 use crate::system_executions::SystemExecutionsState;
-use crate::theme::{AppTheme, styles};
+use crate::theme::{styles, AppTheme};
 use crate::views::{agent_flow, system_executions, todo_list};
 
 use iced::widget::pick_list;
@@ -27,37 +27,31 @@ pub fn view<'a>(
                       label: &'static str|
      -> Element<'a, Message> {
         let is_active = tab == selected_tab;
-        let underline_color = move |theme: &iced::Theme| {
-            if is_active {
-                styles::flow_panel_container(theme)
-                    .background
-                    .unwrap_or(Color::TRANSPARENT.into())
-            } else {
-                styles::card_container(theme).border.color.into()
-            }
-        };
-
-        let underline = container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fixed(1.0))
-            .style(move |theme: &iced::Theme| iced::widget::container::Style {
-                background: Some(underline_color(theme)),
-                ..Default::default()
-            });
-
-        column![
-            button(row![icon(tab_icon).size(16), text(label).size(12)].spacing(6))
-                .style(move |theme, status| styles::sidebar_tab_button(theme, status, is_active))
-                .padding([6, 12])
-                .on_press(Message::SelectSidebarTab(tab)),
-            underline,
-        ]
-        .width(Length::Shrink)
-        .into()
+        button(row![icon(tab_icon).size(14), text(label).size(14)].spacing(6))
+            .style(move |theme, status| styles::sidebar_tab_button(theme, status, is_active))
+            .padding([8, 12])
+            .on_press(Message::SelectSidebarTab(tab))
+            .into()
     };
 
-    let filler = column![
-        Space::new().width(Length::Fill).height(Length::Fixed(30.0)),
+    let tabs = row![
+        tab_button(RightSidebarTab::AgentsFlow, icons::FORUM, "Agents"),
+        tab_button(RightSidebarTab::TodoList, icons::CHECKLIST, "To Do"),
+        tab_button(RightSidebarTab::SystemExecutions, icons::TERMINAL, "System"),
+        Space::new().width(Length::Fill),
+    ]
+    .spacing(0);
+
+    let tabs_header = column![
+        container(tabs)
+            .padding(Padding {
+                top: 10.0,
+                right: 10.0,
+                bottom: 9.0,
+                left: 10.0,
+            })
+            .width(Length::Fill)
+            .style(styles::header_container),
         container(Space::new())
             .width(Length::Fill)
             .height(Length::Fixed(1.0))
@@ -66,15 +60,8 @@ pub fn view<'a>(
                 ..Default::default()
             }),
     ]
+    .spacing(0)
     .width(Length::Fill);
-
-    let tabs = row![
-        tab_button(RightSidebarTab::AgentsFlow, icons::FORUM, "Agents"),
-        tab_button(RightSidebarTab::TodoList, icons::CHECKLIST, "To Do"),
-        tab_button(RightSidebarTab::SystemExecutions, icons::TERMINAL, "System"),
-        filler,
-    ]
-    .spacing(0);
 
     let body: Element<Message> = match selected_tab {
         RightSidebarTab::AgentsFlow => agent_flow::contents(graph, theme),
@@ -117,15 +104,7 @@ pub fn view<'a>(
         RightSidebarTab::SystemExecutions => system_executions::contents(system_exec, theme),
     };
 
-    container(column![
-        container(tabs).padding(Padding {
-            top: 12.0,
-            right: 12.0,
-            bottom: 0.0,
-            left: 12.0,
-        }),
-        body
-    ])
+    container(column![tabs_header, body])
         .width(Length::Fixed(280.0))
         .height(Length::Fill)
         .style(styles::flow_panel_container)
