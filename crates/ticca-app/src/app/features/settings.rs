@@ -93,6 +93,11 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             app.current_view = View::Chat;
         }
         settings::Msg::SwitchSettingsTab(tab) => {
+            if !app.expert_mode_enabled && matches!(tab, SettingsTab::Models | SettingsTab::Agents)
+            {
+                app.settings.settings_tab = SettingsTab::Accounts;
+                return effects;
+            }
             app.settings.settings_tab = tab;
             if tab == SettingsTab::Accounts {
                 app.settings.refresh_accounts();
@@ -116,6 +121,34 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             app.chat.yolo_mode_enabled = enabled;
             let value = if enabled { "true" } else { "false" };
             let _ = ConfigService::set_setting(setting_keys::YOLO_MODE, value);
+        }
+        settings::Msg::SetExpertMode(enabled) => {
+            app.expert_mode_enabled = enabled;
+            let value = if enabled { "true" } else { "false" };
+            let _ = ConfigService::set_setting(setting_keys::EXPERT_MODE, value);
+
+            if !enabled
+                && matches!(
+                    app.settings.settings_tab,
+                    SettingsTab::Models | SettingsTab::Agents
+                )
+            {
+                app.settings.settings_tab = SettingsTab::Accounts;
+            }
+
+            if !enabled {
+                app.chat.todo_selected_node = 0;
+            }
+
+            if !enabled
+                && matches!(
+                    app.chat.sidebar_tab,
+                    crate::messages::RightSidebarTab::AgentsFlow
+                        | crate::messages::RightSidebarTab::SystemExecutions
+                )
+            {
+                app.chat.sidebar_tab = crate::messages::RightSidebarTab::TodoList;
+            }
         }
         settings::Msg::StartOAuth(provider) => {
             effects.push(Effect::StartOAuth(provider));
@@ -418,6 +451,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
         &app.settings.accounts_gemini,
         &app.settings.accounts_chatgpt,
         app.chat.yolo_mode_enabled,
+        app.expert_mode_enabled,
         &app.settings.recent_sessions,
         app.settings.settings_tab,
         &app.settings.mcp_servers,

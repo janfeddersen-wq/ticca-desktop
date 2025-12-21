@@ -18,6 +18,7 @@ use crate::theme::AppTheme;
 pub struct TiccaApp {
     current_view: View,
     theme: AppTheme,
+    expert_mode_enabled: bool,
     chat: features::chat::ChatState,
     settings: features::settings::SettingsState,
     error_message: Option<String>,
@@ -44,6 +45,7 @@ impl TiccaApp {
         let app = Self {
             current_view: View::Chat,
             theme: config.theme,
+            expert_mode_enabled: config.expert_mode_enabled,
             chat: features::chat::ChatState::new(&config, working_directory),
             settings: features::settings::SettingsState::new(provider_auth_status),
             error_message: None,

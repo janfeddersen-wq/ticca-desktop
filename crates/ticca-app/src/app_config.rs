@@ -14,6 +14,7 @@ pub struct AppConfig {
     pub agent_pinned_models: HashMap<AgentType, String>,
     pub max_tool_rounds: u32,
     pub yolo_mode_enabled: bool,
+    pub expert_mode_enabled: bool,
 }
 
 /// Load configuration from database
@@ -27,6 +28,7 @@ pub fn load_config() -> AppConfig {
                 agent_pinned_models: HashMap::new(),
                 max_tool_rounds: ticca_core::config::defaults::MAX_TOOL_ROUNDS,
                 yolo_mode_enabled: ticca_core::config::defaults::YOLO_MODE,
+                expert_mode_enabled: ticca_core::config::defaults::EXPERT_MODE,
             };
         }
     };
@@ -35,6 +37,7 @@ pub fn load_config() -> AppConfig {
     let default_model = snapshot.settings.default_model;
     let max_tool_rounds = snapshot.settings.max_tool_rounds;
     let yolo_mode_enabled = snapshot.settings.yolo_mode_enabled;
+    let expert_mode_enabled = snapshot.settings.expert_mode_enabled;
 
     let mut agent_pinned_models = HashMap::new();
     for (agent_str, model) in snapshot.agent_pinned_models {
@@ -49,5 +52,6 @@ pub fn load_config() -> AppConfig {
         agent_pinned_models,
         max_tool_rounds,
         yolo_mode_enabled,
+        expert_mode_enabled,
     }
 }

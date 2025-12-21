@@ -31,6 +31,7 @@ fn horizontal_space() -> Space {
 /// Render the chat view
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
+    expert_mode_enabled: bool,
     current_agent: AgentType,
     working_directory: &Path,
     messages: &'a [ChatMessage],
@@ -50,23 +51,27 @@ pub fn view<'a>(
     let is_coding = current_agent == AgentType::Coding;
     let is_planning = current_agent == AgentType::Planning;
 
-    // Header with agent switcher and settings
-    let header = container(
+    let agent_selector: Element<Message> = if expert_mode_enabled {
         row![
-            // Agent selector tabs
-            row![
-                button(row![icon(icons::CODE).size(14), text(" Coding").size(14),].spacing(4))
-                    .on_press(Message::Chat(chat::Msg::SwitchAgent(AgentType::Coding)))
-                    .style(move |theme, status| styles::tab_button(theme, status, is_coding))
-                    .padding([8, 12]),
-                button(
-                    row![icon(icons::CHECKLIST).size(14), text(" Planning").size(14),].spacing(4)
-                )
+            button(row![icon(icons::CODE).size(14), text(" Coding").size(14),].spacing(4))
+                .on_press(Message::Chat(chat::Msg::SwitchAgent(AgentType::Coding)))
+                .style(move |theme, status| styles::tab_button(theme, status, is_coding))
+                .padding([8, 12]),
+            button(row![icon(icons::CHECKLIST).size(14), text(" Planning").size(14),].spacing(4))
                 .on_press(Message::Chat(chat::Msg::SwitchAgent(AgentType::Planning)))
                 .style(move |theme, status| styles::tab_button(theme, status, is_planning))
                 .padding([8, 12]),
-            ]
-            .spacing(8),
+        ]
+        .spacing(8)
+        .into()
+    } else {
+        Space::new().width(Length::Fixed(0.0)).into()
+    };
+
+    // Header with agent switcher and settings
+    let header = container(
+        row![
+            agent_selector,
             // Spacer
             horizontal_space(),
             // Actions

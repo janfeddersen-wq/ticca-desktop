@@ -69,6 +69,7 @@ pub fn view<'a>(
     gemini_accounts: &'a [OAuthAccount],
     chatgpt_accounts: &'a [OAuthAccount],
     yolo_mode_enabled: bool,
+    expert_mode_enabled: bool,
     recent_sessions: &'a [Session],
     active_tab: SettingsTab,
     mcp_servers: &'a [McpServer],
@@ -87,7 +88,15 @@ pub fn view<'a>(
     .padding(10)
     .align_y(iced::Alignment::Center);
 
-    let tabs = build_tabs(active_tab);
+    let effective_tab = if !expert_mode_enabled
+        && matches!(active_tab, SettingsTab::Models | SettingsTab::Agents)
+    {
+        SettingsTab::Accounts
+    } else {
+        active_tab
+    };
+
+    let tabs = build_tabs(effective_tab, expert_mode_enabled);
 
     // Theme selector with all available themes
     let theme_options: Vec<AppTheme> = vec![
@@ -123,6 +132,15 @@ pub fn view<'a>(
             ]
             .spacing(10)
             .align_y(iced::Alignment::Center),
+            row![
+                icon(icons::TUNE).size(16),
+                text("Expert mode:").size(14).width(Length::Fixed(80.0)),
+                checkbox(expert_mode_enabled)
+                    .on_toggle(|v| Message::Settings(settings::Msg::SetExpertMode(v))),
+                text(if expert_mode_enabled { "On" } else { "Off" }).size(12),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
         ]
         .spacing(15),
     )
@@ -143,11 +161,13 @@ pub fn view<'a>(
         claude_accounts,
         gemini_accounts,
         chatgpt_accounts,
+        expert_mode_enabled,
     );
-    let mcp_servers_section = build_mcp_servers_section(mcp_servers, mcp_form, mcp_import_json, theme);
+    let mcp_servers_section =
+        build_mcp_servers_section(mcp_servers, mcp_form, mcp_import_json, theme);
     let agents_section = build_agent_mcp_section(mcp_servers, agent_mcp_server_ids);
 
-    let content = match active_tab {
+    let content = match effective_tab {
         SettingsTab::Accounts => accounts_section,
         SettingsTab::Models => model_settings,
         SettingsTab::Agents => agents_section,
@@ -332,7 +352,7 @@ fn build_model_settings_section<'a>(
     .into()
 }
 
-fn build_tabs(active: SettingsTab) -> Element<'static, Message> {
+fn build_tabs(active: SettingsTab, expert_mode_enabled: bool) -> Element<'static, Message> {
     let tab_button = |tab: SettingsTab, label: &str, tab_icon| {
         let style = if tab == active {
             styles::primary_button
@@ -352,21 +372,25 @@ fn build_tabs(active: SettingsTab) -> Element<'static, Message> {
         .padding([6, 10])
     };
 
-    row![
-        tab_button(SettingsTab::Accounts, "Accounts", icons::KEY),
-        tab_button(SettingsTab::Models, "Models", icons::TUNE),
-        tab_button(SettingsTab::Agents, "Agents", icons::SMART_TOY),
+    let mut buttons: Vec<Element<'static, Message>> = Vec::new();
+    buttons.push(tab_button(SettingsTab::Accounts, "Accounts", icons::KEY).into());
+    if expert_mode_enabled {
+        buttons.push(tab_button(SettingsTab::Models, "Models", icons::TUNE).into());
+        buttons.push(tab_button(SettingsTab::Agents, "Agents", icons::SMART_TOY).into());
+    }
+    buttons.push(
         tab_button(
             SettingsTab::McpServers,
             "MCP Servers",
-            icons::INTEGRATION_INSTRUCTIONS
-        ),
-        tab_button(SettingsTab::Tools, "Tools & Safety", icons::SECURITY),
-        tab_button(SettingsTab::Appearance, "Appearance", icons::BRIGHTNESS_6),
-        tab_button(SettingsTab::Sessions, "Sessions", icons::FOLDER_OPEN),
-    ]
-    .spacing(8)
-    .into()
+            icons::INTEGRATION_INSTRUCTIONS,
+        )
+        .into(),
+    );
+    buttons.push(tab_button(SettingsTab::Tools, "Tools & Safety", icons::SECURITY).into());
+    buttons.push(tab_button(SettingsTab::Appearance, "Appearance", icons::BRIGHTNESS_6).into());
+    buttons.push(tab_button(SettingsTab::Sessions, "Sessions", icons::FOLDER_OPEN).into());
+
+    row(buttons).spacing(8).into()
 }
 
 fn build_mcp_servers_section<'a>(
@@ -613,7 +637,9 @@ fn build_mcp_servers_section<'a>(
     .style(styles::card_container)
     .into();
 
-    column![import_card, form_card, list_card].spacing(12).into()
+    column![import_card, form_card, list_card]
+        .spacing(12)
+        .into()
 }
 
 fn build_agent_mcp_section<'a>(
@@ -696,13 +722,11 @@ fn build_agent_mcp_section<'a>(
                 format!("{} (disabled)", server.name)
             };
 
-            let server_cell: Element<'a, Message> = column![
-                text(name).size(14),
-                text(detail).size(11),
-            ]
-            .spacing(2)
-            .width(Length::Fixed(server_col_width))
-            .into();
+            let server_cell: Element<'a, Message> =
+                column![text(name).size(14), text(detail).size(11),]
+                    .spacing(2)
+                    .width(Length::Fixed(server_col_width))
+                    .into();
 
             let mut agent_cells: Vec<Element<'a, Message>> = Vec::new();
             for agent in agents {
@@ -712,18 +736,16 @@ fn build_agent_mcp_section<'a>(
                     .unwrap_or(false);
 
                 agent_cells.push(
-                    container(
-                        checkbox(checked).on_toggle({
-                            let server_id = server.id.clone();
-                            move |enabled| {
-                                Message::Settings(settings::Msg::AgentMcpToggled {
-                                    agent_type: agent,
-                                    server_id: server_id.clone(),
-                                    enabled,
-                                })
-                            }
-                        }),
-                    )
+                    container(checkbox(checked).on_toggle({
+                        let server_id = server.id.clone();
+                        move |enabled| {
+                            Message::Settings(settings::Msg::AgentMcpToggled {
+                                agent_type: agent,
+                                server_id: server_id.clone(),
+                                enabled,
+                            })
+                        }
+                    }))
                     .width(Length::Fixed(agent_col_width))
                     .center_x(Length::Fixed(agent_col_width))
                     .into(),
@@ -758,6 +780,7 @@ fn build_accounts_section(
     claude_accounts: &[OAuthAccount],
     gemini_accounts: &[OAuthAccount],
     chatgpt_accounts: &[OAuthAccount],
+    expert_mode_enabled: bool,
 ) -> Element<'static, Message> {
     let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
         let auth_icon = if is_authenticated {
@@ -916,24 +939,28 @@ fn build_accounts_section(
             .into()
     };
 
-    container(
-        column![
-            text("Accounts").size(18),
-            row![
-                oauth_button(OAuthProvider::Claude, "Claude", auth_status.claude),
-                oauth_button(OAuthProvider::Gemini, "Gemini", auth_status.gemini),
-                oauth_button(OAuthProvider::ChatGpt, "ChatGPT", auth_status.chatgpt),
-            ]
-            .spacing(8),
-            accounts_section("Claude Accounts", claude_accounts),
-            accounts_section("Gemini Accounts", gemini_accounts),
-            accounts_section("ChatGPT Accounts", chatgpt_accounts),
+    let mut children: Vec<Element<Message>> = Vec::new();
+    children.push(text("Accounts").size(18).into());
+    children.push(
+        row![
+            oauth_button(OAuthProvider::Claude, "Claude", auth_status.claude),
+            oauth_button(OAuthProvider::Gemini, "Gemini", auth_status.gemini),
+            oauth_button(OAuthProvider::ChatGpt, "ChatGPT", auth_status.chatgpt),
         ]
-        .spacing(12),
-    )
-    .padding(20)
-    .style(styles::card_container)
-    .into()
+        .spacing(8)
+        .into(),
+    );
+
+    if expert_mode_enabled {
+        children.push(accounts_section("Claude Accounts", claude_accounts));
+        children.push(accounts_section("Gemini Accounts", gemini_accounts));
+        children.push(accounts_section("ChatGPT Accounts", chatgpt_accounts));
+    }
+
+    container(Column::with_children(children).spacing(12))
+        .padding(20)
+        .style(styles::card_container)
+        .into()
 }
 
 /// Option type for agent model picker

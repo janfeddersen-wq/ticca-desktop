@@ -17,6 +17,7 @@ pub enum Msg {
     ThemeToggle,
     SetTheme(AppTheme),
     SetYoloMode(bool),
+    SetExpertMode(bool),
 
     // OAuth accounts
     StartOAuth(OAuthProvider),

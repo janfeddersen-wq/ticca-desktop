@@ -33,6 +33,7 @@ pub struct TypedSettings {
     pub default_model: Option<String>,
     pub max_tool_rounds: u32,
     pub yolo_mode_enabled: bool,
+    pub expert_mode_enabled: bool,
     pub account_rotation_policy: AccountRotationPolicy,
 }
 
@@ -45,6 +46,8 @@ impl TypedSettings {
             get_u32(repo, setting_keys::MAX_TOOL_ROUNDS).unwrap_or(defaults::MAX_TOOL_ROUNDS);
         let yolo_mode_enabled =
             get_bool(repo, setting_keys::YOLO_MODE).unwrap_or(defaults::YOLO_MODE);
+        let expert_mode_enabled =
+            get_bool(repo, setting_keys::EXPERT_MODE).unwrap_or(defaults::EXPERT_MODE);
         let account_rotation_policy = get_string(repo, setting_keys::ACCOUNT_ROTATION_POLICY)
             .map(|value| AccountRotationPolicy::parse(&value))
             .unwrap_or(defaults::ACCOUNT_ROTATION_POLICY);
@@ -54,6 +57,7 @@ impl TypedSettings {
             default_model,
             max_tool_rounds,
             yolo_mode_enabled,
+            expert_mode_enabled,
             account_rotation_policy,
         }
     }

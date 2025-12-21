@@ -31,6 +31,29 @@ enum ChatPane {
     Flow,
 }
 
+const STARTING_TODO_NODE_ID: usize = 0;
+
+fn enforce_sidebar_tab(expert_mode_enabled: bool, tab: RightSidebarTab) -> RightSidebarTab {
+    if expert_mode_enabled {
+        return tab;
+    }
+
+    match tab {
+        RightSidebarTab::AgentsFlow | RightSidebarTab::SystemExecutions => {
+            RightSidebarTab::TodoList
+        }
+        RightSidebarTab::TodoList => RightSidebarTab::TodoList,
+    }
+}
+
+fn enforce_todo_selected_node(expert_mode_enabled: bool, node_id: usize) -> usize {
+    if expert_mode_enabled {
+        node_id
+    } else {
+        STARTING_TODO_NODE_ID
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ToolApprovalPrompt {
     id: u64,
@@ -135,7 +158,10 @@ impl ChatState {
             panes,
             chat_pane,
             flow_pane: Some(flow_pane),
-            sidebar_tab: RightSidebarTab::AgentsFlow,
+            sidebar_tab: enforce_sidebar_tab(
+                config.expert_mode_enabled,
+                RightSidebarTab::AgentsFlow,
+            ),
             todo_selected_node: 0,
             todo_lists: HashMap::new(),
             system_exec: SystemExecutionsState::new(system_exec_store),
@@ -521,7 +547,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.subagent_message_indices.clear();
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
-            app.chat.sidebar_tab = RightSidebarTab::AgentsFlow;
+            app.chat.sidebar_tab =
+                enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
         }
 
         chat::Msg::ToggleFlowPanel => {
@@ -540,11 +567,12 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         }
 
         chat::Msg::SelectSidebarTab(tab) => {
-            app.chat.sidebar_tab = tab;
+            app.chat.sidebar_tab = enforce_sidebar_tab(app.expert_mode_enabled, tab);
         }
 
         chat::Msg::SelectTodoNode(option) => {
-            app.chat.todo_selected_node = option.node_id;
+            app.chat.todo_selected_node =
+                enforce_todo_selected_node(app.expert_mode_enabled, option.node_id);
         }
 
         chat::Msg::SystemExecNewTerminalNameChanged(name) => {
@@ -566,11 +594,17 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                         effects.push(Effect::FocusTerminal(instance.terminal_id));
                     }
                     app.chat.system_exec.new_terminal_name.clear();
-                    app.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
+                    app.chat.sidebar_tab = enforce_sidebar_tab(
+                        app.expert_mode_enabled,
+                        RightSidebarTab::SystemExecutions,
+                    );
                 }
                 Err(e) => {
                     app.chat.system_exec.ui_error = Some(e);
-                    app.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
+                    app.chat.sidebar_tab = enforce_sidebar_tab(
+                        app.expert_mode_enabled,
+                        RightSidebarTab::SystemExecutions,
+                    );
                 }
             }
         }
@@ -612,7 +646,10 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                             .system_exec
                             .store
                             .respond(request_id, SystemExecResponse::Started { process_id });
-                        app.chat.sidebar_tab = RightSidebarTab::SystemExecutions;
+                        app.chat.sidebar_tab = enforce_sidebar_tab(
+                            app.expert_mode_enabled,
+                            RightSidebarTab::SystemExecutions,
+                        );
                     }
                     Err(e) => {
                         app.chat
@@ -712,7 +749,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.raw_view_editors.clear();
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
-            app.chat.sidebar_tab = RightSidebarTab::AgentsFlow;
+            app.chat.sidebar_tab =
+                enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
             app.chat.messages.push(ChatMessage::assistant(
                 "New session started. How can I help you?",
             ));
@@ -731,7 +769,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 app.chat.raw_view_editors.clear();
                 app.chat.todo_lists = loaded.todo_lists;
                 app.chat.todo_selected_node = 0;
-                app.chat.sidebar_tab = RightSidebarTab::AgentsFlow;
+                app.chat.sidebar_tab =
+                    enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
 
                 if let Some(agent_type) = loaded.agent_type {
                     app.chat.current_agent = agent_type;
@@ -777,6 +816,11 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                     {
                         app.chat.todo_selected_node = node_id;
                     }
+
+                    app.chat.todo_selected_node = enforce_todo_selected_node(
+                        app.expert_mode_enabled,
+                        app.chat.todo_selected_node,
+                    );
                 }
             }
         }
@@ -937,6 +981,7 @@ mod tests {
             agent_pinned_models: HashMap::new(),
             max_tool_rounds: 10,
             yolo_mode_enabled: true,
+            expert_mode_enabled: true,
         }
     }
 
@@ -983,6 +1028,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
     iced::widget::pane_grid(&app.chat.panes, |_pane, pane_state, _| {
         let content = match pane_state {
             ChatPane::Chat => crate::views::chat::view(
+                app.expert_mode_enabled,
                 app.chat.current_agent,
                 &app.chat.working_directory,
                 &app.chat.messages,
@@ -1006,6 +1052,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
                 app.chat.sidebar_tab,
                 app.chat.todo_selected_node,
                 app.theme,
+                app.expert_mode_enabled,
             ),
         };
         iced::widget::pane_grid::Content::new(content)
