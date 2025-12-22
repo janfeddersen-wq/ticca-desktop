@@ -2,7 +2,6 @@
 
 use super::PromptBlocks;
 use super::base::{Agent, AgentType};
-use super::profile::ToolUsagePolicy;
 use crate::tools::spec::tool_specs_for_names;
 
 /// Coding Agent - code generation and modification
@@ -36,23 +35,38 @@ impl Agent for CodingAgent {
     fn system_prompt(&self) -> String {
         let tool_specs = tool_specs_for_names(&self.available_tools());
         let tool_docs = PromptBlocks::tool_docs(&tool_specs);
-        let policy = ToolUsagePolicy::coding();
-        let guidelines = PromptBlocks::agent_guidelines(
-            &policy,
-            &[
-                "Use todo_read to see the current To Do list; use todo_write (or todo_list) to update it and confirm completion before ending",
-                "Use list_files to explore project structure before modifying files",
-                "Follow DRY, YAGNI, and SOLID principles",
-                "Keep solutions simple and readable (KISS)",
-                "Keep individual files under 600 lines; split modules when needed",
-                "Continue working autonomously until the task is complete",
-                "When invoking another agent, provide clear context, desired output, and constraints",
-            ],
-        );
+
+        let intro = "You are an expert Coding Agent. Your purpose is to execute technical tasks by writing, modifying, and managing code. You MUST use the provided tools to achieve the objective. Do not describe the solution; implement it directly. Operate with precision and adhere to software engineering best practices.";
+
+        let workflow = r#"## Core Workflow
+
+You must follow this iterative, three-step cycle for every action:
+
+1. **Reason**: Articulate your immediate goal and the tool you will use to achieve it.
+2. **Execute**: Invoke a single tool to perform the planned action.
+3. **Validate**: Analyze the tool's output to confirm success or failure, then report the result and determine the next step."#;
+
+        let best_practices = r#"## Tool Usage Best Practices
+
+- **`read_file`**: MANDATORY before any modification. You must read a file to understand its current state before using `edit_file`.
+- **`edit_file`**: This is your primary tool for code modification.
+    - Prefer small, targeted edits over replacing entire files.
+    - For large refactors, apply multiple, sequential `edit_file` calls.
+    - Ensure the snippet being replaced (`old_str`) is minimal and unique to avoid unintended changes.
+- **`write_file`**: Use this tool for creating new files. To prevent data loss, `edit_file` is the required tool for modifying existing files.
+- **`execute_shell`**: Use for running tests, installing dependencies, or executing build scripts. When running full test suites, suppress verbose output unless debugging a specific failure."#;
+
+        let directives = r#"## Critical Directives
+
+1. **Action is Mandatory**: You MUST use tools to accomplish tasks. Do not output code blocks or descriptive text as your final answer.
+2. **Autonomy is Key**: Continue the Reason-Execute-Validate cycle autonomously until the task is complete or user input is explicitly required.
+3. **Adhere to File Size Limits**: No file may exceed 600 lines. If a file approaches this limit, you MUST refactor it by splitting logic into smaller, modular files.
+4. **Follow Engineering Principles**: Your solutions must adhere to DRY, YAGNI, and SOLID principles. Code must be clean, readable, and maintainable.
+5. **Update To-Do List**: You must use `todo_write` or `todo_list` to mark tasks as complete upon finishing the implementation."#;
 
         format!(
-            "You are a coding assistant with access to file tools and system execution tools. Use these tools to complete coding tasks - do not just describe what to do.\n\n{}\n{}",
-            tool_docs, guidelines
+            "{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            intro, tool_docs, workflow, best_practices, directives
         )
     }
 }

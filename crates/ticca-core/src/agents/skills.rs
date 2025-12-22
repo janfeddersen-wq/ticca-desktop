@@ -11,7 +11,6 @@ use tracing::{debug, info};
 
 use super::PromptBlocks;
 use super::base::{Agent, AgentType};
-use super::profile::ToolUsagePolicy;
 use crate::config::paths::{get_skills_dir, get_tools_dir, get_venvs_dir};
 use crate::external_tools::catalog::get_tool_definition;
 use crate::external_tools::manifest::load_manifest;
@@ -298,51 +297,60 @@ impl Agent for SkillsAgent {
     fn system_prompt(&self) -> String {
         let tool_specs = tool_specs_for_names(&self.available_tools());
         let tool_docs = PromptBlocks::tool_docs(&tool_specs);
-        let policy = ToolUsagePolicy::coding();
-        let guidelines = PromptBlocks::agent_guidelines(
-            &policy,
-            &[
-                "Use todo_read to see the current To Do list; use todo_write (or todo_list) to update it and confirm completion before ending",
-                "IMPORTANT: When executing Python code for skills, ALWAYS use the venv Python interpreter",
-                "Read the SKILL.md file before using any skill to understand its API and requirements",
-                "Use list_files to explore project structure before modifying files",
-                "Follow DRY, YAGNI, and SOLID principles",
-                "Keep solutions simple and readable (KISS)",
-                "Keep individual files under 600 lines; split modules when needed",
-                "Continue working autonomously until the task is complete",
-            ],
-        );
 
         let skills_section = self.build_skills_section();
         let tools_section = self.build_tools_section();
         let python_path = self.python_path();
 
+        let workflow = r#"## Core Workflow
+
+You must follow this iterative, three-step cycle for every action:
+
+1. **Reason**: Articulate your immediate goal, the specific skill or tool you will use, and the expected outcome.
+2. **Execute**: Invoke a single tool (`execute_shell` for a skill, or another file tool) to perform the planned action.
+3. **Validate**: Analyze the output to confirm success or failure, then report the result and determine the next step."#;
+
+        let directives = format!(
+            r#"## Critical Directives
+
+1. **Use the Venv**: Executing Python scripts with any interpreter other than `{}` is strictly prohibited.
+2. **Consult Documentation**: You MUST read a skill's `SKILL.md` file to understand its API, arguments, and requirements before using it.
+3. **Action is Mandatory**: You MUST use tools to accomplish tasks. Do not describe what should be done; do it.
+4. **Autonomy is Key**: Continue the Reason-Execute-Validate cycle autonomously until the task is complete.
+5. **Adhere to File Size Limits**: No file may exceed 600 lines. If a file you are modifying approaches this limit, you MUST refactor it.
+6. **Update To-Do List**: You must use `todo_write` or `todo_list` to mark tasks as complete upon finishing your work."#,
+            python_path.display()
+        );
+
         format!(
-            r#"You are a Skills Agent with access to Python-based skills for specialized tasks.
+            r#"You are a specialist Skills Agent. You are equipped with a suite of Python-based skills and external tools to perform complex, specialized tasks beyond standard coding. You must operate with precision, leveraging the correct tools as required.
 
 ## Python Environment
 
 The Python virtual environment for skills is located at:
 `{venv_path}`
 
-**IMPORTANT:** When executing ANY Python code for skills, you MUST use the Python interpreter from this venv:
+**CRITICAL:** ALL Python executions MUST use the designated interpreter to ensure dependency resolution:
 `{python_path}`
 
 Example shell command:
 ```bash
-{python_path} /path/to/script.py
+{python_path} /path/to/your/script.py --arg1 value
 ```
 
 {tools_section}
 {skills_section}
 {tool_docs}
-{guidelines}"#,
+{workflow}
+
+{directives}"#,
             venv_path = self.venv_path.display(),
             python_path = python_path.display(),
             tools_section = tools_section,
             skills_section = skills_section,
             tool_docs = tool_docs,
-            guidelines = guidelines,
+            workflow = workflow,
+            directives = directives,
         )
     }
 }
@@ -427,7 +435,7 @@ mod tests {
 
         let prompt = agent.system_prompt();
         assert!(prompt.contains("/test/venvs/skills-venv"));
-        assert!(prompt.contains("MUST use the Python interpreter"));
+        assert!(prompt.contains("MUST use the designated interpreter"));
     }
 
     #[test]
