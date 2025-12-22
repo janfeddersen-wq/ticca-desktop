@@ -16,7 +16,7 @@ use ticca_core::llm::ProviderId;
 use ticca_core::llm::auth;
 use ticca_core::session::{Session, SessionService};
 
-use super::super::{TiccaApp, View, effects::Effect};
+use super::super::{TiccaApp, Toast, View, effects::Effect};
 
 pub(in crate::app) struct SettingsState {
     pub(in crate::app) settings_tab: SettingsTab,
@@ -161,7 +161,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
         }
         settings::Msg::OAuthComplete(provider, result) => match result {
             Ok(()) => {
-                app.error_message = None;
+                app.toast = None;
                 app.settings.provider_auth_status = check_provider_auth_status();
                 app.settings.refresh_accounts();
                 effects.push(Effect::RefreshModelsForProvider(match provider {
@@ -171,7 +171,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 }));
             }
             Err(e) => {
-                app.error_message = Some(e);
+                app.toast = Some(Toast::new(e));
             }
         },
         settings::Msg::RemoveOAuthAccount(account_id) => {
@@ -230,7 +230,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 }
                 Err(e) => {
                     tracing::error!("Failed to load models: {}", e);
-                    app.error_message = Some(format!("Failed to load models: {}", e));
+                    app.toast = Some(Toast::new(format!("Failed to load models: {}", e)));
                 }
             }
         }
@@ -304,7 +304,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
         settings::Msg::McpFormSave => {
             let name = app.settings.mcp_form.name.trim().to_string();
             if name.is_empty() {
-                app.error_message = Some("MCP server name is required".to_string());
+                app.toast = Some(Toast::new("MCP server name is required"));
                 return effects;
             }
 
@@ -315,7 +315,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 match serde_json::from_str(args_json) {
                     Ok(v) => v,
                     Err(e) => {
-                        app.error_message = Some(format!("Invalid args JSON: {}", e));
+                        app.toast = Some(Toast::new(format!("Invalid args JSON: {}", e)));
                         return effects;
                     }
                 }
@@ -328,7 +328,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 match serde_json::from_str(env_json) {
                     Ok(v) => v,
                     Err(e) => {
-                        app.error_message = Some(format!("Invalid env JSON: {}", e));
+                        app.toast = Some(Toast::new(format!("Invalid env JSON: {}", e)));
                         return effects;
                     }
                 }
@@ -345,8 +345,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 ticca_core::config::McpTransport::Stdio => {
                     let command = app.settings.mcp_form.command.trim().to_string();
                     if command.is_empty() {
-                        app.error_message =
-                            Some("Command is required for stdio MCP servers".to_string());
+                        app.toast = Some(Toast::new("Command is required for stdio MCP servers"));
                         return effects;
                     }
                     McpServer::new(id, name)
@@ -358,8 +357,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 ticca_core::config::McpTransport::StreamableHttp => {
                     let url = app.settings.mcp_form.endpoint_url.trim().to_string();
                     if url.is_empty() {
-                        app.error_message =
-                            Some("Endpoint URL is required for HTTP MCP servers".to_string());
+                        app.toast = Some(Toast::new("Endpoint URL is required for HTTP MCP servers"));
                         return effects;
                     }
                     McpServer::new(id, name)
@@ -372,12 +370,12 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
 
             match ConfigService::upsert_mcp_server(&server) {
                 Ok(()) => {
-                    app.error_message = None;
+                    app.toast = None;
                     app.settings.refresh_mcp();
                     app.settings.mcp_form = McpServerFormState::default();
                 }
                 Err(e) => {
-                    app.error_message = Some(format!("Failed to save MCP server: {}", e));
+                    app.toast = Some(Toast::new(format!("Failed to save MCP server: {}", e)));
                 }
             }
         }
@@ -397,23 +395,23 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
         }
         settings::Msg::McpImportClear => {
             app.settings.mcp_import_json = text_editor::Content::with_text("");
-            app.error_message = None;
+            app.toast = None;
         }
         settings::Msg::McpImportApply => {
             let input = app.settings.mcp_import_json.text();
             if input.trim().is_empty() {
-                app.error_message = Some("Paste MCP JSON first".to_string());
+                app.toast = Some(Toast::new("Paste MCP JSON first"));
                 return effects;
             }
 
             match ConfigService::import_mcp_servers_json(&input) {
                 Ok(_) => {
-                    app.error_message = None;
+                    app.toast = None;
                     app.settings.refresh_mcp();
                     app.settings.mcp_import_json = text_editor::Content::with_text("");
                 }
                 Err(error) => {
-                    app.error_message = Some(format!("MCP import failed: {}", error));
+                    app.toast = Some(Toast::new(format!("MCP import failed: {}", error)));
                 }
             }
         }
@@ -482,7 +480,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                         status.version = Some(def.version.to_string());
                     }
                     Err(e) => {
-                        app.error_message = Some(format!("Failed to install {}: {}", tool_id, e));
+                        app.toast = Some(Toast::new(format!("Failed to install {}: {}", tool_id, e)));
                     }
                 }
             }
@@ -496,7 +494,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                     }
                 }
                 Err(e) => {
-                    app.error_message = Some(format!("Failed to uninstall {}: {}", tool_id, e));
+                    app.toast = Some(Toast::new(format!("Failed to uninstall {}: {}", tool_id, e)));
                 }
             }
         }

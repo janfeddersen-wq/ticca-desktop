@@ -27,10 +27,13 @@ pub enum Message {
     Chat(chat::Msg),
     Settings(settings::Msg),
 
-    // Errors
+    // Toast notifications
     /// Internal no-op for async command completions
     Noop,
-    DismissError,
+    /// Dismiss the current toast notification
+    DismissToast,
+    /// Auto-dismiss tick for toast timeout
+    ToastTick,
 }
 
 /// Right sidebar tab selection

@@ -1,9 +1,10 @@
 //! Iced Application state and main loop
 
 use iced::widget::{button, column, container, row, text};
-use iced::{Color, Element, Length, Subscription, Task, Theme};
+use iced::{time, Color, Element, Length, Subscription, Task, Theme};
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 mod effects;
 mod features;
@@ -14,6 +15,33 @@ use ticca_core::llm::auth;
 use crate::app_config::load_config;
 use crate::messages::{Message, settings};
 use crate::theme::AppTheme;
+
+/// Toast notification state
+#[derive(Debug, Clone)]
+pub struct Toast {
+    /// The message to display
+    pub message: String,
+    /// When the toast was created (for auto-dismiss)
+    pub created_at: Instant,
+}
+
+impl Toast {
+    /// Duration before toast auto-dismisses
+    pub const DURATION: Duration = Duration::from_secs(4);
+
+    /// Create a new toast notification
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            created_at: Instant::now(),
+        }
+    }
+
+    /// Check if the toast has expired
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() >= Self::DURATION
+    }
+}
 
 /// State for the external tools installation prompt
 #[derive(Debug, Clone)]
@@ -35,7 +63,7 @@ pub struct TiccaApp {
     expert_mode_enabled: bool,
     chat: features::chat::ChatState,
     settings: features::settings::SettingsState,
-    error_message: Option<String>,
+    toast: Option<Toast>,
     external_tools_prompt: Option<ExternalToolsPromptState>,
     external_tools_prompt_dismissed: bool,
 }
@@ -67,7 +95,7 @@ impl TiccaApp {
             expert_mode_enabled: config.expert_mode_enabled,
             chat: features::chat::ChatState::new(&config, working_directory),
             settings: features::settings::SettingsState::new(provider_auth_status),
-            error_message: None,
+            toast: None,
             external_tools_prompt: None,
             external_tools_prompt_dismissed: config.external_tools_prompt_dismissed,
         };
@@ -100,8 +128,15 @@ impl TiccaApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let effects = match message {
             Message::Noop => Vec::new(),
-            Message::DismissError => {
-                self.error_message = None;
+            Message::DismissToast => {
+                self.toast = None;
+                Vec::new()
+            }
+            Message::ToastTick => {
+                // Auto-dismiss expired toasts
+                if self.toast.as_ref().is_some_and(|t| t.is_expired()) {
+                    self.toast = None;
+                }
                 Vec::new()
             }
             Message::Chat(msg) => features::chat::update(self, msg),
@@ -124,25 +159,54 @@ impl TiccaApp {
             View::Settings => features::settings::view(self),
         };
 
-        // Wrap in container with error overlay if needed
+        // Main content container
         let main = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0);
 
-        let base: Element<Message> = if let Some(ref error) = self.error_message {
-            // Show error toast at top
-            let error_banner = container(
+        // Wrap with toast overlay if present
+        let base: Element<Message> = if let Some(ref toast) = self.toast {
+            // Toast notification in bottom-right corner
+            let toast_content = container(
                 row![
-                    text(error).size(14),
-                    button("×").on_press(Message::DismissError).padding(4)
+                    text(&toast.message).size(14).color(Color::WHITE),
+                    iced::widget::Space::new().width(10),
+                    button(text("×").size(12).color(Color::WHITE))
+                        .on_press(Message::DismissToast)
+                        .padding(4)
+                        .style(crate::theme::styles::icon_button)
                 ]
-                .spacing(10),
+                .align_y(iced::Alignment::Center),
             )
-            .padding(10)
-            .style(container::rounded_box);
+            .padding(12)
+            .style(|theme: &iced::Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(palette.danger.base.color.into()),
+                    text_color: Some(Color::WHITE),
+                    border: iced::Border {
+                        radius: 8.0.into(),
+                        ..Default::default()
+                    },
+                    shadow: iced::Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                        offset: iced::Vector::new(0.0, 2.0),
+                        blur_radius: 8.0,
+                    },
+                    ..Default::default()
+                }
+            });
 
-            column![error_banner, main,].into()
+            // Position toast in bottom-right corner
+            let toast_overlay = container(toast_content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right)
+                .align_y(iced::alignment::Vertical::Bottom)
+                .padding(20);
+
+            iced::widget::stack![main, toast_overlay].into()
         } else {
             main.into()
         };
@@ -254,6 +318,12 @@ impl TiccaApp {
 
         let mut subs: Vec<Subscription<Message>> = vec![keybindings];
         subs.extend(self.chat.subscriptions());
+
+        // Toast auto-dismiss timer (only when a toast is active)
+        if self.toast.is_some() {
+            subs.push(time::every(Duration::from_millis(100)).map(|_| Message::ToastTick));
+        }
+
         Subscription::batch(subs)
     }
 

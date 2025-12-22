@@ -23,7 +23,7 @@ use ticca_core::session::Session;
 use ticca_core::tools::TodoListState;
 use ticca_core::tools::{SystemExecRequest, SystemExecResponse, SystemExecStore};
 
-use super::super::{TiccaApp, View, effects::Effect};
+use super::super::{TiccaApp, Toast, View, effects::Effect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatPane {
@@ -934,7 +934,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             }
             Err(e) => {
                 if !e.contains("No file selected") {
-                    app.error_message = Some(format!("Failed to load image: {}", e));
+                    app.toast = Some(Toast::new(format!("Failed to load image: {}", e)));
                 }
             }
         },
@@ -949,7 +949,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             }
             Err(e) => {
                 if !e.contains("No image") {
-                    app.error_message = Some(format!("Failed to paste image: {}", e));
+                    app.toast = Some(Toast::new(format!("Failed to paste image: {}", e)));
                 }
             }
         },
