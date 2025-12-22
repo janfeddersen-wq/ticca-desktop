@@ -416,8 +416,7 @@ mod tests {
     fn test_ensure_uv_available() {
         // This test requires UV to be installed
         let result = ensure_uv_available();
-        if result.is_ok() {
-            let uv_path = result.unwrap();
+        if let Ok(uv_path) = result {
             assert!(uv_path.exists(), "UV binary should exist after check");
         }
         // If UV is not installed, the error message should be helpful

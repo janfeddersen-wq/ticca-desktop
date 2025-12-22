@@ -239,7 +239,7 @@ mod tests {
         assert!(archive.is_ok(), "Embedded bundle should be valid ZIP");
 
         let archive = archive.unwrap();
-        assert!(archive.len() > 0, "Bundle should contain files");
+        assert!(!archive.is_empty(), "Bundle should contain files");
     }
 
     #[test]

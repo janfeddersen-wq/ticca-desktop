@@ -1575,8 +1575,10 @@ mod tests {
         let todo_store = Arc::new(TodoStore::new());
         let _ = todo_store.reset_node(1).await;
 
-        let mut parent_context = ToolContext::default();
-        parent_context.todo_store = Some(todo_store);
+        let parent_context = ToolContext {
+            todo_store: Some(todo_store),
+            ..Default::default()
+        };
 
         let tool_context = Arc::new(parent_context.clone());
         let (

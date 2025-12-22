@@ -982,6 +982,7 @@ mod tests {
             max_tool_rounds: 10,
             yolo_mode_enabled: true,
             expert_mode_enabled: true,
+            external_tools_prompt_dismissed: false,
         }
     }
 

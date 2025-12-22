@@ -695,7 +695,7 @@ mod tests {
         assert_eq!(listed[0].transport, McpTransport::Stdio);
         assert_eq!(listed[0].command.as_deref(), Some("mcp-filesystem"));
 
-        db.set_agent_mcp_server_ids("coding", &[server.id.clone()])
+        db.set_agent_mcp_server_ids("coding", std::slice::from_ref(&server.id))
             .unwrap();
         let ids = db.get_agent_mcp_server_ids("coding").unwrap();
         assert_eq!(ids, vec![server.id.clone()]);
