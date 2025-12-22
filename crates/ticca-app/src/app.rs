@@ -1,7 +1,7 @@
 //! Iced Application state and main loop
 
 use iced::widget::{button, column, container, row, text};
-use iced::{time, Color, Element, Length, Subscription, Task, Theme};
+use iced::{Color, Element, Length, Subscription, Task, Theme, time};
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -238,7 +238,11 @@ impl TiccaApp {
                 .current_tool
                 .map(|t| t.as_str())
                 .unwrap_or("tool");
-            text(format!("Installing {}... {}%", tool_name, prompt_state.progress)).size(14)
+            text(format!(
+                "Installing {}... {}%",
+                tool_name, prompt_state.progress
+            ))
+            .size(14)
         } else {
             let tool_names: Vec<&str> = prompt_state
                 .missing_tools
@@ -285,8 +289,8 @@ impl TiccaApp {
                 iced::widget::Space::new().height(20),
                 buttons,
             ]
-                .spacing(5)
-                .align_x(iced::Alignment::Center),
+            .spacing(5)
+            .align_x(iced::Alignment::Center),
         )
         .padding(30)
         .width(Length::Fixed(500.0))

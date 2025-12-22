@@ -206,7 +206,11 @@ pub fn discover_skills() -> Result<Vec<SkillMetadata>> {
                 // Fill in the paths
                 metadata.path = path;
                 metadata.skill_md_path = skill_md_path;
-                debug!("Discovered skill: {} at {}", metadata.name, metadata.path.display());
+                debug!(
+                    "Discovered skill: {} at {}",
+                    metadata.name,
+                    metadata.path.display()
+                );
                 skills.push(metadata);
             }
             None => {
@@ -248,7 +252,10 @@ This skill provides document capabilities.
             metadata.description,
             "Comprehensive document creation, editing, and analysis"
         );
-        assert_eq!(metadata.license, "Proprietary. LICENSE.txt has complete terms");
+        assert_eq!(
+            metadata.license,
+            "Proprietary. LICENSE.txt has complete terms"
+        );
     }
 
     #[test]

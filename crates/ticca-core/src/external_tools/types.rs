@@ -343,10 +343,22 @@ mod tests {
     #[test]
     fn test_tool_id_from_str() {
         assert_eq!("uv".parse::<ExternalToolId>().unwrap(), ExternalToolId::Uv);
-        assert_eq!("pandoc".parse::<ExternalToolId>().unwrap(), ExternalToolId::Pandoc);
-        assert_eq!("node".parse::<ExternalToolId>().unwrap(), ExternalToolId::Node);
-        assert_eq!("nodejs".parse::<ExternalToolId>().unwrap(), ExternalToolId::Node);
-        assert_eq!("libreoffice".parse::<ExternalToolId>().unwrap(), ExternalToolId::LibreOffice);
+        assert_eq!(
+            "pandoc".parse::<ExternalToolId>().unwrap(),
+            ExternalToolId::Pandoc
+        );
+        assert_eq!(
+            "node".parse::<ExternalToolId>().unwrap(),
+            ExternalToolId::Node
+        );
+        assert_eq!(
+            "nodejs".parse::<ExternalToolId>().unwrap(),
+            ExternalToolId::Node
+        );
+        assert_eq!(
+            "libreoffice".parse::<ExternalToolId>().unwrap(),
+            ExternalToolId::LibreOffice
+        );
         assert!("unknown".parse::<ExternalToolId>().is_err());
     }
 
@@ -403,18 +415,48 @@ mod tests {
     #[test]
     fn test_tool_status_is_ready() {
         assert!(!ToolStatus::NotInstalled.is_ready());
-        assert!(!ToolStatus::Installing { progress_percent: 50 }.is_ready());
-        assert!(ToolStatus::Installed { version: "1.0".to_string() }.is_ready());
-        assert!(!ToolStatus::Failed { error: "oops".to_string() }.is_ready());
+        assert!(
+            !ToolStatus::Installing {
+                progress_percent: 50
+            }
+            .is_ready()
+        );
+        assert!(
+            ToolStatus::Installed {
+                version: "1.0".to_string()
+            }
+            .is_ready()
+        );
+        assert!(
+            !ToolStatus::Failed {
+                error: "oops".to_string()
+            }
+            .is_ready()
+        );
         assert!(!ToolStatus::UnsupportedPlatform.is_ready());
     }
 
     #[test]
     fn test_tool_status_can_install() {
         assert!(ToolStatus::NotInstalled.can_install());
-        assert!(!ToolStatus::Installing { progress_percent: 50 }.can_install());
-        assert!(!ToolStatus::Installed { version: "1.0".to_string() }.can_install());
-        assert!(ToolStatus::Failed { error: "oops".to_string() }.can_install());
+        assert!(
+            !ToolStatus::Installing {
+                progress_percent: 50
+            }
+            .can_install()
+        );
+        assert!(
+            !ToolStatus::Installed {
+                version: "1.0".to_string()
+            }
+            .can_install()
+        );
+        assert!(
+            ToolStatus::Failed {
+                error: "oops".to_string()
+            }
+            .can_install()
+        );
         assert!(!ToolStatus::UnsupportedPlatform.can_install());
     }
 
@@ -429,18 +471,24 @@ mod tests {
         };
 
         assert_eq!(urls.get_url(Platform::LinuxX64), Some("https://linux-x64"));
-        assert_eq!(urls.get_url(Platform::LinuxArm64), Some("https://linux-arm64"));
+        assert_eq!(
+            urls.get_url(Platform::LinuxArm64),
+            Some("https://linux-arm64")
+        );
         assert_eq!(urls.get_url(Platform::MacosX64), Some("https://macos-x64"));
-        assert_eq!(urls.get_url(Platform::MacosArm64), Some("https://macos-arm64"));
-        assert_eq!(urls.get_url(Platform::WindowsX64), Some("https://windows-x64"));
+        assert_eq!(
+            urls.get_url(Platform::MacosArm64),
+            Some("https://macos-arm64")
+        );
+        assert_eq!(
+            urls.get_url(Platform::WindowsX64),
+            Some("https://windows-x64")
+        );
     }
 
     #[test]
     fn test_platform_download_with_sha256() {
-        let download = PlatformDownload::new(
-            "https://example.com/tool.zip",
-            Some("abc123def456"),
-        );
+        let download = PlatformDownload::new("https://example.com/tool.zip", Some("abc123def456"));
         assert_eq!(download.url, "https://example.com/tool.zip");
         assert_eq!(download.sha256, Some("abc123def456"));
 

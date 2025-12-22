@@ -109,16 +109,15 @@ impl SkillsAgent {
         info!("Discovered {} skills", skills.len());
 
         for skill in &skills {
-            debug!(
-                "Found skill: {} at {}",
-                skill.name,
-                skill.path.display()
-            );
+            debug!("Found skill: {} at {}", skill.name, skill.path.display());
         }
 
         // Discover installed external tools
         let installed_tools = discover_installed_tools();
-        info!("Discovered {} installed external tools", installed_tools.len());
+        info!(
+            "Discovered {} installed external tools",
+            installed_tools.len()
+        );
 
         for tool in &installed_tools {
             debug!(

@@ -198,10 +198,15 @@ pub fn pip_install(venv_path: &Path, packages: &[&str]) -> Result<()> {
 
     // Apply external tools PATH so UV can find any required binaries
     if let Err(e) = external_tools::apply_to_command(&mut cmd) {
-        warn!("Failed to apply external tools env to UV pip install: {}", e);
+        warn!(
+            "Failed to apply external tools env to UV pip install: {}",
+            e
+        );
     }
 
-    let output = cmd.output().with_context(|| "Failed to execute UV pip install")?;
+    let output = cmd
+        .output()
+        .with_context(|| "Failed to execute UV pip install")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -245,7 +250,10 @@ pub fn pip_install_requirements(venv_path: &Path, requirements_file: &Path) -> R
 
     // Apply external tools PATH so UV can find any required binaries
     if let Err(e) = external_tools::apply_to_command(&mut cmd) {
-        warn!("Failed to apply external tools env to UV pip install -r: {}", e);
+        warn!(
+            "Failed to apply external tools env to UV pip install -r: {}",
+            e
+        );
     }
 
     let output = cmd
@@ -355,7 +363,12 @@ pub fn run_python_module(venv_path: &Path, module: &str, args: &[&str]) -> Resul
         );
     }
 
-    debug!("Running Python module: {} -m {} {:?}", python_path.display(), module, args);
+    debug!(
+        "Running Python module: {} -m {} {:?}",
+        python_path.display(),
+        module,
+        args
+    );
 
     let mut cmd = Command::new(&python_path);
     cmd.arg("-m").arg(module);

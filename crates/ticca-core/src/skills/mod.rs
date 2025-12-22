@@ -85,10 +85,7 @@ pub fn extract_skills_if_needed() -> Result<PathBuf> {
             Ok(existing_version) => {
                 let existing = existing_version.trim();
                 if existing == current_version {
-                    debug!(
-                        "Skills bundle up-to-date (version: {})",
-                        current_version
-                    );
+                    debug!("Skills bundle up-to-date (version: {})", current_version);
                     false
                 } else {
                     info!(
@@ -125,8 +122,12 @@ pub fn extract_skills_if_needed() -> Result<PathBuf> {
 /// Extracts the embedded ZIP bundle to the target directory.
 fn extract_bundle(target_dir: &PathBuf) -> Result<()> {
     // Ensure target directory exists
-    fs::create_dir_all(target_dir)
-        .with_context(|| format!("Failed to create skills directory: {}", target_dir.display()))?;
+    fs::create_dir_all(target_dir).with_context(|| {
+        format!(
+            "Failed to create skills directory: {}",
+            target_dir.display()
+        )
+    })?;
 
     let cursor = Cursor::new(SKILLS_BUNDLE);
     let mut archive = ZipArchive::new(cursor).context("Failed to read skills bundle as ZIP")?;
@@ -156,9 +157,8 @@ fn extract_bundle(target_dir: &PathBuf) -> Result<()> {
         };
 
         if file.is_dir() {
-            fs::create_dir_all(&outpath).with_context(|| {
-                format!("Failed to create directory: {}", outpath.display())
-            })?;
+            fs::create_dir_all(&outpath)
+                .with_context(|| format!("Failed to create directory: {}", outpath.display()))?;
         } else {
             // Ensure parent directory exists
             if let Some(parent) = outpath.parent()

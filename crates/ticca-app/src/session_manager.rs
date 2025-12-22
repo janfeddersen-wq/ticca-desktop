@@ -45,11 +45,14 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
     // Parse agent type
     let agent_type = AgentType::parse(&session.agent_type);
 
-    let mut todo_lists = SessionService::load_todo_lists(&session.id)
-        .unwrap_or_else(|error| {
-            tracing::warn!("Failed to load todo lists for session {}: {}", session.id, error);
-            HashMap::new()
-        });
+    let mut todo_lists = SessionService::load_todo_lists(&session.id).unwrap_or_else(|error| {
+        tracing::warn!(
+            "Failed to load todo lists for session {}: {}",
+            session.id,
+            error
+        );
+        HashMap::new()
+    });
     todo_lists.retain(|node_id, _| *node_id == 0);
 
     Some(LoadedSession {

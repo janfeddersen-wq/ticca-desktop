@@ -29,11 +29,7 @@ use super::types::ArchiveFormat;
 /// - The archive cannot be opened.
 /// - Extraction fails.
 /// - Files cannot be written to the destination.
-pub fn extract_archive(
-    archive_path: &Path,
-    dest_dir: &Path,
-    format: ArchiveFormat,
-) -> Result<()> {
+pub fn extract_archive(archive_path: &Path, dest_dir: &Path, format: ArchiveFormat) -> Result<()> {
     info!(
         "Extracting {:?} archive {} to {}",
         format,
@@ -135,7 +131,9 @@ fn extract_tar_xz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
 fn extract_tar<R: Read>(reader: R, dest_dir: &Path) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
-    let dest_dir_canonical = dest_dir.canonicalize().unwrap_or_else(|_| dest_dir.to_path_buf());
+    let dest_dir_canonical = dest_dir
+        .canonicalize()
+        .unwrap_or_else(|_| dest_dir.to_path_buf());
 
     for entry_result in archive.entries()? {
         let mut entry = entry_result?;
@@ -150,7 +148,11 @@ fn extract_tar<R: Read>(reader: R, dest_dir: &Path) -> Result<()> {
         let path = entry.path()?;
 
         // Security: skip absolute paths and paths with ..
-        if path.is_absolute() || path.components().any(|c| c == std::path::Component::ParentDir) {
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+        {
             warn!("Skipping unsafe path in tar: {:?}", path);
             continue;
         }
@@ -244,8 +246,9 @@ pub fn make_executable(path: &Path) -> Result<()> {
         let current_mode = permissions.mode();
         permissions.set_mode(current_mode | 0o755);
 
-        fs::set_permissions(path, permissions)
-            .with_context(|| format!("Failed to set executable permission on {}", path.display()))?;
+        fs::set_permissions(path, permissions).with_context(|| {
+            format!("Failed to set executable permission on {}", path.display())
+        })?;
 
         debug!("Set executable permission on {}", path.display());
     }

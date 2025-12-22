@@ -44,9 +44,9 @@ fn validate_url(url_str: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("URL must have a host: {}", url_str))?;
 
     // Check if host matches allowed domains (including subdomains)
-    let is_allowed = ALLOWED_DOMAINS.iter().any(|domain| {
-        host == *domain || host.ends_with(&format!(".{}", domain))
-    });
+    let is_allowed = ALLOWED_DOMAINS
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{}", domain)));
 
     if !is_allowed {
         anyhow::bail!(
@@ -174,8 +174,7 @@ where
     progress_cb(DownloadProgress::new(0, total_bytes));
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result
-            .with_context(|| "Failed to read chunk from response stream")?;
+        let chunk = chunk_result.with_context(|| "Failed to read chunk from response stream")?;
 
         // Update hash
         hasher.update(&chunk);
@@ -267,7 +266,9 @@ mod tests {
         // Allowed domains
         assert!(validate_url("https://github.com/jgm/pandoc/releases/download/file.zip").is_ok());
         assert!(validate_url("https://nodejs.org/dist/v22.12.0/node.tar.xz").is_ok());
-        assert!(validate_url("https://download.documentfoundation.org/libreoffice/file.tar.gz").is_ok());
+        assert!(
+            validate_url("https://download.documentfoundation.org/libreoffice/file.tar.gz").is_ok()
+        );
 
         // Subdomains of allowed domains should work
         assert!(validate_url("https://objects.githubusercontent.com/file.zip").is_err()); // Not a subdomain of github.com

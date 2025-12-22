@@ -74,8 +74,11 @@ pub fn view<'a>(
                 let agent_icon = agent_icon(agent_type);
                 let label = agent_label(agent_type);
                 button(
-                    row![icon(agent_icon).size(14), text(format!(" {}", label)).size(14),]
-                        .spacing(4),
+                    row![
+                        icon(agent_icon).size(14),
+                        text(format!(" {}", label)).size(14),
+                    ]
+                    .spacing(4),
                 )
                 .on_press(Message::Chat(chat::Msg::SwitchAgent(agent_type)))
                 .style(move |theme, status| styles::tab_button(theme, status, is_selected))
@@ -84,9 +87,7 @@ pub fn view<'a>(
             })
             .collect();
 
-        iced::widget::Row::with_children(buttons)
-            .spacing(8)
-            .into()
+        iced::widget::Row::with_children(buttons).spacing(8).into()
     } else {
         Space::new().width(Length::Fixed(0.0)).into()
     };

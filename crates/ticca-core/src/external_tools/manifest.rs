@@ -80,12 +80,7 @@ impl ToolsManifest {
     }
 
     /// Records a tool as installed.
-    pub fn mark_installed(
-        &mut self,
-        tool_id: ExternalToolId,
-        version: String,
-        size_bytes: u64,
-    ) {
+    pub fn mark_installed(&mut self, tool_id: ExternalToolId, version: String, size_bytes: u64) {
         let info = InstalledToolInfo {
             version,
             installed_at: Utc::now(),
@@ -102,10 +97,7 @@ impl ToolsManifest {
 
     /// Returns a list of all installed tool IDs.
     pub fn installed_tools(&self) -> Vec<ExternalToolId> {
-        self.tools
-            .keys()
-            .filter_map(|k| k.parse().ok())
-            .collect()
+        self.tools.keys().filter_map(|k| k.parse().ok()).collect()
     }
 
     /// Calculates total size of all installed tools in bytes.
@@ -173,12 +165,12 @@ pub fn save_manifest(manifest: &ToolsManifest) -> Result<()> {
 pub fn save_manifest_to(manifest: &ToolsManifest, path: &Path) -> Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create manifest directory: {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create manifest directory: {}", parent.display())
+        })?;
     }
 
-    let content = serde_json::to_string_pretty(manifest)
-        .context("Failed to serialize manifest")?;
+    let content = serde_json::to_string_pretty(manifest).context("Failed to serialize manifest")?;
 
     fs::write(path, content)
         .with_context(|| format!("Failed to write manifest to {}", path.display()))?;
@@ -194,11 +186,7 @@ mod tests {
 
     fn create_test_manifest() -> ToolsManifest {
         let mut manifest = ToolsManifest::new();
-        manifest.mark_installed(
-            ExternalToolId::Pandoc,
-            "3.6.2".to_string(),
-            42_000_000,
-        );
+        manifest.mark_installed(ExternalToolId::Pandoc, "3.6.2".to_string(), 42_000_000);
         manifest
     }
 
@@ -251,14 +239,13 @@ mod tests {
 
         assert!(!manifest.is_installed(ExternalToolId::Node));
 
-        manifest.mark_installed(
-            ExternalToolId::Node,
-            "22.12.0".to_string(),
-            25_000_000,
-        );
+        manifest.mark_installed(ExternalToolId::Node, "22.12.0".to_string(), 25_000_000);
 
         assert!(manifest.is_installed(ExternalToolId::Node));
-        assert_eq!(manifest.get_tool(ExternalToolId::Node).unwrap().version, "22.12.0");
+        assert_eq!(
+            manifest.get_tool(ExternalToolId::Node).unwrap().version,
+            "22.12.0"
+        );
 
         manifest.mark_uninstalled(ExternalToolId::Node);
         assert!(!manifest.is_installed(ExternalToolId::Node));

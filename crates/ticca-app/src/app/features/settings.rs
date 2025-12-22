@@ -357,7 +357,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 ticca_core::config::McpTransport::StreamableHttp => {
                     let url = app.settings.mcp_form.endpoint_url.trim().to_string();
                     if url.is_empty() {
-                        app.toast = Some(Toast::new("Endpoint URL is required for HTTP MCP servers"));
+                        app.toast =
+                            Some(Toast::new("Endpoint URL is required for HTTP MCP servers"));
                         return effects;
                     }
                     McpServer::new(id, name)
@@ -480,24 +481,26 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                         status.version = Some(def.version.to_string());
                     }
                     Err(e) => {
-                        app.toast = Some(Toast::new(format!("Failed to install {}: {}", tool_id, e)));
+                        app.toast =
+                            Some(Toast::new(format!("Failed to install {}: {}", tool_id, e)));
                     }
                 }
             }
         }
-        settings::Msg::ExternalToolUninstallComplete(tool_id, result) => {
-            match result {
-                Ok(()) => {
-                    if let Some(status) = app.settings.external_tools.get_mut(&tool_id) {
-                        status.is_installed = false;
-                        status.version = None;
-                    }
-                }
-                Err(e) => {
-                    app.toast = Some(Toast::new(format!("Failed to uninstall {}: {}", tool_id, e)));
+        settings::Msg::ExternalToolUninstallComplete(tool_id, result) => match result {
+            Ok(()) => {
+                if let Some(status) = app.settings.external_tools.get_mut(&tool_id) {
+                    status.is_installed = false;
+                    status.version = None;
                 }
             }
-        }
+            Err(e) => {
+                app.toast = Some(Toast::new(format!(
+                    "Failed to uninstall {}: {}",
+                    tool_id, e
+                )));
+            }
+        },
 
         // External Tools Startup Prompt
         settings::Msg::ShowExternalToolsPrompt(missing_tools) => {
@@ -516,10 +519,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
         settings::Msg::DismissExternalToolsPromptPermanently => {
             app.external_tools_prompt = None;
             app.external_tools_prompt_dismissed = true;
-            let _ = ConfigService::set_setting(
-                setting_keys::EXTERNAL_TOOLS_PROMPT_DISMISSED,
-                "true",
-            );
+            let _ =
+                ConfigService::set_setting(setting_keys::EXTERNAL_TOOLS_PROMPT_DISMISSED, "true");
         }
         settings::Msg::InstallAllMissingTools => {
             if let Some(ref mut prompt) = app.external_tools_prompt {

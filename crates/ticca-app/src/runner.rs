@@ -42,8 +42,7 @@ fn app_window_icon() -> Option<iced::window::Icon> {
     let x = (icon_size as f32 - svg_size.width() * scale) / 2.0;
     let y = (icon_size as f32 - svg_size.height() * scale) / 2.0;
 
-    let transform = resvg::tiny_skia::Transform::from_translate(x, y)
-        .post_scale(scale, scale);
+    let transform = resvg::tiny_skia::Transform::from_translate(x, y).post_scale(scale, scale);
 
     let mut pixmap_mut = pixmap.as_mut();
     resvg::render(&tree, transform, &mut pixmap_mut);

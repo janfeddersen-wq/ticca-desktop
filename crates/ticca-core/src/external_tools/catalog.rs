@@ -3,7 +3,9 @@
 //! This module contains the static definitions for all supported external tools,
 //! including their download URLs, versions, and metadata.
 
-use super::types::{ExecutablePaths, ExternalToolId, PlatformDownload, PlatformUrls, ToolDefinition};
+use super::types::{
+    ExecutablePaths, ExternalToolId, PlatformDownload, PlatformUrls, ToolDefinition,
+};
 
 // ============================================================================
 // UV Definition (Python package installer)
@@ -351,9 +353,15 @@ mod tests {
 
         // Unix platforms should use bin/pandoc
         assert_eq!(pandoc.get_executable_path(Platform::LinuxX64), "bin/pandoc");
-        assert_eq!(pandoc.get_executable_path(Platform::MacosArm64), "bin/pandoc");
+        assert_eq!(
+            pandoc.get_executable_path(Platform::MacosArm64),
+            "bin/pandoc"
+        );
 
         // Windows should use pandoc.exe
-        assert_eq!(pandoc.get_executable_path(Platform::WindowsX64), "pandoc.exe");
+        assert_eq!(
+            pandoc.get_executable_path(Platform::WindowsX64),
+            "pandoc.exe"
+        );
     }
 }

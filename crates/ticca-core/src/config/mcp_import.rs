@@ -10,7 +10,9 @@ pub fn parse_mcp_servers_json(input: &str, existing: &[McpServer]) -> Result<Vec
 
     let mut existing_by_name: HashMap<&str, &McpServer> = HashMap::new();
     for server in existing {
-        existing_by_name.entry(server.name.as_str()).or_insert(server);
+        existing_by_name
+            .entry(server.name.as_str())
+            .or_insert(server);
     }
 
     let mut servers = Vec::new();
@@ -86,7 +88,10 @@ fn parse_server(
         .and_then(Value::as_bool)
         .unwrap_or(true);
 
-    let command = obj.get("command").and_then(Value::as_str).map(str::to_string);
+    let command = obj
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     let endpoint_url = obj
         .get("endpoint_url")
@@ -208,4 +213,3 @@ mod tests {
         assert_eq!(web.endpoint_url.as_deref(), Some("http://localhost:7777"));
     }
 }
-

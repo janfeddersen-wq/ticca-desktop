@@ -284,7 +284,12 @@ impl SessionDatabase {
 
     // Todo state
 
-    pub fn upsert_todo_state(&self, session_id: &str, node_id: usize, state_json: &str) -> Result<()> {
+    pub fn upsert_todo_state(
+        &self,
+        session_id: &str,
+        node_id: usize,
+        state_json: &str,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO todo_states (session_id, node_id, state_json, updated_at)
              VALUES (?, ?, ?, datetime('now'))
@@ -444,8 +449,12 @@ mod tests {
         db.create_session(&session).unwrap();
 
         // Upsert todo states
-        db.upsert_todo_state(&session_id, 0, "{\"items\":[],\"confirmed_complete\":false}")
-            .unwrap();
+        db.upsert_todo_state(
+            &session_id,
+            0,
+            "{\"items\":[],\"confirmed_complete\":false}",
+        )
+        .unwrap();
         db.upsert_todo_state(&session_id, 1, "{\"items\":[],\"confirmed_complete\":true}")
             .unwrap();
 

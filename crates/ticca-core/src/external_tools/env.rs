@@ -78,7 +78,7 @@ fn path_separator() -> &'static str {
 /// A new PATH string with tool directories prepended.
 pub fn prepend_tools_to_path(existing: Option<&str>) -> Result<String> {
     let bin_dirs = installed_tool_bin_dirs()?;
-    
+
     if bin_dirs.is_empty() {
         // No tools installed, return existing or system PATH
         return Ok(existing
@@ -104,7 +104,7 @@ pub fn prepend_tools_to_path(existing: Option<&str>) -> Result<String> {
     }
 
     let tools_path = tool_paths.join(sep);
-    
+
     if base_path.is_empty() {
         Ok(tools_path)
     } else {
@@ -117,7 +117,7 @@ pub fn prepend_tools_to_path(existing: Option<&str>) -> Result<String> {
 /// Currently this just sets PATH to include tool bin directories.
 pub fn env_overrides() -> Result<HashMap<String, String>> {
     let mut overrides = HashMap::new();
-    
+
     let new_path = prepend_tools_to_path(None)?;
     if !new_path.is_empty() {
         overrides.insert("PATH".to_string(), new_path);

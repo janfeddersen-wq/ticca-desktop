@@ -192,7 +192,10 @@ mod tests {
         #[cfg(windows)]
         {
             assert!(uv_path.ends_with("uv.exe"));
-            assert!(uv_path.to_string_lossy().contains("uv\\uv.exe") || uv_path.to_string_lossy().contains("uv/uv.exe"));
+            assert!(
+                uv_path.to_string_lossy().contains("uv\\uv.exe")
+                    || uv_path.to_string_lossy().contains("uv/uv.exe")
+            );
         }
 
         #[cfg(not(windows))]

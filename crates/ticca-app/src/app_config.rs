@@ -30,7 +30,8 @@ pub fn load_config() -> AppConfig {
                 max_tool_rounds: ticca_core::config::defaults::MAX_TOOL_ROUNDS,
                 yolo_mode_enabled: ticca_core::config::defaults::YOLO_MODE,
                 expert_mode_enabled: ticca_core::config::defaults::EXPERT_MODE,
-                external_tools_prompt_dismissed: ticca_core::config::defaults::EXTERNAL_TOOLS_PROMPT_DISMISSED,
+                external_tools_prompt_dismissed:
+                    ticca_core::config::defaults::EXTERNAL_TOOLS_PROMPT_DISMISSED,
             };
         }
     };

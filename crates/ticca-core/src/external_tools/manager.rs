@@ -10,9 +10,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::catalog::{get_all_tool_definitions, get_tool_definition};
-use super::downloader::{download_file, DownloadProgress};
+use super::downloader::{DownloadProgress, download_file};
 use super::extractor::{extract_archive, make_executable};
-use super::manifest::{load_manifest, save_manifest, ToolsManifest};
+use super::manifest::{ToolsManifest, load_manifest, save_manifest};
 use super::types::{ExternalToolId, Platform, ToolDefinition, ToolStatus};
 use crate::config::paths::get_tools_dir;
 
@@ -150,37 +150,32 @@ impl ExternalToolManager {
     /// - The tool is not supported on this platform.
     /// - The download fails.
     /// - Extraction fails.
-    pub async fn install<F>(
-        &self,
-        tool_id: ExternalToolId,
-        progress_cb: F,
-    ) -> Result<()>
+    pub async fn install<F>(&self, tool_id: ExternalToolId, progress_cb: F) -> Result<()>
     where
         F: Fn(DownloadProgress) + Send + Sync,
     {
         let def = get_tool_definition(tool_id);
 
         // Check platform support
-        let platform = self.platform.ok_or_else(|| {
-            anyhow::anyhow!("Cannot install tools: unsupported platform")
-        })?;
+        let platform = self
+            .platform
+            .ok_or_else(|| anyhow::anyhow!("Cannot install tools: unsupported platform"))?;
 
         let download_info = def.get_download_for_platform(platform).ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} is not supported on {}",
-                def.display_name,
-                platform
-            )
+            anyhow::anyhow!("{} is not supported on {}", def.display_name, platform)
         })?;
 
         let url = download_info.url;
         let expected_sha256 = download_info.sha256;
 
-        let format = def.get_archive_format(platform).ok_or_else(|| {
-            anyhow::anyhow!("Unknown archive format for {}", def.display_name)
-        })?;
+        let format = def
+            .get_archive_format(platform)
+            .ok_or_else(|| anyhow::anyhow!("Unknown archive format for {}", def.display_name))?;
 
-        info!("Installing {} v{} from {}", def.display_name, def.version, url);
+        info!(
+            "Installing {} v{} from {}",
+            def.display_name, def.version, url
+        );
 
         // Prepare directories
         let tool_dir = self.get_tool_dir(tool_id);
@@ -194,7 +189,8 @@ impl ExternalToolManager {
         }
 
         // Download with optional SHA256 verification
-        let bytes_downloaded = download_file(url, &archive_path, expected_sha256, progress_cb).await?;
+        let bytes_downloaded =
+            download_file(url, &archive_path, expected_sha256, progress_cb).await?;
 
         // Handle AppImage specially - no extraction needed
         if !format.requires_extraction() {
@@ -228,15 +224,14 @@ impl ExternalToolManager {
         // Update manifest
         {
             let mut manifest = self.manifest.write().await;
-            manifest.mark_installed(
-                tool_id,
-                def.version.to_string(),
-                bytes_downloaded,
-            );
+            manifest.mark_installed(tool_id, def.version.to_string(), bytes_downloaded);
             save_manifest(&manifest)?;
         }
 
-        info!("{} v{} installed successfully", def.display_name, def.version);
+        info!(
+            "{} v{} installed successfully",
+            def.display_name, def.version
+        );
         Ok(())
     }
 
@@ -275,11 +270,7 @@ impl ExternalToolManager {
     }
 
     /// Determines the tool status from the manifest and filesystem.
-    fn get_tool_status(
-        &self,
-        tool_id: ExternalToolId,
-        manifest: &ToolsManifest,
-    ) -> ToolStatus {
+    fn get_tool_status(&self, tool_id: ExternalToolId, manifest: &ToolsManifest) -> ToolStatus {
         // Check platform support first
         let platform = match self.platform {
             Some(p) => p,
@@ -370,9 +361,9 @@ impl ExternalToolManager {
         tool_dir: &Path,
         def: &ToolDefinition,
     ) -> Result<()> {
-        let platform = self.platform.ok_or_else(|| {
-            anyhow::anyhow!("Cannot setup executable: unsupported platform")
-        })?;
+        let platform = self
+            .platform
+            .ok_or_else(|| anyhow::anyhow!("Cannot setup executable: unsupported platform"))?;
 
         // Get the platform-specific executable relative path
         let exec_relpath = def.get_executable_path(platform);
@@ -408,7 +399,7 @@ impl ExternalToolManager {
 
                         // Move the nested content to the tool directory
                         self.flatten_directory(&entry_path, tool_dir).await?;
-                        
+
                         // Now check the expected path again
                         let final_path = tool_dir.join(exec_relpath);
                         if final_path.exists() {
@@ -453,9 +444,9 @@ impl ExternalToolManager {
                 continue;
             }
 
-            tokio::fs::rename(&source, &dest)
-                .await
-                .with_context(|| format!("Failed to move {} to {}", source.display(), dest.display()))?;
+            tokio::fs::rename(&source, &dest).await.with_context(|| {
+                format!("Failed to move {} to {}", source.display(), dest.display())
+            })?;
         }
 
         // Remove the now-empty subdirectory
@@ -465,11 +456,7 @@ impl ExternalToolManager {
     }
 
     /// Recursively searches for an executable by name.
-    async fn find_executable_recursive(
-        &self,
-        dir: &Path,
-        name: &str,
-    ) -> Result<Option<PathBuf>> {
+    async fn find_executable_recursive(&self, dir: &Path, name: &str) -> Result<Option<PathBuf>> {
         let mut stack = vec![dir.to_path_buf()];
 
         while let Some(current) = stack.pop() {
@@ -579,7 +566,10 @@ mod tests {
 
         // Should be NotInstalled or UnsupportedPlatform
         assert!(
-            matches!(status, ToolStatus::NotInstalled | ToolStatus::UnsupportedPlatform),
+            matches!(
+                status,
+                ToolStatus::NotInstalled | ToolStatus::UnsupportedPlatform
+            ),
             "Unexpected status: {:?}",
             status
         );

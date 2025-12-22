@@ -49,7 +49,12 @@ pub mod types;
 // Re-export commonly used types
 pub use catalog::{get_all_tool_definitions, get_tool_definition};
 pub use downloader::DownloadProgress;
-pub use manager::{ExternalToolManager, ToolInfo, FUSE_DOCS_URL, fuse_missing_error, is_fuse_available, is_fuse_error};
-pub use manifest::{InstalledToolInfo, ToolsManifest, load_manifest, save_manifest};
-pub use types::{ArchiveFormat, ExecutablePaths, ExternalToolId, Platform, ToolDefinition, ToolStatus};
 pub use env::{apply_to_command, env_overrides, installed_tool_bin_dirs, prepend_tools_to_path};
+pub use manager::{
+    ExternalToolManager, FUSE_DOCS_URL, ToolInfo, fuse_missing_error, is_fuse_available,
+    is_fuse_error,
+};
+pub use manifest::{InstalledToolInfo, ToolsManifest, load_manifest, save_manifest};
+pub use types::{
+    ArchiveFormat, ExecutablePaths, ExternalToolId, Platform, ToolDefinition, ToolStatus,
+};

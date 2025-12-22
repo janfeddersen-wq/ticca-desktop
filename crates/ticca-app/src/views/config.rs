@@ -12,7 +12,9 @@ use crate::material_icons::{icon, icons};
 use crate::messages::{Message, OAuthProvider, SettingsTab, chat, settings};
 use crate::theme::{AppTheme, styles};
 
-use ticca_core::external_tools::{ExternalToolId, get_all_tool_definitions, is_fuse_available, FUSE_DOCS_URL};
+use ticca_core::external_tools::{
+    ExternalToolId, FUSE_DOCS_URL, get_all_tool_definitions, is_fuse_available,
+};
 
 use ticca_core::agents::AgentType;
 use ticca_core::config::{McpServer, McpTransport, OAuthAccount};
@@ -1044,12 +1046,10 @@ fn build_external_tools_section<'a>(
     let header = row![
         text("External Tools").size(18),
         horizontal_space(),
-        button(
-            row![icon(icons::REFRESH).size(14), text(" Refresh").size(12),].spacing(4)
-        )
-        .on_press(Message::Settings(settings::Msg::RefreshExternalTools))
-        .style(styles::secondary_button)
-        .padding([6, 10]),
+        button(row![icon(icons::REFRESH).size(14), text(" Refresh").size(12),].spacing(4))
+            .on_press(Message::Settings(settings::Msg::RefreshExternalTools))
+            .style(styles::secondary_button)
+            .padding([6, 10]),
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
@@ -1070,88 +1070,92 @@ fn build_external_tools_section<'a>(
     let needs_fuse_warning = libreoffice_installed && !is_fuse_available();
 
     // Build tool cards
-    let tool_cards: Vec<Element<'a, Message>> = get_all_tool_definitions()
-        .iter()
-        .map(|def| {
-            let tool_id = def.id;
-            let status = external_tools.get(&tool_id);
+    let tool_cards: Vec<Element<'a, Message>> =
+        get_all_tool_definitions()
+            .iter()
+            .map(|def| {
+                let tool_id = def.id;
+                let status = external_tools.get(&tool_id);
 
-            let status_text = if let Some(status) = status {
-                if status.is_installing {
-                    format!("Installing... {}%", status.install_progress)
-                } else if status.is_installed {
-                    format!("Installed v{}", status.version.as_deref().unwrap_or("?"))
-                } else if !status.is_supported {
-                    "Unsupported Platform".to_string()
+                let status_text = if let Some(status) = status {
+                    if status.is_installing {
+                        format!("Installing... {}%", status.install_progress)
+                    } else if status.is_installed {
+                        format!("Installed v{}", status.version.as_deref().unwrap_or("?"))
+                    } else if !status.is_supported {
+                        "Unsupported Platform".to_string()
+                    } else {
+                        "Not Installed".to_string()
+                    }
                 } else {
-                    "Not Installed".to_string()
-                }
-            } else {
-                "Unknown".to_string()
-            };
+                    "Unknown".to_string()
+                };
 
-            let is_installed = status.map(|s| s.is_installed).unwrap_or(false);
-            let is_installing = status.map(|s| s.is_installing).unwrap_or(false);
-            let is_supported = status.map(|s| s.is_supported).unwrap_or(true);
+                let is_installed = status.map(|s| s.is_installed).unwrap_or(false);
+                let is_installing = status.map(|s| s.is_installing).unwrap_or(false);
+                let is_supported = status.map(|s| s.is_supported).unwrap_or(true);
 
-            let action_button: Element<'a, Message> = if is_installing {
-                text(format!("{}%", status.map(|s| s.install_progress).unwrap_or(0)))
+                let action_button: Element<'a, Message> = if is_installing {
+                    text(format!(
+                        "{}%",
+                        status.map(|s| s.install_progress).unwrap_or(0)
+                    ))
                     .size(12)
                     .into()
-            } else if is_installed {
-                button(text("Uninstall").size(12))
-                    .on_press(Message::Settings(settings::Msg::UninstallExternalTool(
-                        tool_id,
-                    )))
-                    .style(styles::secondary_button)
-                    .padding([4, 8])
-                    .into()
-            } else if is_supported {
-                button(text("Install").size(12))
-                    .on_press(Message::Settings(settings::Msg::InstallExternalTool(
-                        tool_id,
-                    )))
-                    .style(styles::primary_button)
-                    .padding([4, 8])
-                    .into()
-            } else {
-                text("N/A").size(12).into()
-            };
+                } else if is_installed {
+                    button(text("Uninstall").size(12))
+                        .on_press(Message::Settings(settings::Msg::UninstallExternalTool(
+                            tool_id,
+                        )))
+                        .style(styles::secondary_button)
+                        .padding([4, 8])
+                        .into()
+                } else if is_supported {
+                    button(text("Install").size(12))
+                        .on_press(Message::Settings(settings::Msg::InstallExternalTool(
+                            tool_id,
+                        )))
+                        .style(styles::primary_button)
+                        .padding([4, 8])
+                        .into()
+                } else {
+                    text("N/A").size(12).into()
+                };
 
-            let required_by = def.required_by.join(", ");
+                let required_by = def.required_by.join(", ");
 
-            container(
-                row![
-                    column![
-                        text(def.display_name).size(14),
-                        text(def.description).size(11).style(
-                            |_theme: &iced::Theme| iced::widget::text::Style {
-                                color: Some(Color::from_rgb8(120, 120, 120)),
-                            }
-                        ),
-                        text(format!("~{} MB • Required by: {}", def.size_mb, required_by))
+                container(
+                    row![
+                        column![
+                            text(def.display_name).size(14),
+                            text(def.description)
+                                .size(11)
+                                .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                                    color: Some(Color::from_rgb8(120, 120, 120)),
+                                }),
+                            text(format!(
+                                "~{} MB • Required by: {}",
+                                def.size_mb, required_by
+                            ))
                             .size(10)
                             .style(|_theme: &iced::Theme| iced::widget::text::Style {
                                 color: Some(Color::from_rgb8(100, 100, 100)),
                             }),
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill),
+                        column![text(status_text).size(11), action_button,]
+                            .spacing(4)
+                            .align_x(iced::Alignment::End),
                     ]
-                    .spacing(2)
-                    .width(Length::Fill),
-                    column![
-                        text(status_text).size(11),
-                        action_button,
-                    ]
-                    .spacing(4)
-                    .align_x(iced::Alignment::End),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-            )
-            .padding(10)
-            .width(Length::Fill)
-            .into()
-        })
-        .collect();
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding(10)
+                .width(Length::Fill)
+                .into()
+            })
+            .collect();
 
     // FUSE warning banner (only shown when LibreOffice is installed but FUSE 2 is missing)
     let fuse_warning: Option<Element<'a, Message>> = if needs_fuse_warning {
@@ -1174,14 +1178,14 @@ fn build_external_tools_section<'a>(
                         .style(|_theme: &iced::Theme| iced::widget::text::Style {
                             color: Some(Color::from_rgb8(150, 120, 70)),
                         }),
-                    button(
-                        text("View installation guide →")
-                            .size(10)
-                            .style(|_theme: &iced::Theme| iced::widget::text::Style {
-                                color: Some(Color::from_rgb8(100, 160, 255)),
-                            })
-                    )
-                    .on_press(Message::Settings(settings::Msg::OpenUrl(FUSE_DOCS_URL.to_string())))
+                    button(text("View installation guide →").size(10).style(
+                        |_theme: &iced::Theme| iced::widget::text::Style {
+                            color: Some(Color::from_rgb8(100, 160, 255)),
+                        }
+                    ))
+                    .on_press(Message::Settings(settings::Msg::OpenUrl(
+                        FUSE_DOCS_URL.to_string()
+                    )))
                     .style(|_theme: &iced::Theme, _status| button::Style {
                         background: None,
                         text_color: Color::from_rgb8(100, 160, 255),

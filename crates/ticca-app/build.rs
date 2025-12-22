@@ -12,7 +12,9 @@ fn main() {
     }
 
     let Some(profile_dir) = profile_dir_from_out_dir() else {
-        println!("cargo:warning=Unable to determine target profile directory from OUT_DIR; skipping Linux bundle generation");
+        println!(
+            "cargo:warning=Unable to determine target profile directory from OUT_DIR; skipping Linux bundle generation"
+        );
         return;
     };
 
@@ -73,8 +75,8 @@ fn generate_linux_bundle(bundle_root: &Path) -> Result<(), String> {
 
 fn render_svg_to_png_file(svg_data: &[u8], size: u32, output_path: &Path) -> Result<(), String> {
     let options = resvg::usvg::Options::default();
-    let tree = resvg::usvg::Tree::from_data(svg_data, &options)
-        .map_err(|e| format!("parse svg: {e}"))?;
+    let tree =
+        resvg::usvg::Tree::from_data(svg_data, &options).map_err(|e| format!("parse svg: {e}"))?;
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)
         .ok_or_else(|| "create pixmap failed".to_string())?;
