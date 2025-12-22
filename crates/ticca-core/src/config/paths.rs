@@ -159,7 +159,14 @@ mod tests {
         let result = get_data_dir();
         assert!(result.is_ok());
         let path = result.unwrap();
-        assert!(path.ends_with("ticca-desktop"));
+        // On Windows, data_dir() returns {AppData}/ticca-desktop/data
+        // On Unix, it returns {data_dir}/ticca-desktop
+        let path_str = path.to_string_lossy();
+        assert!(
+            path_str.contains("ticca-desktop"),
+            "Path should contain 'ticca-desktop': {}",
+            path_str
+        );
     }
 
     #[test]
