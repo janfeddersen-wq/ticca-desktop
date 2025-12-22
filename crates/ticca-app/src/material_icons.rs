@@ -28,7 +28,7 @@ pub fn icon_sized<'a>(i: Icon, size: f32) -> Text<'a> {
 // Re-export commonly used icons for convenience
 // Note: Using material-icons v0.2, some icons are substituted with similar alternatives
 pub mod icons {
-    use material_icons::Icon;
+    pub use material_icons::Icon;
 
     // Navigation & Actions
     pub const ARROW_BACK: Icon = Icon::ArrowBack;

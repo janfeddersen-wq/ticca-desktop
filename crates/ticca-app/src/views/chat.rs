@@ -28,6 +28,24 @@ fn horizontal_space() -> Space {
     Space::new().width(Length::Fill)
 }
 
+/// Get the icon for an agent type
+fn agent_icon(agent_type: AgentType) -> icons::Icon {
+    match agent_type {
+        AgentType::Coding => icons::CODE,
+        AgentType::Planning => icons::CHECKLIST,
+        AgentType::Skills => icons::BUILD,
+    }
+}
+
+/// Get a short display label for an agent type
+fn agent_label(agent_type: AgentType) -> &'static str {
+    match agent_type {
+        AgentType::Coding => "Coding",
+        AgentType::Planning => "Planning",
+        AgentType::Skills => "Skills",
+    }
+}
+
 /// Render the chat view
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
@@ -48,22 +66,27 @@ pub fn view<'a>(
     spinner_frame: usize,
     flow_panel_visible: bool,
 ) -> Element<'a, Message> {
-    let is_coding = current_agent == AgentType::Coding;
-    let is_planning = current_agent == AgentType::Planning;
-
     let agent_selector: Element<Message> = if expert_mode_enabled {
-        row![
-            button(row![icon(icons::CODE).size(14), text(" Coding").size(14),].spacing(4))
-                .on_press(Message::Chat(chat::Msg::SwitchAgent(AgentType::Coding)))
-                .style(move |theme, status| styles::tab_button(theme, status, is_coding))
-                .padding([8, 12]),
-            button(row![icon(icons::CHECKLIST).size(14), text(" Planning").size(14),].spacing(4))
-                .on_press(Message::Chat(chat::Msg::SwitchAgent(AgentType::Planning)))
-                .style(move |theme, status| styles::tab_button(theme, status, is_planning))
-                .padding([8, 12]),
-        ]
-        .spacing(8)
-        .into()
+        let buttons: Vec<Element<Message>> = AgentType::all()
+            .iter()
+            .map(|&agent_type| {
+                let is_selected = current_agent == agent_type;
+                let agent_icon = agent_icon(agent_type);
+                let label = agent_label(agent_type);
+                button(
+                    row![icon(agent_icon).size(14), text(format!(" {}", label)).size(14),]
+                        .spacing(4),
+                )
+                .on_press(Message::Chat(chat::Msg::SwitchAgent(agent_type)))
+                .style(move |theme, status| styles::tab_button(theme, status, is_selected))
+                .padding([8, 12])
+                .into()
+            })
+            .collect();
+
+        iced::widget::Row::with_children(buttons)
+            .spacing(8)
+            .into()
     } else {
         Space::new().width(Length::Fixed(0.0)).into()
     };

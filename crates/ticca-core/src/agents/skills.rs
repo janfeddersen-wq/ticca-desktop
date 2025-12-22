@@ -12,10 +12,60 @@ use tracing::{debug, info};
 use super::PromptBlocks;
 use super::base::{Agent, AgentType};
 use super::profile::ToolUsagePolicy;
-use crate::config::paths::{get_skills_dir, get_venvs_dir};
+use crate::config::paths::{get_skills_dir, get_tools_dir, get_venvs_dir};
+use crate::external_tools::catalog::get_tool_definition;
+use crate::external_tools::manifest::load_manifest;
+use crate::external_tools::types::{ExternalToolId, Platform};
 use crate::python::create_venv;
 use crate::skills::{SkillMetadata, discover_skills};
 use crate::tools::spec::tool_specs_for_names;
+
+/// Information about an installed external tool.
+#[derive(Debug, Clone)]
+pub struct InstalledTool {
+    pub name: String,
+    pub executable_path: PathBuf,
+}
+
+/// Discovers installed external tools and returns their paths.
+fn discover_installed_tools() -> Vec<InstalledTool> {
+    let platform = match Platform::detect() {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+
+    let tools_dir = match get_tools_dir() {
+        Ok(dir) => dir,
+        Err(_) => return Vec::new(),
+    };
+
+    let manifest = match load_manifest() {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut installed = Vec::new();
+
+    for tool_id in ExternalToolId::all() {
+        if !manifest.is_installed(*tool_id) {
+            continue;
+        }
+
+        let def = get_tool_definition(*tool_id);
+        let exec_relpath = def.get_executable_path(platform);
+        let tool_dir = tools_dir.join(tool_id.as_str());
+        let exec_path = tool_dir.join(exec_relpath);
+
+        if exec_path.exists() {
+            installed.push(InstalledTool {
+                name: def.display_name.to_string(),
+                executable_path: exec_path,
+            });
+        }
+    }
+
+    installed
+}
 
 /// Skills Agent - executes Python-based skills for specialized tasks.
 ///
@@ -29,6 +79,8 @@ pub struct SkillsAgent {
     venv_path: PathBuf,
     /// Path to the skills directory
     skills_dir: PathBuf,
+    /// Installed external tools (pandoc, node, libreoffice)
+    installed_tools: Vec<InstalledTool>,
 }
 
 impl SkillsAgent {
@@ -64,6 +116,18 @@ impl SkillsAgent {
             );
         }
 
+        // Discover installed external tools
+        let installed_tools = discover_installed_tools();
+        info!("Discovered {} installed external tools", installed_tools.len());
+
+        for tool in &installed_tools {
+            debug!(
+                "Found tool: {} at {}",
+                tool.name,
+                tool.executable_path.display()
+            );
+        }
+
         // Create the venv if it doesn't exist
         if !venv_path.exists() {
             info!("Creating skills venv at {}", venv_path.display());
@@ -76,6 +140,7 @@ impl SkillsAgent {
             skills,
             venv_path,
             skills_dir,
+            installed_tools,
         })
     }
 
@@ -88,6 +153,7 @@ impl SkillsAgent {
             skills: Vec::new(),
             venv_path: PathBuf::new(),
             skills_dir: PathBuf::new(),
+            installed_tools: Vec::new(),
         }
     }
 
@@ -168,6 +234,32 @@ impl SkillsAgent {
 
         out
     }
+
+    /// Builds the external tools section of the system prompt.
+    fn build_tools_section(&self) -> String {
+        if self.installed_tools.is_empty() {
+            return "## External Tools\n\nNo external tools are currently installed.\n".to_string();
+        }
+
+        let mut out = String::from("## External Tools\n\n");
+        out.push_str("The following external tools are installed and available for use:\n\n");
+
+        for tool in &self.installed_tools {
+            out.push_str(&format!(
+                "- **{}**: `{}`\n",
+                tool.name,
+                tool.executable_path.display()
+            ));
+        }
+
+        out.push_str("\nYou can invoke these tools directly using `execute_shell`.\n");
+        out
+    }
+
+    /// Get the installed external tools.
+    pub fn installed_tools(&self) -> &[InstalledTool] {
+        &self.installed_tools
+    }
 }
 
 impl Agent for SkillsAgent {
@@ -179,9 +271,9 @@ impl Agent for SkillsAgent {
         "Skills Agent"
     }
 
-    // Note: We can't override description() to return dynamic content because
-    // the trait returns &'static str. The combined_description() method
-    // provides dynamic skill info, and the system_prompt includes full details.
+    fn description(&self) -> String {
+        self.combined_description()
+    }
 
     fn available_tools(&self) -> Vec<&'static str> {
         // Same tools as CodingAgent - full access to file and shell tools
@@ -223,6 +315,7 @@ impl Agent for SkillsAgent {
         );
 
         let skills_section = self.build_skills_section();
+        let tools_section = self.build_tools_section();
         let python_path = self.python_path();
 
         format!(
@@ -241,11 +334,13 @@ Example shell command:
 {python_path} /path/to/script.py
 ```
 
+{tools_section}
 {skills_section}
 {tool_docs}
 {guidelines}"#,
             venv_path = self.venv_path.display(),
             python_path = python_path.display(),
+            tools_section = tools_section,
             skills_section = skills_section,
             tool_docs = tool_docs,
             guidelines = guidelines,
@@ -296,6 +391,7 @@ mod tests {
             ],
             venv_path: PathBuf::from("/venvs/skills-venv"),
             skills_dir: PathBuf::from("/skills"),
+            installed_tools: Vec::new(),
         };
 
         let desc = agent.combined_description();
@@ -327,6 +423,7 @@ mod tests {
             skills: vec![],
             venv_path: PathBuf::from("/test/venvs/skills-venv"),
             skills_dir: PathBuf::from("/test/skills"),
+            installed_tools: Vec::new(),
         };
 
         let prompt = agent.system_prompt();
@@ -346,6 +443,7 @@ mod tests {
             }],
             venv_path: PathBuf::from("/venvs/skills-venv"),
             skills_dir: PathBuf::from("/skills"),
+            installed_tools: Vec::new(),
         };
 
         let prompt = agent.system_prompt();
@@ -360,5 +458,56 @@ mod tests {
         let section = agent.build_skills_section();
 
         assert!(section.contains("No skills are currently available"));
+    }
+
+    #[test]
+    fn test_build_tools_section_empty() {
+        let agent = SkillsAgent::empty();
+        let section = agent.build_tools_section();
+
+        assert!(section.contains("No external tools are currently installed"));
+    }
+
+    #[test]
+    fn test_build_tools_section_with_tools() {
+        let agent = SkillsAgent {
+            skills: vec![],
+            venv_path: PathBuf::from("/venvs/skills-venv"),
+            skills_dir: PathBuf::from("/skills"),
+            installed_tools: vec![
+                InstalledTool {
+                    name: "Pandoc".to_string(),
+                    executable_path: PathBuf::from("/tools/pandoc/bin/pandoc"),
+                },
+                InstalledTool {
+                    name: "Node.js".to_string(),
+                    executable_path: PathBuf::from("/tools/node/bin/node"),
+                },
+            ],
+        };
+
+        let section = agent.build_tools_section();
+        assert!(section.contains("**Pandoc**"));
+        assert!(section.contains("/tools/pandoc/bin/pandoc"));
+        assert!(section.contains("**Node.js**"));
+        assert!(section.contains("/tools/node/bin/node"));
+    }
+
+    #[test]
+    fn test_system_prompt_includes_tools() {
+        let agent = SkillsAgent {
+            skills: vec![],
+            venv_path: PathBuf::from("/venvs/skills-venv"),
+            skills_dir: PathBuf::from("/skills"),
+            installed_tools: vec![InstalledTool {
+                name: "LibreOffice".to_string(),
+                executable_path: PathBuf::from("/tools/libreoffice/soffice.AppImage"),
+            }],
+        };
+
+        let prompt = agent.system_prompt();
+        assert!(prompt.contains("## External Tools"));
+        assert!(prompt.contains("**LibreOffice**"));
+        assert!(prompt.contains("/tools/libreoffice/soffice.AppImage"));
     }
 }

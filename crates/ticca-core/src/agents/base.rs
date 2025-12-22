@@ -12,6 +12,13 @@ pub enum AgentType {
 }
 
 impl AgentType {
+    /// Returns all available agent types
+    pub fn all() -> &'static [AgentType] {
+        &[AgentType::Coding, AgentType::Planning, AgentType::Skills]
+    }
+}
+
+impl AgentType {
     pub fn as_str(&self) -> &'static str {
         match self {
             AgentType::Planning => "planning",
@@ -76,9 +83,13 @@ pub trait Agent: Send + Sync {
         self.agent_type().display_name()
     }
 
-    /// Get the agent's description
-    fn description(&self) -> &'static str {
-        self.agent_type().description()
+    /// Get the agent's description.
+    ///
+    /// This returns a String to allow for dynamic descriptions (e.g., based on
+    /// discovered skills). The default implementation uses the static description
+    /// from the AgentType.
+    fn description(&self) -> String {
+        self.agent_type().description().to_string()
     }
 
     /// Get the system prompt for this agent
