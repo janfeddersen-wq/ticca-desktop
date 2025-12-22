@@ -983,6 +983,8 @@ mod tests {
             yolo_mode_enabled: true,
             expert_mode_enabled: true,
             external_tools_prompt_dismissed: false,
+            update_check_skip_remaining: 0,
+            update_check_dismissed_version: None,
         }
     }
 

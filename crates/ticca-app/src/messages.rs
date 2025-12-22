@@ -34,6 +34,24 @@ pub enum Message {
     DismissToast,
     /// Auto-dismiss tick for toast timeout
     ToastTick,
+
+    // Update notifications
+    /// Result of checking for updates
+    CheckForUpdateResult(Option<UpdateAvailableInfo>),
+    /// Dismiss the update notification (remind me later)
+    DismissUpdate,
+    /// Skip this specific version
+    SkipThisVersion(String),
+    /// Open the release URL in browser
+    OpenReleaseUrl(String),
+}
+
+/// Information about an available update
+#[derive(Debug, Clone)]
+pub struct UpdateAvailableInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub release_url: String,
 }
 
 /// Right sidebar tab selection

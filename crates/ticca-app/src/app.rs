@@ -56,6 +56,17 @@ pub struct ExternalToolsPromptState {
     pub progress: u8,
 }
 
+/// State for the update available notification
+#[derive(Debug, Clone)]
+pub struct UpdateAvailableState {
+    /// Current app version
+    pub current_version: String,
+    /// Latest available version
+    pub latest_version: String,
+    /// URL to the release page
+    pub release_url: String,
+}
+
 /// Main application state
 pub struct TiccaApp {
     current_view: View,
@@ -66,6 +77,7 @@ pub struct TiccaApp {
     toast: Option<Toast>,
     external_tools_prompt: Option<ExternalToolsPromptState>,
     external_tools_prompt_dismissed: bool,
+    update_available: Option<UpdateAvailableState>,
 }
 
 /// Views in the application
@@ -98,6 +110,7 @@ impl TiccaApp {
             toast: None,
             external_tools_prompt: None,
             external_tools_prompt_dismissed: config.external_tools_prompt_dismissed,
+            update_available: None,
         };
 
         // Automatically fetch models on startup if we have credentials
@@ -111,6 +124,32 @@ impl TiccaApp {
             startup_tasks.push(Task::perform(
                 async { features::settings::check_missing_external_tools().await },
                 |missing| Message::Settings(settings::Msg::ShowExternalToolsPrompt(missing)),
+            ));
+        }
+
+        // Check for updates (with skip counter logic)
+        if config.update_check_skip_remaining > 0 {
+            // Decrement the skip counter
+            let new_count = config.update_check_skip_remaining - 1;
+            let _ = ticca_core::config::ConfigService::set_setting(
+                ticca_core::config::setting_keys::UPDATE_CHECK_SKIP_REMAINING,
+                &new_count.to_string(),
+            );
+            tracing::debug!("Update check skipped, {} startups remaining", new_count);
+        } else {
+            // Check for updates
+            let dismissed_version = config.update_check_dismissed_version.clone();
+            startup_tasks.push(Task::perform(
+                async move { ticca_core::check_for_update(dismissed_version.as_deref()).await },
+                |result| {
+                    Message::CheckForUpdateResult(result.map(|r| {
+                        crate::messages::UpdateAvailableInfo {
+                            current_version: ticca_core::CURRENT_VERSION.to_string(),
+                            latest_version: r.version,
+                            release_url: r.html_url,
+                        }
+                    }))
+                },
             ));
         }
 
@@ -137,6 +176,38 @@ impl TiccaApp {
                 if self.toast.as_ref().is_some_and(|t| t.is_expired()) {
                     self.toast = None;
                 }
+                Vec::new()
+            }
+            Message::CheckForUpdateResult(info) => {
+                if let Some(info) = info {
+                    self.update_available = Some(UpdateAvailableState {
+                        current_version: info.current_version,
+                        latest_version: info.latest_version,
+                        release_url: info.release_url,
+                    });
+                }
+                Vec::new()
+            }
+            Message::DismissUpdate => {
+                // "Remind Me Later" - set skip counter to 10
+                let _ = ticca_core::config::ConfigService::set_setting(
+                    ticca_core::config::setting_keys::UPDATE_CHECK_SKIP_REMAINING,
+                    "10",
+                );
+                self.update_available = None;
+                Vec::new()
+            }
+            Message::SkipThisVersion(version) => {
+                // "Skip This Version" - save the dismissed version
+                let _ = ticca_core::config::ConfigService::set_setting(
+                    ticca_core::config::setting_keys::UPDATE_CHECK_DISMISSED_VERSION,
+                    &version,
+                );
+                self.update_available = None;
+                Vec::new()
+            }
+            Message::OpenReleaseUrl(url) => {
+                let _ = open::that(&url);
                 Vec::new()
             }
             Message::Chat(msg) => features::chat::update(self, msg),
@@ -212,7 +283,8 @@ impl TiccaApp {
         };
 
         let with_approval = features::chat::wrap_with_approval_modal(self, base);
-        self.wrap_with_external_tools_prompt(with_approval)
+        let with_tools_prompt = self.wrap_with_external_tools_prompt(with_approval);
+        self.wrap_with_update_modal(with_tools_prompt)
     }
 
     /// Wrap content with external tools prompt modal if active
@@ -294,6 +366,95 @@ impl TiccaApp {
         )
         .padding(30)
         .width(Length::Fixed(500.0))
+        .style(styles::card_container);
+
+        // Create overlay
+        let overlay = container(modal_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                ..Default::default()
+            });
+
+        // Stack base and overlay
+        iced::widget::stack![base, overlay].into()
+    }
+
+    /// Wrap content with update available modal if active
+    fn wrap_with_update_modal<'a>(&'a self, base: Element<'a, Message>) -> Element<'a, Message> {
+        use crate::theme::styles;
+
+        let Some(ref update_state) = self.update_available else {
+            return base;
+        };
+
+        // Build the modal content
+        let title = text("Update Available").size(20);
+
+        let description = column![
+            text("A new version of Ticca is available!").size(14),
+            iced::widget::Space::new().height(10),
+            row![
+                text("Current version: ").size(14),
+                text(&update_state.current_version)
+                    .size(14)
+                    .style(|theme: &iced::Theme| {
+                        let palette = theme.extended_palette();
+                        text::Style {
+                            color: Some(palette.secondary.strong.color),
+                        }
+                    }),
+            ],
+            row![
+                text("Latest version: ").size(14),
+                text(&update_state.latest_version)
+                    .size(14)
+                    .style(|theme: &iced::Theme| {
+                        let palette = theme.extended_palette();
+                        text::Style {
+                            color: Some(palette.success.base.color),
+                        }
+                    }),
+            ],
+        ]
+        .spacing(4);
+
+        let release_url = update_state.release_url.clone();
+        let latest_version = update_state.latest_version.clone();
+
+        let buttons = row![
+            button(text("View Release").size(14))
+                .on_press(Message::OpenReleaseUrl(release_url))
+                .style(styles::primary_button)
+                .padding([8, 16]),
+            button(text("Remind Me Later").size(14))
+                .on_press(Message::DismissUpdate)
+                .style(styles::secondary_button)
+                .padding([8, 16]),
+            button(text("Skip This Version").size(14))
+                .on_press(Message::SkipThisVersion(latest_version))
+                .style(styles::secondary_button)
+                .padding([8, 16]),
+        ]
+        .spacing(10)
+        .align_y(iced::Alignment::Center);
+
+        let modal_content = container(
+            column![
+                title,
+                iced::widget::Space::new().height(10),
+                description,
+                iced::widget::Space::new().height(20),
+                buttons,
+            ]
+            .spacing(5)
+            .align_x(iced::Alignment::Center),
+        )
+        .padding(30)
+        .width(Length::Fixed(450.0))
         .style(styles::card_container);
 
         // Create overlay

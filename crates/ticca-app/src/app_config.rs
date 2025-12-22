@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub yolo_mode_enabled: bool,
     pub expert_mode_enabled: bool,
     pub external_tools_prompt_dismissed: bool,
+    pub update_check_skip_remaining: u32,
+    pub update_check_dismissed_version: Option<String>,
 }
 
 /// Load configuration from database
@@ -32,6 +34,9 @@ pub fn load_config() -> AppConfig {
                 expert_mode_enabled: ticca_core::config::defaults::EXPERT_MODE,
                 external_tools_prompt_dismissed:
                     ticca_core::config::defaults::EXTERNAL_TOOLS_PROMPT_DISMISSED,
+                update_check_skip_remaining:
+                    ticca_core::config::defaults::UPDATE_CHECK_SKIP_REMAINING,
+                update_check_dismissed_version: None,
             };
         }
     };
@@ -42,6 +47,8 @@ pub fn load_config() -> AppConfig {
     let yolo_mode_enabled = snapshot.settings.yolo_mode_enabled;
     let expert_mode_enabled = snapshot.settings.expert_mode_enabled;
     let external_tools_prompt_dismissed = snapshot.settings.external_tools_prompt_dismissed;
+    let update_check_skip_remaining = snapshot.settings.update_check_skip_remaining;
+    let update_check_dismissed_version = snapshot.settings.update_check_dismissed_version;
 
     let mut agent_pinned_models = HashMap::new();
     for (agent_str, model) in snapshot.agent_pinned_models {
@@ -58,5 +65,7 @@ pub fn load_config() -> AppConfig {
         yolo_mode_enabled,
         expert_mode_enabled,
         external_tools_prompt_dismissed,
+        update_check_skip_remaining,
+        update_check_dismissed_version,
     }
 }

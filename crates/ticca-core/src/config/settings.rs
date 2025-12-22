@@ -36,6 +36,8 @@ pub struct TypedSettings {
     pub expert_mode_enabled: bool,
     pub account_rotation_policy: AccountRotationPolicy,
     pub external_tools_prompt_dismissed: bool,
+    pub update_check_skip_remaining: u32,
+    pub update_check_dismissed_version: Option<String>,
 }
 
 impl TypedSettings {
@@ -55,6 +57,10 @@ impl TypedSettings {
         let external_tools_prompt_dismissed =
             get_bool(repo, setting_keys::EXTERNAL_TOOLS_PROMPT_DISMISSED)
                 .unwrap_or(defaults::EXTERNAL_TOOLS_PROMPT_DISMISSED);
+        let update_check_skip_remaining = get_u32(repo, setting_keys::UPDATE_CHECK_SKIP_REMAINING)
+            .unwrap_or(defaults::UPDATE_CHECK_SKIP_REMAINING);
+        let update_check_dismissed_version =
+            get_string(repo, setting_keys::UPDATE_CHECK_DISMISSED_VERSION);
 
         Self {
             theme,
@@ -64,6 +70,8 @@ impl TypedSettings {
             expert_mode_enabled,
             account_rotation_policy,
             external_tools_prompt_dismissed,
+            update_check_skip_remaining,
+            update_check_dismissed_version,
         }
     }
 }

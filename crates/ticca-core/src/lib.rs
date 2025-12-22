@@ -15,6 +15,7 @@ pub mod python;
 pub mod session;
 pub mod skills;
 pub mod tools;
+pub mod version_check;
 
 // Re-export commonly used types
 pub use agents::{
@@ -31,3 +32,4 @@ pub use python::{create_venv, ensure_uv_available, pip_install, run_python_scrip
 pub use session::{MessageRole, Session, SessionDatabase, SessionMessage};
 pub use skills::{SkillMetadata, discover_skills, extract_skills_if_needed, get_skill_path};
 pub use tools::{ToolDefinition, ToolRegistry, ToolResult, create_default_registry};
+pub use version_check::{CURRENT_VERSION, LatestRelease, check_for_update, is_newer_version};

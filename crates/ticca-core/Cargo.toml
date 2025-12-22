@@ -42,6 +42,9 @@ sha2.workspace = true
 # URL parsing and validation
 url.workspace = true
 
+# Version comparison
+semver.workspace = true
+
 # ripgrep
 grep-regex.workspace = true
 grep-searcher.workspace = true

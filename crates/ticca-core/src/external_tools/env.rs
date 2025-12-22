@@ -171,6 +171,6 @@ mod tests {
         // Should not crash even if tools dir doesn't exist
         let dirs = installed_tool_bin_dirs().unwrap();
         // May be empty if no tools installed
-        assert!(dirs.len() <= 3); // At most 3 tools
+        assert!(dirs.len() <= 4); // At most 4 tools (Pandoc, Node, LibreOffice, UV)
     }
 }

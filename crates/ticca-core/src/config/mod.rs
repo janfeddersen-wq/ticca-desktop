@@ -34,6 +34,10 @@ pub mod setting_keys {
     pub const ACCOUNT_ROTATION_POLICY: &str = "account_rotation_policy";
     /// Whether the external tools install prompt has been dismissed permanently.
     pub const EXTERNAL_TOOLS_PROMPT_DISMISSED: &str = "external_tools_prompt_dismissed";
+    /// Number of startups remaining before checking for updates again.
+    pub const UPDATE_CHECK_SKIP_REMAINING: &str = "update_check_skip_remaining";
+    /// Version that was dismissed via "Skip This Version" button.
+    pub const UPDATE_CHECK_DISMISSED_VERSION: &str = "update_check_dismissed_version";
 }
 
 /// Default values for settings
@@ -45,4 +49,6 @@ pub mod defaults {
     pub const ACCOUNT_ROTATION_POLICY: super::AccountRotationPolicy =
         super::AccountRotationPolicy::PriorityThenLeastRecentlyUsed;
     pub const EXTERNAL_TOOLS_PROMPT_DISMISSED: bool = false;
+    /// Default skip count: check on first run
+    pub const UPDATE_CHECK_SKIP_REMAINING: u32 = 0;
 }
