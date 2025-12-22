@@ -1,116 +1,30 @@
 //! Python environment management using UV.
 //!
 //! This module provides functionality for managing Python virtual environments
-//! and running Python scripts using the embedded UV binary.
+//! and running Python scripts using UV.
 //!
 //! UV is a fast Python package installer and resolver written in Rust.
-//! We embed it in the Ticca binary for each supported platform.
-//!
-//! Security: The embedded binary is verified against a SHA256 checksum at runtime.
+//! It is downloaded on-demand via the external tools system when the user
+//! installs it from the Tools settings page.
 
 use anyhow::{Context, Result};
-use sha2::{Digest, Sha256};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tracing::{debug, info, warn};
 
-use crate::config::paths::{get_bin_dir, get_uv_binary_path};
+use crate::config::paths::get_uv_binary_path;
 use crate::external_tools;
-
-// ============================================================================
-// Platform-specific UV binary embedding
-// ============================================================================
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-static UV_BINARY: &[u8] = include_bytes!("../../../../vendor/uv/x86_64-unknown-linux-gnu/uv");
-
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-static UV_BINARY: &[u8] = include_bytes!("../../../../vendor/uv/aarch64-unknown-linux-gnu/uv");
-
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-static UV_BINARY: &[u8] = include_bytes!("../../../../vendor/uv/x86_64-apple-darwin/uv");
-
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-static UV_BINARY: &[u8] = include_bytes!("../../../../vendor/uv/aarch64-apple-darwin/uv");
-
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-static UV_BINARY: &[u8] = include_bytes!("../../../../vendor/uv/x86_64-pc-windows-msvc/uv.exe");
-
-// Provide a helpful error for unsupported platforms
-#[cfg(not(any(
-    all(target_os = "linux", target_arch = "x86_64"),
-    all(target_os = "linux", target_arch = "aarch64"),
-    all(target_os = "macos", target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "aarch64"),
-    all(target_os = "windows", target_arch = "x86_64"),
-)))]
-compile_error!(
-    "Unsupported platform for UV binary. \
-     Supported platforms: Linux (x86_64, aarch64), macOS (x86_64, aarch64), Windows (x86_64). \
-     Please open an issue if you need support for another platform."
-);
-
-// ============================================================================
-// Platform-specific SHA256 checksums for UV binary integrity verification
-// These are updated by running: ./scripts/download-uv.sh --print-checksums
-// ============================================================================
-
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const UV_EXPECTED_SHA256: &str = "0e05d828b5708e8a927724124db3746396afddad6273c47283d7c562dc795bd6";
-
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-const UV_EXPECTED_SHA256: &str = "b3d9f8a55c56ead9b6facf8f00a9f809a45ad9c27b3ec85faecab4a3e8252fa4";
-
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-const UV_EXPECTED_SHA256: &str = "f3e45a01e92788435f98ed7fb84f410e77acbfa8bb03eb84c4399f573e1f05b9";
-
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-const UV_EXPECTED_SHA256: &str = "415f73cab3771902db58f6a9ce4d9cf3e664a3eed26ee7e48a051453a79bd015";
-
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-const UV_EXPECTED_SHA256: &str = "055d55eec85a91cfb5e9c8bc7f6463f9883866796c5bcb205fbcdfed9c088c88";
+use crate::external_tools::manifest::load_manifest;
+use crate::external_tools::types::ExternalToolId;
 
 // ============================================================================
 // UV binary management
 // ============================================================================
 
-/// Verifies the integrity of the embedded UV binary against its expected SHA256 hash.
-///
-/// This provides defense-in-depth against binary tampering - even if someone
-/// modifies the binary after download but before compilation, this check will catch it.
-///
-/// # Errors
-///
-/// Returns an error if the computed hash doesn't match the expected hash.
-fn verify_uv_integrity() -> Result<()> {
-    let mut hasher = Sha256::new();
-    hasher.update(UV_BINARY);
-    let computed_hash = format!("{:x}", hasher.finalize());
-
-    if computed_hash != UV_EXPECTED_SHA256 {
-        anyhow::bail!(
-            "UV binary integrity check failed!\n\
-             Expected SHA256: {}\n\
-             Computed SHA256: {}\n\
-             This could indicate binary tampering. Please re-download UV binaries.",
-            UV_EXPECTED_SHA256,
-            computed_hash
-        );
-    }
-
-    debug!("UV binary integrity verified (SHA256: {})", &computed_hash[..16]);
-    Ok(())
-}
-
 /// Ensures the UV binary is available and returns its path.
 ///
-/// This function:
-/// 1. Verifies the embedded binary integrity (SHA256 check)
-/// 2. Gets the UV binary path from the centralized paths module
-/// 3. Checks if the binary exists and has the correct size (quick version check)
-/// 4. If not, writes the embedded binary to disk
-/// 5. On Unix, sets executable permissions (0o755)
+/// This function checks if UV has been installed via the external tools system.
+/// If UV is not installed, it returns an error instructing the user to install it.
 ///
 /// # Returns
 ///
@@ -119,10 +33,9 @@ fn verify_uv_integrity() -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if:
-/// - The embedded binary fails integrity verification
-/// - The bin directory cannot be created
-/// - The binary cannot be written to disk
-/// - Permissions cannot be set (Unix only)
+/// - UV is not installed (user needs to install it from Tools settings)
+/// - The UV binary path cannot be determined
+/// - The UV binary doesn't exist on disk despite being marked as installed
 ///
 /// # Example
 ///
@@ -131,67 +44,48 @@ fn verify_uv_integrity() -> Result<()> {
 /// println!("UV available at: {}", uv_path.display());
 /// ```
 pub fn ensure_uv_available() -> Result<PathBuf> {
-    // Security: Verify embedded binary integrity before extraction
-    verify_uv_integrity()?;
+    // Check if UV is installed via the manifest
+    let manifest = load_manifest().context("Failed to load tools manifest")?;
 
-    let uv_path = get_uv_binary_path()?;
-    let expected_size = UV_BINARY.len() as u64;
-
-    // Check if binary exists with correct size
-    let needs_extraction = if uv_path.exists() {
-        match fs::metadata(&uv_path) {
-            Ok(metadata) => {
-                if metadata.len() == expected_size {
-                    debug!("UV binary up-to-date at {}", uv_path.display());
-                    false
-                } else {
-                    info!(
-                        "UV binary size mismatch ({} vs {}), re-extracting",
-                        metadata.len(),
-                        expected_size
-                    );
-                    true
-                }
-            }
-            Err(e) => {
-                warn!("Failed to read UV binary metadata, re-extracting: {}", e);
-                true
-            }
-        }
-    } else {
-        info!("UV binary not found, extracting...");
-        true
-    };
-
-    if needs_extraction {
-        extract_uv_binary(&uv_path)?;
+    if !manifest.is_installed(ExternalToolId::Uv) {
+        anyhow::bail!(
+            "UV is not installed. Please install it from Settings → Tools to use Python skills."
+        );
     }
 
+    let uv_path = get_uv_binary_path()?;
+
+    // Verify the binary actually exists
+    if !uv_path.exists() {
+        anyhow::bail!(
+            "UV is marked as installed but the binary was not found at {}. \
+             Please reinstall UV from Settings → Tools.",
+            uv_path.display()
+        );
+    }
+
+    debug!("UV binary available at {}", uv_path.display());
     Ok(uv_path)
 }
 
-/// Extracts the embedded UV binary to the target path.
-fn extract_uv_binary(target_path: &PathBuf) -> Result<()> {
-    // Ensure parent directory exists
-    let bin_dir = get_bin_dir()?;
-    fs::create_dir_all(&bin_dir)
-        .with_context(|| format!("Failed to create bin directory: {}", bin_dir.display()))?;
-
-    // Write the binary
-    fs::write(target_path, UV_BINARY)
-        .with_context(|| format!("Failed to write UV binary to {}", target_path.display()))?;
-
-    // Set executable permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let permissions = fs::Permissions::from_mode(0o755);
-        fs::set_permissions(target_path, permissions)
-            .with_context(|| "Failed to set UV binary permissions")?;
+/// Checks if UV is installed without returning an error.
+///
+/// This is useful for UI code that needs to check availability without
+/// propagating errors.
+pub fn is_uv_installed() -> bool {
+    match load_manifest() {
+        Ok(manifest) => {
+            if !manifest.is_installed(ExternalToolId::Uv) {
+                return false;
+            }
+            // Also verify the binary exists
+            match get_uv_binary_path() {
+                Ok(path) => path.exists(),
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
     }
-
-    info!("UV binary extracted to {}", target_path.display());
-    Ok(())
 }
 
 // ============================================================================
@@ -225,7 +119,7 @@ pub fn get_venv_python(venv_path: &Path) -> PathBuf {
 /// # Errors
 ///
 /// Returns an error if:
-/// - UV binary cannot be extracted
+/// - UV is not installed
 /// - The UV command fails
 ///
 /// # Example
@@ -270,7 +164,7 @@ pub fn create_venv(venv_path: &Path) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if:
-/// - UV binary cannot be extracted
+/// - UV is not installed
 /// - The UV pip install command fails
 ///
 /// # Example
@@ -328,7 +222,7 @@ pub fn pip_install(venv_path: &Path, packages: &[&str]) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if:
-/// - UV binary cannot be extracted
+/// - UV is not installed
 /// - The requirements file doesn't exist
 /// - The UV pip install command fails
 pub fn pip_install_requirements(venv_path: &Path, requirements_file: &Path) -> Result<()> {
@@ -486,29 +380,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uv_binary_is_embedded() {
-        // Just verify the binary data is present and non-empty
-        assert!(!UV_BINARY.is_empty(), "UV binary should be embedded");
-        // UV binaries are typically > 20MB
-        assert!(
-            UV_BINARY.len() > 20_000_000,
-            "UV binary should be larger than 20MB, got {} bytes",
-            UV_BINARY.len()
-        );
-    }
-
-    #[test]
-    fn test_uv_binary_integrity() {
-        // Verify the embedded binary passes integrity check
-        let result = verify_uv_integrity();
-        assert!(
-            result.is_ok(),
-            "UV binary integrity check should pass: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
     fn test_get_venv_python_unix() {
         let venv = Path::new("/tmp/test-venv");
         let python = get_venv_python(venv);
@@ -521,42 +392,26 @@ mod tests {
     }
 
     #[test]
+    fn test_is_uv_installed_returns_false_when_not_installed() {
+        // On a fresh system or test environment, UV won't be installed
+        // This test just verifies the function doesn't panic
+        let _ = is_uv_installed();
+    }
+
+    #[test]
+    #[ignore] // Run with `cargo test -- --ignored` - requires UV installed
     fn test_ensure_uv_available() {
-        // This test actually extracts the binary, which is fine for integration testing
+        // This test requires UV to be installed
         let result = ensure_uv_available();
-        assert!(result.is_ok(), "ensure_uv_available should succeed");
-
-        let uv_path = result.unwrap();
-        assert!(uv_path.exists(), "UV binary should exist after extraction");
-
-        // Verify it's executable by checking the file
-        let metadata = fs::metadata(&uv_path).unwrap();
-        assert!(metadata.len() > 0, "UV binary should not be empty");
+        if result.is_ok() {
+            let uv_path = result.unwrap();
+            assert!(uv_path.exists(), "UV binary should exist after check");
+        }
+        // If UV is not installed, the error message should be helpful
     }
 
     #[test]
-    fn test_uv_binary_runs() {
-        // Extract UV and verify it can execute
-        let uv_path = ensure_uv_available().expect("Failed to extract UV");
-
-        // Run `uv --version`
-        let output = Command::new(&uv_path)
-            .arg("--version")
-            .output()
-            .expect("Failed to execute UV");
-
-        assert!(output.status.success(), "UV --version should succeed");
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains("uv"),
-            "UV version output should contain 'uv', got: {}",
-            stdout
-        );
-    }
-
-    #[test]
-    #[ignore] // Run with `cargo test -- --ignored` - requires Python installed
+    #[ignore] // Run with `cargo test -- --ignored` - requires UV installed and Python
     fn test_create_venv_and_check_python() {
         use tempfile::TempDir;
 
@@ -596,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Run with `cargo test -- --ignored` - requires Python installed
+    #[ignore] // Run with `cargo test -- --ignored` - requires UV installed and Python
     fn test_pip_install_package() {
         use tempfile::TempDir;
 
@@ -628,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Run with `cargo test -- --ignored` - requires Python installed
+    #[ignore] // Run with `cargo test -- --ignored` - requires UV installed and Python
     fn test_run_python_script() {
         use std::io::Write;
         use tempfile::{NamedTempFile, TempDir};

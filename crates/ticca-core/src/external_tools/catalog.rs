@@ -6,6 +6,52 @@
 use super::types::{ExecutablePaths, ExternalToolId, PlatformDownload, PlatformUrls, ToolDefinition};
 
 // ============================================================================
+// UV Definition (Python package installer)
+// ============================================================================
+
+const UV_VERSION: &str = "0.5.14";
+
+const UV_URLS: PlatformUrls = PlatformUrls {
+    linux_x64: Some(PlatformDownload::new(
+        "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-x86_64-unknown-linux-gnu.tar.gz",
+        Some("99e41c21adbe05acc7e508e88cb6e50ed98acb72e7f196ca4f0cd8e1bdf7779a"),
+    )),
+    linux_arm64: Some(PlatformDownload::new(
+        "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-aarch64-unknown-linux-gnu.tar.gz",
+        Some("87a449a878e0608c4f9b63556cd0df98b6fb4daea61a97d03b5d62cf8e4bfc76"),
+    )),
+    macos_x64: Some(PlatformDownload::new(
+        "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-x86_64-apple-darwin.tar.gz",
+        Some("f0bc0d69dfb1dd12ad6ea4e05fcc53c6fd4e03cff3e6fc3714dc33c4bec42c96"),
+    )),
+    macos_arm64: Some(PlatformDownload::new(
+        "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-aarch64-apple-darwin.tar.gz",
+        Some("9f48fe61a66ee82cc8a0d2b7e1009f3e24c9a77e95f0dcb0c2e19e56d72d00eb"),
+    )),
+    windows_x64: Some(PlatformDownload::new(
+        "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-x86_64-pc-windows-msvc.zip",
+        Some("1b4c738e3809f37e0ff50fa1aef8b45c8d6e737f5513b8c71c4a0f0fde6ae92a"),
+    )),
+};
+
+const UV_EXECUTABLE_PATHS: ExecutablePaths = ExecutablePaths {
+    linux: "uv",
+    macos: "uv",
+    windows: "uv.exe",
+};
+
+const UV_DEFINITION: ToolDefinition = ToolDefinition {
+    id: ExternalToolId::Uv,
+    display_name: "UV",
+    description: "Fast Python package installer and resolver (required for Python skills)",
+    version: UV_VERSION,
+    size_mb: 15,
+    required_by: &["skills"],
+    urls: UV_URLS,
+    executable_paths: UV_EXECUTABLE_PATHS,
+};
+
+// ============================================================================
 // Pandoc Definition
 // ============================================================================
 
@@ -142,6 +188,7 @@ const LIBREOFFICE_DEFINITION: ToolDefinition = ToolDefinition {
 /// Returns the definition for a specific tool.
 pub fn get_tool_definition(id: ExternalToolId) -> &'static ToolDefinition {
     match id {
+        ExternalToolId::Uv => &UV_DEFINITION,
         ExternalToolId::Pandoc => &PANDOC_DEFINITION,
         ExternalToolId::Node => &NODE_DEFINITION,
         ExternalToolId::LibreOffice => &LIBREOFFICE_DEFINITION,
@@ -151,6 +198,7 @@ pub fn get_tool_definition(id: ExternalToolId) -> &'static ToolDefinition {
 /// Returns definitions for all available tools.
 pub fn get_all_tool_definitions() -> Vec<&'static ToolDefinition> {
     vec![
+        &UV_DEFINITION,
         &PANDOC_DEFINITION,
         &NODE_DEFINITION,
         &LIBREOFFICE_DEFINITION,
@@ -173,7 +221,30 @@ mod tests {
     #[test]
     fn test_get_all_tool_definitions() {
         let defs = get_all_tool_definitions();
-        assert_eq!(defs.len(), 3);
+        assert_eq!(defs.len(), 4);
+    }
+
+    #[test]
+    fn test_uv_has_all_platform_urls() {
+        let uv = get_tool_definition(ExternalToolId::Uv);
+
+        assert!(uv.urls.get(Platform::LinuxX64).is_some());
+        assert!(uv.urls.get(Platform::LinuxArm64).is_some());
+        assert!(uv.urls.get(Platform::MacosX64).is_some());
+        assert!(uv.urls.get(Platform::MacosArm64).is_some());
+        assert!(uv.urls.get(Platform::WindowsX64).is_some());
+    }
+
+    #[test]
+    fn test_uv_has_sha256_checksums() {
+        let uv = get_tool_definition(ExternalToolId::Uv);
+
+        // UV should have SHA256 checksums for all platforms
+        assert!(uv.urls.get(Platform::LinuxX64).unwrap().sha256.is_some());
+        assert!(uv.urls.get(Platform::LinuxArm64).unwrap().sha256.is_some());
+        assert!(uv.urls.get(Platform::MacosX64).unwrap().sha256.is_some());
+        assert!(uv.urls.get(Platform::MacosArm64).unwrap().sha256.is_some());
+        assert!(uv.urls.get(Platform::WindowsX64).unwrap().sha256.is_some());
     }
 
     #[test]
@@ -245,6 +316,17 @@ mod tests {
         assert!(
             windows_path.ends_with(".exe"),
             "Node Windows executable path should end with .exe, got: {}",
+            windows_path
+        );
+    }
+
+    #[test]
+    fn test_uv_executable_path_windows_has_exe() {
+        let uv = get_tool_definition(ExternalToolId::Uv);
+        let windows_path = uv.get_executable_path(Platform::WindowsX64);
+        assert!(
+            windows_path.ends_with(".exe"),
+            "UV Windows executable path should end with .exe, got: {}",
             windows_path
         );
     }

@@ -1229,7 +1229,6 @@ fn build_sessions_section<'a>(sessions: &'a [Session]) -> Element<'a, Message> {
     } else {
         sessions
             .iter()
-            .cloned()
             .take(10) // Show last 10 sessions
             .map(|session| {
                 let session_id = session.id.clone();

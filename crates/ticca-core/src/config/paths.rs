@@ -94,15 +94,16 @@ pub fn get_tools_dir() -> Result<PathBuf> {
 /// Returns the platform-specific path to the UV binary.
 ///
 /// UV is a fast Python package installer used for managing skill environments.
+/// It is downloaded on-demand via the external tools system.
 ///
-/// - Linux/macOS: `{data_dir}/bin/uv`
-/// - Windows: `{data_dir}/bin/uv.exe`
+/// - Linux/macOS: `{data_dir}/tools/uv/uv`
+/// - Windows: `{data_dir}/tools/uv/uv.exe`
 ///
 /// # Errors
 ///
 /// Returns an error if the base data directory cannot be determined.
 pub fn get_uv_binary_path() -> Result<PathBuf> {
-    let bin_dir = get_bin_dir()?;
+    let tools_dir = get_tools_dir()?;
 
     #[cfg(windows)]
     let uv_name = "uv.exe";
@@ -110,7 +111,7 @@ pub fn get_uv_binary_path() -> Result<PathBuf> {
     #[cfg(not(windows))]
     let uv_name = "uv";
 
-    Ok(bin_dir.join(uv_name))
+    Ok(tools_dir.join("uv").join(uv_name))
 }
 
 /// Ensures all required data directories exist.
@@ -183,11 +184,21 @@ mod tests {
     #[test]
     fn test_uv_binary_path_has_correct_extension() {
         let uv_path = get_uv_binary_path().unwrap();
+        let tools_dir = get_tools_dir().unwrap();
+
+        // UV should be in tools/uv/
+        assert!(uv_path.starts_with(&tools_dir));
 
         #[cfg(windows)]
-        assert!(uv_path.ends_with("uv.exe"));
+        {
+            assert!(uv_path.ends_with("uv.exe"));
+            assert!(uv_path.to_string_lossy().contains("uv\\uv.exe") || uv_path.to_string_lossy().contains("uv/uv.exe"));
+        }
 
         #[cfg(not(windows))]
-        assert!(uv_path.ends_with("uv"));
+        {
+            assert!(uv_path.ends_with("uv"));
+            assert!(uv_path.to_string_lossy().contains("uv/uv"));
+        }
     }
 }

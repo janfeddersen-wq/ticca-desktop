@@ -215,7 +215,7 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
                         position.y + node_height / 2.0,
                     ),
                     align_x: alignment::Horizontal::Center.into(),
-                    align_y: alignment::Vertical::Center.into(),
+                    align_y: alignment::Vertical::Center,
                     color: self.text_color(),
                     size: Pixels(14.0),
                     ..canvas::Text::default()

@@ -6,9 +6,6 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/icons/ticca-desktop.svg");
     println!("cargo:rerun-if-changed=assets/linux/ticca-desktop.desktop");
 
-    // Check for UV binary availability
-    check_uv_binary();
-
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "linux" {
         return;
@@ -113,37 +110,3 @@ fn unpremultiply_alpha_in_place(rgba: &mut [u8]) {
         px[2] = ((px[2] as u32 * 255) / a).min(255) as u8;
     }
 }
-
-/// Check if UV binary is available for the current target platform.
-/// Prints a warning if missing, but doesn't fail the build.
-fn check_uv_binary() {
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-
-    let (platform, binary_name) = match (target_os.as_str(), target_arch.as_str()) {
-        ("linux", "x86_64") => ("x86_64-unknown-linux-gnu", "uv"),
-        ("linux", "aarch64") => ("aarch64-unknown-linux-gnu", "uv"),
-        ("macos", "x86_64") => ("x86_64-apple-darwin", "uv"),
-        ("macos", "aarch64") => ("aarch64-apple-darwin", "uv"),
-        ("windows", "x86_64") => ("x86_64-pc-windows-msvc", "uv.exe"),
-        _ => {
-            // Unsupported platform - the Rust code has compile_error! for this
-            return;
-        }
-    };
-
-    // Path relative to the workspace root (two levels up from ticca-app)
-    let uv_path = Path::new("../../vendor/uv")
-        .join(platform)
-        .join(binary_name);
-
-    // Tell Cargo to rerun if the UV binary changes
-    println!("cargo:rerun-if-changed={}", uv_path.display());
-
-    if !uv_path.exists() {
-        println!("cargo:warning=UV binary not found for platform '{}'.", platform);
-        println!("cargo:warning=Run './scripts/download-uv.sh 0.5.14' from the workspace root to download UV binaries.");
-        println!("cargo:warning=Python skill support will not work without the UV binary.");
-    }
-}
-

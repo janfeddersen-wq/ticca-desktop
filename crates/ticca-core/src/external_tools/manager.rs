@@ -554,7 +554,7 @@ mod tests {
         let manager = ExternalToolManager::with_tools_dir(temp_dir.path().to_path_buf()).unwrap();
 
         let tools = manager.list_tools().await;
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 4);
 
         // All should be either NotInstalled or UnsupportedPlatform initially
         for tool in &tools {

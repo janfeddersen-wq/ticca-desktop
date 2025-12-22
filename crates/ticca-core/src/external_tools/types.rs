@@ -18,6 +18,8 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExternalToolId {
+    /// UV - Fast Python package installer and resolver (required for skills).
+    Uv,
     /// Pandoc - Universal document converter for text extraction.
     Pandoc,
     /// Node.js - JavaScript runtime for document/presentation creation.
@@ -29,12 +31,13 @@ pub enum ExternalToolId {
 impl ExternalToolId {
     /// Returns all available tool IDs.
     pub fn all() -> &'static [ExternalToolId] {
-        &[Self::Pandoc, Self::Node, Self::LibreOffice]
+        &[Self::Uv, Self::Pandoc, Self::Node, Self::LibreOffice]
     }
 
     /// Returns the lowercase string identifier for this tool.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Uv => "uv",
             Self::Pandoc => "pandoc",
             Self::Node => "node",
             Self::LibreOffice => "libreoffice",
@@ -53,6 +56,7 @@ impl std::str::FromStr for ExternalToolId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "uv" => Ok(Self::Uv),
             "pandoc" => Ok(Self::Pandoc),
             "node" | "nodejs" => Ok(Self::Node),
             "libreoffice" | "libre" | "soffice" => Ok(Self::LibreOffice),
@@ -330,6 +334,7 @@ mod tests {
 
     #[test]
     fn test_tool_id_as_str() {
+        assert_eq!(ExternalToolId::Uv.as_str(), "uv");
         assert_eq!(ExternalToolId::Pandoc.as_str(), "pandoc");
         assert_eq!(ExternalToolId::Node.as_str(), "node");
         assert_eq!(ExternalToolId::LibreOffice.as_str(), "libreoffice");
@@ -337,6 +342,7 @@ mod tests {
 
     #[test]
     fn test_tool_id_from_str() {
+        assert_eq!("uv".parse::<ExternalToolId>().unwrap(), ExternalToolId::Uv);
         assert_eq!("pandoc".parse::<ExternalToolId>().unwrap(), ExternalToolId::Pandoc);
         assert_eq!("node".parse::<ExternalToolId>().unwrap(), ExternalToolId::Node);
         assert_eq!("nodejs".parse::<ExternalToolId>().unwrap(), ExternalToolId::Node);
@@ -347,7 +353,8 @@ mod tests {
     #[test]
     fn test_tool_id_all() {
         let all = ExternalToolId::all();
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 4);
+        assert!(all.contains(&ExternalToolId::Uv));
         assert!(all.contains(&ExternalToolId::Pandoc));
         assert!(all.contains(&ExternalToolId::Node));
         assert!(all.contains(&ExternalToolId::LibreOffice));
