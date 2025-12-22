@@ -14,23 +14,23 @@ const UV_VERSION: &str = "0.5.14";
 const UV_URLS: PlatformUrls = PlatformUrls {
     linux_x64: Some(PlatformDownload::new(
         "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-x86_64-unknown-linux-gnu.tar.gz",
-        Some("99e41c21adbe05acc7e508e88cb6e50ed98acb72e7f196ca4f0cd8e1bdf7779a"),
+        Some("22034760075b92487b326da5aa1a2a3e1917e2e766c12c0fd466fccda77013c7"),
     )),
     linux_arm64: Some(PlatformDownload::new(
         "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-aarch64-unknown-linux-gnu.tar.gz",
-        Some("87a449a878e0608c4f9b63556cd0df98b6fb4daea61a97d03b5d62cf8e4bfc76"),
+        Some("1c9cdb265b0c24ce2e74b7795a00842dc6d487c11ba49aa6c9ca1c784b82755a"),
     )),
     macos_x64: Some(PlatformDownload::new(
         "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-x86_64-apple-darwin.tar.gz",
-        Some("f0bc0d69dfb1dd12ad6ea4e05fcc53c6fd4e03cff3e6fc3714dc33c4bec42c96"),
+        Some("8caf91b936ede1167abaebae07c2a1cbb22473355fa0ad7ebb2580307e84fb47"),
     )),
     macos_arm64: Some(PlatformDownload::new(
         "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-aarch64-apple-darwin.tar.gz",
-        Some("9f48fe61a66ee82cc8a0d2b7e1009f3e24c9a77e95f0dcb0c2e19e56d72d00eb"),
+        Some("d548dffc256014c4c8c693e148140a3a21bcc2bf066a35e1d5f0d24c91d32112"),
     )),
     windows_x64: Some(PlatformDownload::new(
         "https://github.com/astral-sh/uv/releases/download/0.5.14/uv-x86_64-pc-windows-msvc.zip",
-        Some("1b4c738e3809f37e0ff50fa1aef8b45c8d6e737f5513b8c71c4a0f0fde6ae92a"),
+        Some("ee2468e40320a0a2a36435e66bbd0d861228c4c06767f22d97876528138f4ba0"),
     )),
 };
 
