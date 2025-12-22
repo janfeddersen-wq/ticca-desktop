@@ -208,19 +208,6 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
 
             effects.push(Effect::RefreshModels);
         }
-        settings::Msg::RefreshModelsForProvider(provider) => {
-            if app.chat.is_loading_models {
-                return effects;
-            }
-            app.chat.is_loading_models = true;
-
-            let mapped = match provider {
-                crate::messages::OAuthProvider::Claude => ProviderId::Claude,
-                crate::messages::OAuthProvider::Gemini => ProviderId::Gemini,
-                crate::messages::OAuthProvider::ChatGpt => ProviderId::ChatGpt,
-            };
-            effects.push(Effect::RefreshModelsForProvider(mapped));
-        }
         settings::Msg::ModelsLoaded(result) => {
             app.chat.is_loading_models = false;
             match result {
