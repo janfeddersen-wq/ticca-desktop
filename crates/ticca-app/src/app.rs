@@ -282,6 +282,8 @@ impl TiccaApp {
             main.into()
         };
 
+        // Approval modal is always rendered on top regardless of current view
+        // This ensures tool approvals can be handled even when settings are open
         let with_approval = features::chat::wrap_with_approval_modal(self, base);
         let with_tools_prompt = self.wrap_with_external_tools_prompt(with_approval);
         self.wrap_with_update_modal(with_tools_prompt)
