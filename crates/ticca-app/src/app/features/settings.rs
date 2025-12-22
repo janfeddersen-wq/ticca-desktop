@@ -11,6 +11,7 @@ use ticca_core::AgentType;
 use ticca_core::config::OAuthAccount;
 use ticca_core::config::models::providers;
 use ticca_core::config::{ConfigService, McpServer, setting_keys};
+use ticca_core::external_tools::{ExternalToolId, ExternalToolManager, ToolStatus};
 use ticca_core::llm::ProviderId;
 use ticca_core::llm::auth;
 use ticca_core::session::{Session, SessionService};
@@ -28,6 +29,7 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) agent_mcp_server_ids: HashMap<AgentType, Vec<String>>,
     pub(in crate::app) mcp_form: McpServerFormState,
     pub(in crate::app) mcp_import_json: text_editor::Content,
+    pub(in crate::app) external_tools: HashMap<ExternalToolId, settings::ToolStatusInfo>,
 }
 
 impl SettingsState {
@@ -43,6 +45,7 @@ impl SettingsState {
             agent_mcp_server_ids: HashMap::new(),
             mcp_form: McpServerFormState::default(),
             mcp_import_json: text_editor::Content::with_text(""),
+            external_tools: HashMap::new(),
         }
     }
 
@@ -107,6 +110,9 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             }
             if tab == SettingsTab::Agents || tab == SettingsTab::McpServers {
                 app.settings.refresh_mcp();
+            }
+            if tab == SettingsTab::Tools {
+                effects.push(Effect::RefreshExternalTools);
             }
         }
         settings::Msg::ThemeToggle => {
@@ -434,9 +440,287 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
 
             let _ = ConfigService::set_agent_mcp_server_ids(agent_type.as_str(), ids);
         }
+
+        // External Tools
+        settings::Msg::RefreshExternalTools => {
+            effects.push(Effect::RefreshExternalTools);
+        }
+        settings::Msg::ExternalToolsLoaded(statuses) => {
+            for (tool_id, status) in statuses {
+                app.settings.external_tools.insert(tool_id, status);
+            }
+        }
+        settings::Msg::InstallExternalTool(tool_id) => {
+            // Mark as installing
+            if let Some(status) = app.settings.external_tools.get_mut(&tool_id) {
+                status.is_installing = true;
+                status.install_progress = 0;
+            }
+            effects.push(Effect::InstallExternalTool(tool_id));
+        }
+        settings::Msg::UninstallExternalTool(tool_id) => {
+            effects.push(Effect::UninstallExternalTool(tool_id));
+        }
+        settings::Msg::ExternalToolInstallProgress(tool_id, progress) => {
+            if let Some(status) = app.settings.external_tools.get_mut(&tool_id) {
+                status.install_progress = progress;
+            }
+            // Also update prompt state if active - always update current_tool
+            // so modal shows correct tool name as install moves to next tool
+            if let Some(ref mut prompt) = app.external_tools_prompt {
+                prompt.current_tool = Some(tool_id);
+                prompt.progress = progress;
+            }
+        }
+        settings::Msg::ExternalToolInstallComplete(tool_id, result) => {
+            if let Some(status) = app.settings.external_tools.get_mut(&tool_id) {
+                status.is_installing = false;
+                match &result {
+                    Ok(()) => {
+                        status.is_installed = true;
+                        let def = ticca_core::external_tools::get_tool_definition(tool_id);
+                        status.version = Some(def.version.to_string());
+                    }
+                    Err(e) => {
+                        app.error_message = Some(format!("Failed to install {}: {}", tool_id, e));
+                    }
+                }
+            }
+        }
+        settings::Msg::ExternalToolUninstallComplete(tool_id, result) => {
+            match result {
+                Ok(()) => {
+                    if let Some(status) = app.settings.external_tools.get_mut(&tool_id) {
+                        status.is_installed = false;
+                        status.version = None;
+                    }
+                }
+                Err(e) => {
+                    app.error_message = Some(format!("Failed to uninstall {}: {}", tool_id, e));
+                }
+            }
+        }
+
+        // External Tools Startup Prompt
+        settings::Msg::ShowExternalToolsPrompt(missing_tools) => {
+            if !missing_tools.is_empty() && !app.external_tools_prompt_dismissed {
+                app.external_tools_prompt = Some(crate::app::ExternalToolsPromptState {
+                    missing_tools,
+                    is_installing: false,
+                    current_tool: None,
+                    progress: 0,
+                });
+            }
+        }
+        settings::Msg::DismissExternalToolsPrompt => {
+            app.external_tools_prompt = None;
+        }
+        settings::Msg::DismissExternalToolsPromptPermanently => {
+            app.external_tools_prompt = None;
+            app.external_tools_prompt_dismissed = true;
+            let _ = ConfigService::set_setting(
+                setting_keys::EXTERNAL_TOOLS_PROMPT_DISMISSED,
+                "true",
+            );
+        }
+        settings::Msg::InstallAllMissingTools => {
+            if let Some(ref mut prompt) = app.external_tools_prompt {
+                let tools = prompt.missing_tools.clone();
+                prompt.is_installing = true;
+                if let Some(first) = tools.first() {
+                    prompt.current_tool = Some(*first);
+                }
+                effects.push(Effect::InstallAllMissingTools(tools));
+            }
+        }
+        settings::Msg::OpenUrl(url) => {
+            effects.push(Effect::OpenUrl(url));
+        }
     }
 
     effects
+}
+
+/// Check which external tools are missing (for startup prompt)
+pub async fn check_missing_external_tools() -> Vec<ExternalToolId> {
+    let manager = match ExternalToolManager::new() {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut missing = Vec::new();
+
+    // Only check pandoc and node for the startup prompt (libreoffice is optional/large)
+    let tools_to_check = [ExternalToolId::Pandoc, ExternalToolId::Node];
+
+    for tool_id in tools_to_check {
+        let status = manager.status(tool_id).await;
+        if matches!(status, ToolStatus::NotInstalled) {
+            missing.push(tool_id);
+        }
+    }
+
+    missing
+}
+
+/// Load external tool statuses for the settings UI
+pub async fn load_external_tools_status() -> Vec<(ExternalToolId, settings::ToolStatusInfo)> {
+    let manager = match ExternalToolManager::new() {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut statuses = Vec::new();
+    let tools = manager.list_tools().await;
+
+    for tool in tools {
+        let status_info = match &tool.status {
+            ToolStatus::Installed { version } => settings::ToolStatusInfo {
+                is_installed: true,
+                version: Some(version.clone()),
+                is_installing: false,
+                install_progress: 0,
+                is_supported: true,
+            },
+            ToolStatus::NotInstalled => settings::ToolStatusInfo {
+                is_installed: false,
+                version: None,
+                is_installing: false,
+                install_progress: 0,
+                is_supported: true,
+            },
+            ToolStatus::UnsupportedPlatform => settings::ToolStatusInfo {
+                is_installed: false,
+                version: None,
+                is_installing: false,
+                install_progress: 0,
+                is_supported: false,
+            },
+            ToolStatus::Installing { progress_percent } => settings::ToolStatusInfo {
+                is_installed: false,
+                version: None,
+                is_installing: true,
+                install_progress: *progress_percent,
+                is_supported: true,
+            },
+            ToolStatus::Failed { .. } => settings::ToolStatusInfo {
+                is_installed: false,
+                version: None,
+                is_installing: false,
+                install_progress: 0,
+                is_supported: true,
+            },
+        };
+        statuses.push((tool.definition.id, status_info));
+    }
+
+    statuses
+}
+
+/// Install a single external tool with progress streaming
+pub fn install_external_tool_stream(
+    tool_id: ExternalToolId,
+) -> impl futures::Stream<Item = Message> {
+    async_stream::stream! {
+        let manager = match ExternalToolManager::new() {
+            Ok(m) => m,
+            Err(e) => {
+                yield Message::Settings(settings::Msg::ExternalToolInstallComplete(
+                    tool_id,
+                    Err(e.to_string()),
+                ));
+                return;
+            }
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Spawn the install task
+        let install_future = manager.install(tool_id, move |progress| {
+            let percent = progress.percent.unwrap_or(0.0) as u8;
+            let _ = tx.send(percent);
+        });
+
+        // Poll for progress updates while install is running
+        tokio::pin!(install_future);
+
+        loop {
+            tokio::select! {
+                result = &mut install_future => {
+                    let msg = match result {
+                        Ok(()) => settings::Msg::ExternalToolInstallComplete(tool_id, Ok(())),
+                        Err(e) => settings::Msg::ExternalToolInstallComplete(tool_id, Err(e.to_string())),
+                    };
+                    yield Message::Settings(msg);
+                    break;
+                }
+                Some(progress) = rx.recv() => {
+                    yield Message::Settings(settings::Msg::ExternalToolInstallProgress(tool_id, progress));
+                }
+            }
+        }
+    }
+}
+
+/// Install all missing tools sequentially with progress
+pub fn install_all_tools_stream(
+    tools: Vec<ExternalToolId>,
+) -> impl futures::Stream<Item = Message> {
+    async_stream::stream! {
+        let manager = match ExternalToolManager::new() {
+            Ok(m) => m,
+            Err(e) => {
+                // Report failure for all tools
+                for tool_id in &tools {
+                    yield Message::Settings(settings::Msg::ExternalToolInstallComplete(
+                        *tool_id,
+                        Err(e.to_string()),
+                    ));
+                }
+                yield Message::Settings(settings::Msg::DismissExternalToolsPrompt);
+                return;
+            }
+        };
+
+        for tool_id in tools {
+            // Report current tool
+            yield Message::Settings(settings::Msg::ExternalToolInstallProgress(tool_id, 0));
+
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+            let install_future = manager.install(tool_id, move |progress| {
+                let percent = progress.percent.unwrap_or(0.0) as u8;
+                let _ = tx.send(percent);
+            });
+
+            tokio::pin!(install_future);
+
+            loop {
+                tokio::select! {
+                    result = &mut install_future => {
+                        let msg = match result {
+                            Ok(()) => settings::Msg::ExternalToolInstallComplete(tool_id, Ok(())),
+                            Err(e) => settings::Msg::ExternalToolInstallComplete(tool_id, Err(e.to_string())),
+                        };
+                        yield Message::Settings(msg);
+                        break;
+                    }
+                    Some(progress) = rx.recv() => {
+                        yield Message::Settings(settings::Msg::ExternalToolInstallProgress(tool_id, progress));
+                    }
+                }
+            }
+        }
+
+        // Dismiss prompt after all done
+        yield Message::Settings(settings::Msg::DismissExternalToolsPrompt);
+    }
+}
+
+/// Uninstall an external tool
+pub async fn uninstall_external_tool(tool_id: ExternalToolId) -> Result<(), String> {
+    let manager = ExternalToolManager::new().map_err(|e| e.to_string())?;
+    manager.uninstall(tool_id).await.map_err(|e| e.to_string())
 }
 
 pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
@@ -458,5 +742,6 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
         &app.settings.mcp_form,
         &app.settings.mcp_import_json,
         &app.settings.agent_mcp_server_ids,
+        &app.settings.external_tools,
     )
 }

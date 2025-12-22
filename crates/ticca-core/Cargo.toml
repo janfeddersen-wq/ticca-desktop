@@ -28,6 +28,20 @@ bytes.workspace = true
 http = "1"
 base64.workspace = true
 
+# skills extraction
+zip = { version = "2.1", default-features = false, features = ["deflate"] }
+
+# external tools archive extraction
+tar = "0.4"
+flate2 = "1"
+xz2 = "0.1"
+
+# integrity verification
+sha2.workspace = true
+
+# URL parsing and validation
+url.workspace = true
+
 # ripgrep
 grep-regex.workspace = true
 grep-searcher.workspace = true

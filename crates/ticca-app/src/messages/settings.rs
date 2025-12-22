@@ -1,5 +1,6 @@
 use ticca_core::agents::AgentType;
 use ticca_core::config::McpTransport;
+use ticca_core::external_tools::ExternalToolId;
 
 use crate::theme::AppTheme;
 use iced::widget::text_editor;
@@ -68,4 +69,32 @@ pub enum Msg {
         server_id: String,
         enabled: bool,
     },
+
+    // External Tools
+    RefreshExternalTools,
+    ExternalToolsLoaded(Vec<(ExternalToolId, ToolStatusInfo)>),
+    InstallExternalTool(ExternalToolId),
+    UninstallExternalTool(ExternalToolId),
+    ExternalToolInstallProgress(ExternalToolId, u8),
+    ExternalToolInstallComplete(ExternalToolId, Result<(), String>),
+    ExternalToolUninstallComplete(ExternalToolId, Result<(), String>),
+
+    // External Tools Startup Prompt
+    ShowExternalToolsPrompt(Vec<ExternalToolId>),
+    DismissExternalToolsPrompt,
+    DismissExternalToolsPromptPermanently,
+    InstallAllMissingTools,
+
+    // Misc
+    OpenUrl(String),
+}
+
+/// Simplified tool status for UI display
+#[derive(Debug, Clone)]
+pub struct ToolStatusInfo {
+    pub is_installed: bool,
+    pub version: Option<String>,
+    pub is_installing: bool,
+    pub install_progress: u8,
+    pub is_supported: bool,
 }

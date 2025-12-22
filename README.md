@@ -131,6 +131,9 @@ sudo dnf install libxkbcommon-devel wayland-devel
 git clone https://github.com/jan/ticca-desktop
 cd ticca-desktop
 
+# Download UV binaries (required for Python skill support)
+./scripts/download-uv.sh 0.5.14
+
 # Build in release mode
 cargo build --release
 
@@ -139,6 +142,18 @@ cargo run --release
 ```
 
 The compiled binary will be at `target/release/ticca`.
+
+### UV Binary Bundling
+
+Ticca bundles the [UV](https://github.com/astral-sh/uv) Python package manager for running Python-based skills. The UV binaries are not committed to the repository due to their size (~177MB total for all platforms).
+
+**Before building**, run the download script:
+
+```bash
+./scripts/download-uv.sh 0.5.14
+```
+
+This downloads UV binaries for all supported platforms to `vendor/uv/`. The build will warn if binaries are missing for your target platform.
 
 ## Configuration
 

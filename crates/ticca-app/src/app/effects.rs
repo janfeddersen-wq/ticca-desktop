@@ -13,6 +13,7 @@ use crate::oauth_handler;
 use crate::views::chat::CHAT_SCROLLABLE_ID;
 
 use ticca_core::agents::AgentType;
+use ticca_core::external_tools::ExternalToolId;
 use ticca_core::llm::ProviderId;
 use ticca_core::tools::{SystemExecRequest, SystemExecStore, TodoListState, ToolApprovalDecision};
 
@@ -45,6 +46,10 @@ pub(in crate::app) enum Effect {
     PasteImage,
     OpenUrl(String),
     FocusTerminal(u64),
+    RefreshExternalTools,
+    InstallExternalTool(ExternalToolId),
+    UninstallExternalTool(ExternalToolId),
+    InstallAllMissingTools(Vec<ExternalToolId>),
 }
 
 pub(in crate::app) fn task(effect: Effect) -> Task<Message> {
@@ -168,5 +173,27 @@ pub(in crate::app) fn task(effect: Effect) -> Task<Message> {
             },
             |_| Message::Noop,
         ),
+        Effect::RefreshExternalTools => Task::perform(
+            async { crate::app::features::settings::load_external_tools_status().await },
+            |statuses| Message::Settings(settings::Msg::ExternalToolsLoaded(statuses)),
+        ),
+        Effect::InstallExternalTool(tool_id) => {
+            Task::run(
+                crate::app::features::settings::install_external_tool_stream(tool_id),
+                |msg| msg,
+            )
+        }
+        Effect::UninstallExternalTool(tool_id) => Task::perform(
+            async move {
+                crate::app::features::settings::uninstall_external_tool(tool_id).await
+            },
+            move |result| Message::Settings(settings::Msg::ExternalToolUninstallComplete(tool_id, result)),
+        ),
+        Effect::InstallAllMissingTools(tools) => {
+            Task::run(
+                crate::app::features::settings::install_all_tools_stream(tools),
+                |msg| msg,
+            )
+        }
     }
 }

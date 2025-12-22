@@ -5,7 +5,6 @@ use crate::config::models::{
     McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken, Setting,
 };
 use anyhow::Result;
-use directories::ProjectDirs;
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
 
@@ -32,11 +31,7 @@ impl ConfigDatabase {
 
     /// Get the database file path
     pub fn get_db_path() -> Result<PathBuf> {
-        let proj_dirs = ProjectDirs::from("", "", "ticca-desktop")
-            .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
-
-        let data_dir = proj_dirs.data_dir();
-        Ok(data_dir.join("config.db"))
+        Ok(super::paths::get_data_dir()?.join("config.db"))
     }
 
     /// Initialize database schema
@@ -643,7 +638,7 @@ impl ConfigDatabase {
              ORDER BY server_id",
         )?;
 
-        let rows = stmt.query_map(params![agent_type], |row| Ok(row.get(0)?))?;
+        let rows = stmt.query_map(params![agent_type], |row| row.get(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 

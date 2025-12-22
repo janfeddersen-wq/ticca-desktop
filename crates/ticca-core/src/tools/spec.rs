@@ -357,6 +357,13 @@ fn todo_write_schema() -> (Value, ToolParameterSchema) {
         )
         .with_default(json!(null)),
     );
+    params.insert(
+        "mark_all_complete".to_string(),
+        ToolParameterSchema::boolean(
+            "Shortcut: set true to mark ALL items as completed and confirm in one step. Overrides individual item statuses.",
+        )
+        .with_default(json!(null)),
+    );
 
     let rig_parameters = json!({
         "type": "object",
@@ -373,7 +380,8 @@ fn todo_write_schema() -> (Value, ToolParameterSchema) {
                     "required": ["text", "status"]
                 }
             },
-            "confirmed_complete": { "type": "boolean", "description": "Set true to confirm all tasks are completed (only accepted if all items are completed)" }
+            "confirmed_complete": { "type": "boolean", "description": "Set true to confirm all tasks are completed (only accepted if all items are completed)" },
+            "mark_all_complete": { "type": "boolean", "description": "Shortcut: set true to mark ALL items as completed and confirm in one step. Overrides individual item statuses." }
         },
         "required": ["items"]
     });

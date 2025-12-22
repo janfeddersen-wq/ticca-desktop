@@ -37,7 +37,9 @@ pub struct AccountSelectionPolicy {
 impl AccountSelectionPolicy {
     pub fn for_agent(agent_type: AgentType) -> Self {
         let provider_order = match agent_type {
-            AgentType::Coding => vec![ProviderId::Claude, ProviderId::ChatGpt, ProviderId::Gemini],
+            AgentType::Coding | AgentType::Skills => {
+                vec![ProviderId::Claude, ProviderId::ChatGpt, ProviderId::Gemini]
+            }
             AgentType::Planning => {
                 vec![ProviderId::Claude, ProviderId::Gemini, ProviderId::ChatGpt]
             }
@@ -144,7 +146,7 @@ impl AgentProfile {
     pub fn for_type(agent_type: AgentType, max_tool_rounds: u32) -> Self {
         let agent = get_agent(agent_type);
         let tool_usage_policy = match agent_type {
-            AgentType::Coding => ToolUsagePolicy::coding(),
+            AgentType::Coding | AgentType::Skills => ToolUsagePolicy::coding(),
             AgentType::Planning => ToolUsagePolicy::planning(),
         };
         let account_policy = AccountSelectionPolicy::for_agent(agent_type);

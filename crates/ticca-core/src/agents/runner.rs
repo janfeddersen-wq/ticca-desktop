@@ -32,7 +32,38 @@ use tokio::time::Duration;
 
 const DEFAULT_COOLDOWN_SECS: i64 = 60;
 const CLAUDE_CODE_INSTRUCTIONS: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-const TODO_GUARD_PROMPT: &str = "You must not finish until your To Do list is confirmed complete.\n\nUse the `todo_write` tool now (or `todo_list`):\n- Provide the full `items` array (can be empty)\n- Set every item's status to `completed`\n- Set `confirmed_complete` to true\n\nIf there is remaining work, add/update items and continue working instead of finishing.";
+const TODO_GUARD_FIRST_PROMPT: &str = r#"You must not finish until your To Do list is confirmed complete.
+
+Use the `todo_write` tool now with ONE of these options:
+
+Option A - Mark all items complete:
+```json
+{ "items": [...], "mark_all_complete": true }
+```
+
+Option B - Explicit status for each item:
+```json
+{
+  "items": [{ "text": "Item 1", "status": "completed" }, ...],
+  "confirmed_complete": true
+}
+```
+
+Option C - If your list is empty:
+```json
+{ "items": [], "confirmed_complete": true }
+```
+
+If there is remaining work, add/update items and continue working instead of finishing."#;
+
+const TODO_GUARD_RETRY_PROMPT: &str = r#"Your To Do list is STILL not confirmed complete. This is your final attempt.
+
+REQUIRED: Call `todo_write` with `mark_all_complete: true` to complete your session:
+```json
+{ "items": [...your items...], "mark_all_complete": true }
+```
+
+Or if empty: `{ "items": [], "confirmed_complete": true }`"#;
 const TODO_GUARD_MAX_PASSES: usize = 4;
 const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -853,12 +884,19 @@ where
         }
 
         if passes >= TODO_GUARD_MAX_PASSES {
-            return Err(
-                "To Do list was not confirmed complete after multiple attempts.".to_string(),
-            );
+            // Return collected text with error note appended rather than discarding all output
+            let error_note =
+                "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.";
+            return Ok(format!("{}{}", collected_all, error_note));
         }
 
-        history.push(RigMessage::user(TODO_GUARD_PROMPT));
+        // Use first prompt on pass 1, retry prompt on subsequent passes
+        let guard_prompt = if passes == 1 {
+            TODO_GUARD_FIRST_PROMPT
+        } else {
+            TODO_GUARD_RETRY_PROMPT
+        };
+        history.push(RigMessage::user(guard_prompt));
     }
 
     Ok(collected_all)
@@ -1059,13 +1097,20 @@ async fn run_agent_stream(
                 }
 
                 if passes >= TODO_GUARD_MAX_PASSES {
-                    return Err(
-                        "To Do list was not confirmed complete after multiple attempts."
-                            .to_string(),
-                    );
+                    // Append warning as chunk instead of replacing all streamed output with error
+                    let _ = event_tx.send(RunnerEvent::StreamChunk(
+                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
+                    ));
+                    return Ok(());
                 }
 
-                history.push(RigMessage::user(TODO_GUARD_PROMPT));
+                // Use first prompt on pass 1, retry prompt on subsequent passes
+                let guard_prompt = if passes == 1 {
+                    TODO_GUARD_FIRST_PROMPT
+                } else {
+                    TODO_GUARD_RETRY_PROMPT
+                };
+                history.push(RigMessage::user(guard_prompt));
             }
         }
         ProviderId::Gemini => {
@@ -1214,13 +1259,20 @@ async fn run_agent_stream(
                 }
 
                 if passes >= TODO_GUARD_MAX_PASSES {
-                    return Err(
-                        "To Do list was not confirmed complete after multiple attempts."
-                            .to_string(),
-                    );
+                    // Append warning as chunk instead of replacing all streamed output with error
+                    let _ = event_tx.send(RunnerEvent::StreamChunk(
+                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
+                    ));
+                    return Ok(());
                 }
 
-                history.push(RigMessage::user(TODO_GUARD_PROMPT));
+                // Use first prompt on pass 1, retry prompt on subsequent passes
+                let guard_prompt = if passes == 1 {
+                    TODO_GUARD_FIRST_PROMPT
+                } else {
+                    TODO_GUARD_RETRY_PROMPT
+                };
+                history.push(RigMessage::user(guard_prompt));
             }
         }
         ProviderId::Claude => {
@@ -1372,13 +1424,20 @@ async fn run_agent_stream(
                 }
 
                 if passes >= TODO_GUARD_MAX_PASSES {
-                    return Err(
-                        "To Do list was not confirmed complete after multiple attempts."
-                            .to_string(),
-                    );
+                    // Append warning as chunk instead of replacing all streamed output with error
+                    let _ = event_tx.send(RunnerEvent::StreamChunk(
+                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
+                    ));
+                    return Ok(());
                 }
 
-                history.push(RigMessage::user(TODO_GUARD_PROMPT));
+                // Use first prompt on pass 1, retry prompt on subsequent passes
+                let guard_prompt = if passes == 1 {
+                    TODO_GUARD_FIRST_PROMPT
+                } else {
+                    TODO_GUARD_RETRY_PROMPT
+                };
+                history.push(RigMessage::user(guard_prompt));
             }
         }
     }
@@ -1562,7 +1621,8 @@ mod tests {
         let history = vec![build_user_message("hello", Vec::new())];
         let result = stream_invoked_agent(1, &parent_context, agent, history, 1, "Mock").await;
 
-        let err = result.unwrap_err();
-        assert!(err.contains("To Do list was not confirmed complete"));
+        // Now returns Ok with warning appended instead of Err (to preserve streamed content)
+        let output = result.unwrap();
+        assert!(output.contains("To Do list was not confirmed complete"));
     }
 }

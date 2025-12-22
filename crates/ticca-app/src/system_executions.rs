@@ -7,7 +7,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use iced::Size;
 use iced_term::Terminal;
 use iced_term::settings::{BackendSettings, Settings};
+use tracing::warn;
 
+use ticca_core::external_tools;
 use ticca_core::tools::{ProcessKind, ProcessSnapshot, SystemExecStore};
 
 pub struct TerminalInstance {
@@ -115,10 +117,16 @@ impl SystemExecutionsState {
         let terminal_id = self.next_terminal_id;
         self.next_terminal_id = self.next_terminal_id.saturating_add(1);
 
+        // Get environment overrides for external tools (PATH injection)
+        let env = external_tools::env_overrides().unwrap_or_else(|e| {
+            warn!("Failed to get external tools env: {}", e);
+            HashMap::new()
+        });
+
         let backend = BackendSettings {
             program,
             args,
-            env: Default::default(),
+            env,
             working_directory: cwd,
         };
         let settings = Settings {

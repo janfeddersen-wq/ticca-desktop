@@ -35,6 +35,7 @@ pub struct TypedSettings {
     pub yolo_mode_enabled: bool,
     pub expert_mode_enabled: bool,
     pub account_rotation_policy: AccountRotationPolicy,
+    pub external_tools_prompt_dismissed: bool,
 }
 
 impl TypedSettings {
@@ -51,6 +52,9 @@ impl TypedSettings {
         let account_rotation_policy = get_string(repo, setting_keys::ACCOUNT_ROTATION_POLICY)
             .map(|value| AccountRotationPolicy::parse(&value))
             .unwrap_or(defaults::ACCOUNT_ROTATION_POLICY);
+        let external_tools_prompt_dismissed =
+            get_bool(repo, setting_keys::EXTERNAL_TOOLS_PROMPT_DISMISSED)
+                .unwrap_or(defaults::EXTERNAL_TOOLS_PROMPT_DISMISSED);
 
         Self {
             theme,
@@ -59,6 +63,7 @@ impl TypedSettings {
             yolo_mode_enabled,
             expert_mode_enabled,
             account_rotation_policy,
+            external_tools_prompt_dismissed,
         }
     }
 }

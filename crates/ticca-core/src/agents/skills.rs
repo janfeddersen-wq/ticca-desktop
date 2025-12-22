@@ -1,0 +1,364 @@
+//! Skills Agent - Python-based skill execution
+//!
+//! This agent dynamically discovers and uses Python-based skills stored in
+//! the skills directory. Each skill provides specialized capabilities that
+//! extend the agent's functionality.
+
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use tracing::{debug, info};
+
+use super::PromptBlocks;
+use super::base::{Agent, AgentType};
+use super::profile::ToolUsagePolicy;
+use crate::config::paths::{get_skills_dir, get_venvs_dir};
+use crate::python::create_venv;
+use crate::skills::{SkillMetadata, discover_skills};
+use crate::tools::spec::tool_specs_for_names;
+
+/// Skills Agent - executes Python-based skills for specialized tasks.
+///
+/// This agent discovers skills from the skills directory at runtime and
+/// provides access to them through the system prompt. Each skill is a
+/// Python-based module with a SKILL.md file describing its capabilities.
+pub struct SkillsAgent {
+    /// Discovered skill metadata (populated at runtime)
+    skills: Vec<SkillMetadata>,
+    /// Path to the shared skills venv
+    venv_path: PathBuf,
+    /// Path to the skills directory
+    skills_dir: PathBuf,
+}
+
+impl SkillsAgent {
+    /// Creates a new SkillsAgent by discovering available skills.
+    ///
+    /// This should be called at app startup after skills are extracted.
+    /// The agent will:
+    /// 1. Get paths from the config module
+    /// 2. Discover skills using `discover_skills()`
+    /// 3. Create a shared venv for skills if it doesn't exist
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The skills or venvs directory cannot be determined
+    /// - Skill discovery fails
+    /// - The venv cannot be created
+    pub fn new() -> Result<Self> {
+        let skills_dir = get_skills_dir().context("Failed to get skills directory")?;
+        let venv_path = get_venvs_dir()
+            .context("Failed to get venvs directory")?
+            .join("skills-venv");
+
+        // Discover available skills
+        let skills = discover_skills().context("Failed to discover skills")?;
+        info!("Discovered {} skills", skills.len());
+
+        for skill in &skills {
+            debug!(
+                "Found skill: {} at {}",
+                skill.name,
+                skill.path.display()
+            );
+        }
+
+        // Create the venv if it doesn't exist
+        if !venv_path.exists() {
+            info!("Creating skills venv at {}", venv_path.display());
+            create_venv(&venv_path).context("Failed to create skills venv")?;
+        } else {
+            debug!("Skills venv already exists at {}", venv_path.display());
+        }
+
+        Ok(Self {
+            skills,
+            venv_path,
+            skills_dir,
+        })
+    }
+
+    /// Creates a SkillsAgent with default/empty state.
+    ///
+    /// This is useful when skill discovery fails but we still want to
+    /// create an agent instance. The agent will have no skills available.
+    pub fn empty() -> Self {
+        Self {
+            skills: Vec::new(),
+            venv_path: PathBuf::new(),
+            skills_dir: PathBuf::new(),
+        }
+    }
+
+    /// Returns the combined description from all discovered skills.
+    ///
+    /// Format: "Agent that provides the following skills: skill1 - desc1, skill2 - desc2, ..."
+    pub fn combined_description(&self) -> String {
+        if self.skills.is_empty() {
+            return "Agent for executing Python-based skills. No skills currently available."
+                .to_string();
+        }
+
+        let skill_list: Vec<String> = self
+            .skills
+            .iter()
+            .map(|s| format!("{} - {}", s.name, s.description))
+            .collect();
+
+        format!(
+            "Agent that provides the following skills: {}",
+            skill_list.join(", ")
+        )
+    }
+
+    /// Returns whether any skills were discovered.
+    pub fn has_skills(&self) -> bool {
+        !self.skills.is_empty()
+    }
+
+    /// Get the discovered skills.
+    pub fn skills(&self) -> &[SkillMetadata] {
+        &self.skills
+    }
+
+    /// Get the venv path.
+    pub fn venv_path(&self) -> &PathBuf {
+        &self.venv_path
+    }
+
+    /// Get the skills directory.
+    pub fn skills_dir(&self) -> &PathBuf {
+        &self.skills_dir
+    }
+
+    /// Get the Python interpreter path for this agent's venv.
+    fn python_path(&self) -> PathBuf {
+        #[cfg(windows)]
+        {
+            self.venv_path.join("Scripts").join("python.exe")
+        }
+        #[cfg(not(windows))]
+        {
+            self.venv_path.join("bin").join("python")
+        }
+    }
+
+    /// Builds the skills section of the system prompt.
+    fn build_skills_section(&self) -> String {
+        if self.skills.is_empty() {
+            return "## Available Skills\n\nNo skills are currently available.\n".to_string();
+        }
+
+        let mut out = String::from("## Available Skills\n\n");
+        out.push_str("The following Python-based skills are available. Before using any skill, ");
+        out.push_str("READ its SKILL.md file to understand usage, parameters, and examples.\n\n");
+
+        for skill in &self.skills {
+            out.push_str(&format!("### {}\n", skill.name));
+            out.push_str(&format!("**Description:** {}\n", skill.description));
+            out.push_str(&format!("**License:** {}\n", skill.license));
+            out.push_str(&format!("**Path:** {}\n", skill.path.display()));
+            out.push_str(&format!(
+                "**Documentation:** {} (READ THIS BEFORE USING)\n",
+                skill.skill_md_path.display()
+            ));
+            out.push('\n');
+        }
+
+        out
+    }
+}
+
+impl Agent for SkillsAgent {
+    fn agent_type(&self) -> AgentType {
+        AgentType::Skills
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Skills Agent"
+    }
+
+    // Note: We can't override description() to return dynamic content because
+    // the trait returns &'static str. The combined_description() method
+    // provides dynamic skill info, and the system_prompt includes full details.
+
+    fn available_tools(&self) -> Vec<&'static str> {
+        // Same tools as CodingAgent - full access to file and shell tools
+        vec![
+            "todo_read",
+            "todo_write",
+            "todo_list",
+            "list_files",
+            "read_file",
+            "grep",
+            "list_agents",
+            "invoke_agent",
+            "edit_file",
+            "delete_file",
+            "write_file",
+            "execute_shell",
+            "list_processes",
+            "read_process_output",
+            "kill_process",
+        ]
+    }
+
+    fn system_prompt(&self) -> String {
+        let tool_specs = tool_specs_for_names(&self.available_tools());
+        let tool_docs = PromptBlocks::tool_docs(&tool_specs);
+        let policy = ToolUsagePolicy::coding();
+        let guidelines = PromptBlocks::agent_guidelines(
+            &policy,
+            &[
+                "Use todo_read to see the current To Do list; use todo_write (or todo_list) to update it and confirm completion before ending",
+                "IMPORTANT: When executing Python code for skills, ALWAYS use the venv Python interpreter",
+                "Read the SKILL.md file before using any skill to understand its API and requirements",
+                "Use list_files to explore project structure before modifying files",
+                "Follow DRY, YAGNI, and SOLID principles",
+                "Keep solutions simple and readable (KISS)",
+                "Keep individual files under 600 lines; split modules when needed",
+                "Continue working autonomously until the task is complete",
+            ],
+        );
+
+        let skills_section = self.build_skills_section();
+        let python_path = self.python_path();
+
+        format!(
+            r#"You are a Skills Agent with access to Python-based skills for specialized tasks.
+
+## Python Environment
+
+The Python virtual environment for skills is located at:
+`{venv_path}`
+
+**IMPORTANT:** When executing ANY Python code for skills, you MUST use the Python interpreter from this venv:
+`{python_path}`
+
+Example shell command:
+```bash
+{python_path} /path/to/script.py
+```
+
+{skills_section}
+{tool_docs}
+{guidelines}"#,
+            venv_path = self.venv_path.display(),
+            python_path = python_path.display(),
+            skills_section = skills_section,
+            tool_docs = tool_docs,
+            guidelines = guidelines,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_skills_agent_empty() {
+        let agent = SkillsAgent::empty();
+
+        assert!(!agent.has_skills());
+        assert!(agent.skills().is_empty());
+        assert_eq!(agent.agent_type(), AgentType::Skills);
+        assert_eq!(agent.display_name(), "Skills Agent");
+    }
+
+    #[test]
+    fn test_combined_description_empty() {
+        let agent = SkillsAgent::empty();
+        let desc = agent.combined_description();
+
+        assert!(desc.contains("No skills currently available"));
+    }
+
+    #[test]
+    fn test_combined_description_with_skills() {
+        let agent = SkillsAgent {
+            skills: vec![
+                SkillMetadata {
+                    name: "docx".to_string(),
+                    description: "Document creation".to_string(),
+                    license: "MIT".to_string(),
+                    path: PathBuf::from("/skills/docx"),
+                    skill_md_path: PathBuf::from("/skills/docx/SKILL.md"),
+                },
+                SkillMetadata {
+                    name: "browser".to_string(),
+                    description: "Web automation".to_string(),
+                    license: "Apache-2.0".to_string(),
+                    path: PathBuf::from("/skills/browser"),
+                    skill_md_path: PathBuf::from("/skills/browser/SKILL.md"),
+                },
+            ],
+            venv_path: PathBuf::from("/venvs/skills-venv"),
+            skills_dir: PathBuf::from("/skills"),
+        };
+
+        let desc = agent.combined_description();
+        assert!(desc.contains("docx - Document creation"));
+        assert!(desc.contains("browser - Web automation"));
+    }
+
+    #[test]
+    fn test_skills_agent_has_coding_tools() {
+        let agent = SkillsAgent::empty();
+        let tools = agent.available_tools();
+
+        // Should have same tools as CodingAgent
+        assert!(tools.contains(&"list_files"));
+        assert!(tools.contains(&"read_file"));
+        assert!(tools.contains(&"edit_file"));
+        assert!(tools.contains(&"delete_file"));
+        assert!(tools.contains(&"write_file"));
+        assert!(tools.contains(&"execute_shell"));
+        assert!(tools.contains(&"grep"));
+        assert!(tools.contains(&"todo_read"));
+        assert!(tools.contains(&"todo_write"));
+        assert!(tools.contains(&"todo_list"));
+    }
+
+    #[test]
+    fn test_system_prompt_includes_venv_path() {
+        let agent = SkillsAgent {
+            skills: vec![],
+            venv_path: PathBuf::from("/test/venvs/skills-venv"),
+            skills_dir: PathBuf::from("/test/skills"),
+        };
+
+        let prompt = agent.system_prompt();
+        assert!(prompt.contains("/test/venvs/skills-venv"));
+        assert!(prompt.contains("MUST use the Python interpreter"));
+    }
+
+    #[test]
+    fn test_system_prompt_includes_skills() {
+        let agent = SkillsAgent {
+            skills: vec![SkillMetadata {
+                name: "docx".to_string(),
+                description: "Document creation".to_string(),
+                license: "MIT".to_string(),
+                path: PathBuf::from("/skills/docx"),
+                skill_md_path: PathBuf::from("/skills/docx/SKILL.md"),
+            }],
+            venv_path: PathBuf::from("/venvs/skills-venv"),
+            skills_dir: PathBuf::from("/skills"),
+        };
+
+        let prompt = agent.system_prompt();
+        assert!(prompt.contains("### docx"));
+        assert!(prompt.contains("Document creation"));
+        assert!(prompt.contains("READ THIS BEFORE USING"));
+    }
+
+    #[test]
+    fn test_build_skills_section_empty() {
+        let agent = SkillsAgent::empty();
+        let section = agent.build_skills_section();
+
+        assert!(section.contains("No skills are currently available"));
+    }
+}

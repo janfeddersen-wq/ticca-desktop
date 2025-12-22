@@ -1,7 +1,7 @@
 //! Ticca Core - Business logic and tools
 //!
 //! This crate contains:
-//! - Agent definitions (Planning, Coding)
+//! - Agent definitions (Planning, Coding, Skills)
 //! - Native Rust tools (file ops, grep, shell)
 //! - Configuration database (SQLite)
 //! - Session storage (SQLite)
@@ -9,15 +9,25 @@
 
 pub mod agents;
 pub mod config;
+pub mod external_tools;
 pub mod llm;
+pub mod python;
 pub mod session;
+pub mod skills;
 pub mod tools;
 
 // Re-export commonly used types
 pub use agents::{
-    Agent, AgentConfig, AgentType, CodingAgent, PlanningAgent, get_agent, get_all_agents,
+    Agent, AgentConfig, AgentType, CodingAgent, PlanningAgent, SkillsAgent, get_agent,
+    get_all_agents,
 };
 pub use config::{ConfigDatabase, McpServer, McpTransport, ModelConfig, OAuthToken, Setting};
 pub use llm::{ClaudeClient, get_claude_client, has_claude_credentials};
 pub use session::{MessageRole, Session, SessionDatabase, SessionMessage};
+pub use python::{create_venv, ensure_uv_available, pip_install, run_python_script};
+pub use skills::{extract_skills_if_needed, get_skill_path, SkillMetadata, discover_skills};
 pub use tools::{ToolDefinition, ToolRegistry, ToolResult, create_default_registry};
+pub use external_tools::{
+    ExternalToolManager, ExternalToolId, Platform, ToolStatus, ToolInfo,
+    get_tool_definition, get_all_tool_definitions,
+};

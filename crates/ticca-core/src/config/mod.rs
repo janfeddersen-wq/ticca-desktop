@@ -4,12 +4,17 @@ pub mod database;
 mod mcp_import;
 pub mod migrations;
 pub mod models;
+pub mod paths;
 pub mod repo;
 pub mod service;
 pub mod settings;
 
 pub use database::ConfigDatabase;
 pub use models::{McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken, Setting};
+pub use paths::{
+    ensure_dirs_exist, get_bin_dir, get_data_dir, get_skills_dir, get_tools_dir,
+    get_uv_binary_path, get_venvs_dir,
+};
 pub use repo::ConfigRepo;
 pub use service::{ConfigService, SettingsSnapshot};
 pub use settings::{AccountRotationPolicy, TypedSettings};
@@ -27,6 +32,8 @@ pub mod setting_keys {
     pub const YOLO_MODE: &str = "yolo_mode";
     /// How multiple OAuth accounts are rotated for a provider.
     pub const ACCOUNT_ROTATION_POLICY: &str = "account_rotation_policy";
+    /// Whether the external tools install prompt has been dismissed permanently.
+    pub const EXTERNAL_TOOLS_PROMPT_DISMISSED: &str = "external_tools_prompt_dismissed";
 }
 
 /// Default values for settings
@@ -37,4 +44,5 @@ pub mod defaults {
     pub const EXPERT_MODE: bool = true;
     pub const ACCOUNT_ROTATION_POLICY: super::AccountRotationPolicy =
         super::AccountRotationPolicy::PriorityThenLeastRecentlyUsed;
+    pub const EXTERNAL_TOOLS_PROMPT_DISMISSED: bool = false;
 }

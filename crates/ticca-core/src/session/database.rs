@@ -2,7 +2,6 @@
 
 use crate::session::models::{MessageRole, Session, SessionMessage};
 use anyhow::Result;
-use directories::ProjectDirs;
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
 
@@ -29,11 +28,7 @@ impl SessionDatabase {
 
     /// Get the database file path
     pub fn get_db_path() -> Result<PathBuf> {
-        let proj_dirs = ProjectDirs::from("", "", "ticca-desktop")
-            .ok_or_else(|| anyhow::anyhow!("Could not determine data directory"))?;
-
-        let data_dir = proj_dirs.data_dir();
-        Ok(data_dir.join("sessions.db"))
+        Ok(crate::config::paths::get_data_dir()?.join("sessions.db"))
     }
 
     /// Initialize database schema

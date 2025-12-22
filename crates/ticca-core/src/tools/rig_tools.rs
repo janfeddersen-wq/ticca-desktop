@@ -1180,17 +1180,31 @@ async fn update_todo_list(
         .as_ref()
         .ok_or_else(|| TodoListError("Todo store is not configured".to_string()))?;
 
-    let items: Vec<TodoItem> = args
-        .items
-        .into_iter()
-        .map(|item| TodoItem {
-            text: item.text,
-            status: item.status,
-        })
-        .collect();
+    // If mark_all_complete is set, override item statuses and confirmed_complete
+    let (items, confirmed_complete) = if args.mark_all_complete == Some(true) {
+        let items: Vec<TodoItem> = args
+            .items
+            .into_iter()
+            .map(|item| TodoItem {
+                text: item.text,
+                status: TodoStatus::Completed, // Force all to completed
+            })
+            .collect();
+        (items, Some(true))
+    } else {
+        let items: Vec<TodoItem> = args
+            .items
+            .into_iter()
+            .map(|item| TodoItem {
+                text: item.text,
+                status: item.status,
+            })
+            .collect();
+        (items, args.confirmed_complete)
+    };
 
     let state = store
-        .update_node(context.node_id, items, args.confirmed_complete)
+        .update_node(context.node_id, items, confirmed_complete)
         .await;
 
     if let Some(tx) = &context.todo_tx {
@@ -1209,6 +1223,9 @@ pub struct TodoListArgs {
     pub items: Vec<TodoListItemArgs>,
     /// Set true to confirm all items are completed.
     pub confirmed_complete: Option<bool>,
+    /// Set true to mark ALL items as completed and confirm completion in one step.
+    /// This is a shortcut that sets every item's status to `completed` and sets `confirmed_complete` to true.
+    pub mark_all_complete: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

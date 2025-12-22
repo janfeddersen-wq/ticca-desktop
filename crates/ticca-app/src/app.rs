@@ -1,18 +1,32 @@
 //! Iced Application state and main loop
 
 use iced::widget::{button, column, container, row, text};
-use iced::{Element, Length, Subscription, Task, Theme};
+use iced::{Color, Element, Length, Subscription, Task, Theme};
 
 use std::path::PathBuf;
 
 mod effects;
 mod features;
 
+use ticca_core::external_tools::ExternalToolId;
 use ticca_core::llm::auth;
 
 use crate::app_config::load_config;
 use crate::messages::{Message, settings};
 use crate::theme::AppTheme;
+
+/// State for the external tools installation prompt
+#[derive(Debug, Clone)]
+pub struct ExternalToolsPromptState {
+    /// Tools that are missing and can be installed
+    pub missing_tools: Vec<ExternalToolId>,
+    /// Whether we're currently installing
+    pub is_installing: bool,
+    /// Current tool being installed (for progress display)
+    pub current_tool: Option<ExternalToolId>,
+    /// Install progress percentage
+    pub progress: u8,
+}
 
 /// Main application state
 pub struct TiccaApp {
@@ -22,6 +36,8 @@ pub struct TiccaApp {
     chat: features::chat::ChatState,
     settings: features::settings::SettingsState,
     error_message: Option<String>,
+    external_tools_prompt: Option<ExternalToolsPromptState>,
+    external_tools_prompt_dismissed: bool,
 }
 
 /// Views in the application
@@ -35,6 +51,9 @@ pub enum View {
 impl TiccaApp {
     /// Create a new application instance
     pub fn new() -> (Self, Task<Message>) {
+        // Initialize data directories, skills, and UV binary
+        Self::initialize_runtime();
+
         // Load configuration
         let config = load_config();
 
@@ -49,14 +68,25 @@ impl TiccaApp {
             chat: features::chat::ChatState::new(&config, working_directory),
             settings: features::settings::SettingsState::new(provider_auth_status),
             error_message: None,
+            external_tools_prompt: None,
+            external_tools_prompt_dismissed: config.external_tools_prompt_dismissed,
         };
 
         // Automatically fetch models on startup if we have credentials
-        let startup_task = if auth::has_any_valid_account() {
-            Task::done(Message::Settings(settings::Msg::RefreshModels))
-        } else {
-            Task::none()
-        };
+        let mut startup_tasks = vec![];
+        if auth::has_any_valid_account() {
+            startup_tasks.push(Task::done(Message::Settings(settings::Msg::RefreshModels)));
+        }
+
+        // Check for missing external tools on startup (if not dismissed)
+        if !app.external_tools_prompt_dismissed {
+            startup_tasks.push(Task::perform(
+                async { features::settings::check_missing_external_tools().await },
+                |missing| Message::Settings(settings::Msg::ShowExternalToolsPrompt(missing)),
+            ));
+        }
+
+        let startup_task = Task::batch(startup_tasks);
 
         (app, startup_task)
     }
@@ -117,7 +147,100 @@ impl TiccaApp {
             main.into()
         };
 
-        features::chat::wrap_with_approval_modal(self, base)
+        let with_approval = features::chat::wrap_with_approval_modal(self, base);
+        self.wrap_with_external_tools_prompt(with_approval)
+    }
+
+    /// Wrap content with external tools prompt modal if active
+    fn wrap_with_external_tools_prompt<'a>(
+        &self,
+        base: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        use crate::theme::styles;
+
+        let Some(ref prompt_state) = self.external_tools_prompt else {
+            return base;
+        };
+
+        // Build the modal content
+        let title = if prompt_state.is_installing {
+            text("Installing External Tools...").size(20)
+        } else {
+            text("Install External Tools?").size(20)
+        };
+
+        let description = if prompt_state.is_installing {
+            let tool_name = prompt_state
+                .current_tool
+                .map(|t| t.as_str())
+                .unwrap_or("tool");
+            text(format!("Installing {}... {}%", tool_name, prompt_state.progress)).size(14)
+        } else {
+            let tool_names: Vec<&str> = prompt_state
+                .missing_tools
+                .iter()
+                .map(|t| t.as_str())
+                .collect();
+            text(format!(
+                "The following tools are not installed: {}\n\nThese tools enable advanced features like document conversion and JavaScript execution.",
+                tool_names.join(", ")
+            ))
+            .size(14)
+        };
+
+        let buttons = if prompt_state.is_installing {
+            row![text(format!("Progress: {}%", prompt_state.progress)).size(14),]
+                .spacing(10)
+                .align_y(iced::Alignment::Center)
+        } else {
+            row![
+                button(text("Install All").size(14))
+                    .on_press(Message::Settings(settings::Msg::InstallAllMissingTools))
+                    .style(styles::primary_button)
+                    .padding([8, 16]),
+                button(text("Not Now").size(14))
+                    .on_press(Message::Settings(settings::Msg::DismissExternalToolsPrompt))
+                    .style(styles::secondary_button)
+                    .padding([8, 16]),
+                button(text("Don't Ask Again").size(14))
+                    .on_press(Message::Settings(
+                        settings::Msg::DismissExternalToolsPromptPermanently
+                    ))
+                    .style(styles::secondary_button)
+                    .padding([8, 16]),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+        };
+
+        let modal_content = container(
+            column![
+                title,
+                iced::widget::Space::new().height(10),
+                description,
+                iced::widget::Space::new().height(20),
+                buttons,
+            ]
+                .spacing(5)
+                .align_x(iced::Alignment::Center),
+        )
+        .padding(30)
+        .width(Length::Fixed(500.0))
+        .style(styles::card_container);
+
+        // Create overlay
+        let overlay = container(modal_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                ..Default::default()
+            });
+
+        // Stack base and overlay
+        iced::widget::stack![base, overlay].into()
     }
 
     /// Get the current theme
@@ -132,6 +255,45 @@ impl TiccaApp {
         let mut subs: Vec<Subscription<Message>> = vec![keybindings];
         subs.extend(self.chat.subscriptions());
         Subscription::batch(subs)
+    }
+
+    /// Initialize runtime directories and extract bundled assets.
+    ///
+    /// This is called once at startup to ensure:
+    /// - All data directories exist (skills, bin, venvs)
+    /// - Skills bundle is extracted (if version changed)
+    /// - UV binary is available (extracted on first use)
+    ///
+    /// Errors are logged but don't crash the app - features will fail
+    /// gracefully if initialization failed.
+    fn initialize_runtime() {
+        use tracing::{info, warn};
+
+        // Ensure all data directories exist
+        if let Err(e) = ticca_core::config::ensure_dirs_exist() {
+            warn!("Failed to create data directories: {}", e);
+        }
+
+        // Extract skills bundle if needed
+        match ticca_core::extract_skills_if_needed() {
+            Ok(skills_dir) => {
+                info!("Skills available at: {}", skills_dir.display());
+            }
+            Err(e) => {
+                warn!("Failed to extract skills bundle: {}", e);
+            }
+        }
+
+        // Pre-extract UV binary (optional - could also be lazy on first use)
+        // This ensures UV is ready when skills need Python environments
+        match ticca_core::ensure_uv_available() {
+            Ok(uv_path) => {
+                info!("UV binary available at: {}", uv_path.display());
+            }
+            Err(e) => {
+                warn!("Failed to extract UV binary: {}", e);
+            }
+        }
     }
 }
 

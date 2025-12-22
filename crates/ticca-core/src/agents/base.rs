@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub enum AgentType {
     Planning,
     Coding,
+    Skills,
 }
 
 impl AgentType {
@@ -15,6 +16,7 @@ impl AgentType {
         match self {
             AgentType::Planning => "planning",
             AgentType::Coding => "coding",
+            AgentType::Skills => "skills",
         }
     }
 
@@ -22,6 +24,7 @@ impl AgentType {
         match s.to_lowercase().as_str() {
             "planning" => Some(AgentType::Planning),
             "coding" => Some(AgentType::Coding),
+            "skills" => Some(AgentType::Skills),
             _ => None,
         }
     }
@@ -30,6 +33,7 @@ impl AgentType {
         match self {
             AgentType::Planning => "Planning Agent",
             AgentType::Coding => "Coding Agent",
+            AgentType::Skills => "Skills Agent",
         }
     }
 
@@ -40,6 +44,9 @@ impl AgentType {
             }
             AgentType::Coding => {
                 "Writes, modifies, and executes code to complete development tasks."
+            }
+            AgentType::Skills => {
+                "Executes Python-based skills for specialized tasks like document generation and web automation."
             }
         }
     }
@@ -147,18 +154,36 @@ impl Default for AgentConfig {
 }
 
 /// Get an agent by type
+///
+/// Note: For `AgentType::Skills`, this creates an empty SkillsAgent if
+/// initialization fails. For full skill discovery, use `SkillsAgent::new()`
+/// directly which returns a `Result`.
 pub fn get_agent(agent_type: AgentType) -> Box<dyn Agent> {
     match agent_type {
         AgentType::Planning => Box::new(super::planning::PlanningAgent),
         AgentType::Coding => Box::new(super::coding::CodingAgent),
+        AgentType::Skills => {
+            // Try to create a proper SkillsAgent, fall back to empty on failure
+            match super::skills::SkillsAgent::new() {
+                Ok(agent) => Box::new(agent),
+                Err(e) => {
+                    tracing::warn!("Failed to initialize SkillsAgent: {}, using empty agent", e);
+                    Box::new(super::skills::SkillsAgent::empty())
+                }
+            }
+        }
     }
 }
 
 /// Get all available agents
+///
+/// Note: This includes SkillsAgent which requires runtime initialization.
+/// If skill discovery fails, an empty SkillsAgent is included.
 pub fn get_all_agents() -> Vec<Box<dyn Agent>> {
     vec![
         Box::new(super::planning::PlanningAgent),
         Box::new(super::coding::CodingAgent),
+        get_agent(AgentType::Skills), // Use get_agent for proper error handling
     ]
 }
 
@@ -205,6 +230,6 @@ mod tests {
     #[test]
     fn test_get_all_agents() {
         let agents = get_all_agents();
-        assert_eq!(agents.len(), 2);
+        assert_eq!(agents.len(), 3); // Planning, Coding, Skills
     }
 }
