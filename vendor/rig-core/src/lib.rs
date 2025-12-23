@@ -112,6 +112,7 @@ pub mod agent;
 pub mod audio_generation;
 pub mod client;
 pub mod completion;
+pub mod compression;
 pub mod embeddings;
 
 #[cfg(feature = "experimental")]

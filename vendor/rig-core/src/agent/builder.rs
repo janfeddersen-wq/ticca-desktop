@@ -65,6 +65,10 @@ where
     tool_server_handle: Option<ToolServerHandle>,
     /// Whether or not the underlying LLM should be forced to use a tool before providing a response.
     tool_choice: Option<ToolChoice>,
+    /// Context compressor for managing token limits
+    context_compressor: Option<std::sync::Arc<dyn crate::compression::ContextCompressor>>,
+    /// Maximum context tokens before compression
+    max_context_tokens: Option<usize>,
 }
 
 impl<M> AgentBuilder<M>
@@ -84,6 +88,8 @@ where
             dynamic_context: vec![],
             tool_server_handle: None,
             tool_choice: None,
+            context_compressor: None,
+            max_context_tokens: None,
         }
     }
 
@@ -151,6 +157,8 @@ where
             temperature: self.temperature,
             tools,
             tool_choice: self.tool_choice,
+            context_compressor: self.context_compressor,
+            max_context_tokens: self.max_context_tokens,
         }
     }
 
@@ -185,6 +193,8 @@ where
             temperature: self.temperature,
             tools,
             tool_choice: self.tool_choice,
+            context_compressor: self.context_compressor,
+            max_context_tokens: self.max_context_tokens,
         }
     }
 
@@ -223,6 +233,8 @@ where
             temperature: self.temperature,
             tools,
             tool_choice: self.tool_choice,
+            context_compressor: self.context_compressor,
+            max_context_tokens: self.max_context_tokens,
         }
     }
 
@@ -240,6 +252,37 @@ where
 
     pub fn tool_choice(mut self, tool_choice: ToolChoice) -> Self {
         self.tool_choice = Some(tool_choice);
+        self
+    }
+
+    /// Set a context compressor for managing chat history token limits.
+    ///
+    /// When combined with `max_context_tokens`, the agent will automatically
+    /// compress chat history to fit within the token budget.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use rig::compression::SlidingWindowCompressor;
+    ///
+    /// let agent = client.agent("gpt-4")
+    ///     .context_compressor(SlidingWindowCompressor::new().with_preserve_first(1))
+    ///     .max_context_tokens(8000)
+    ///     .build();
+    /// ```
+    pub fn context_compressor<C: crate::compression::ContextCompressor + 'static>(
+        mut self,
+        compressor: C,
+    ) -> Self {
+        self.context_compressor = Some(std::sync::Arc::new(compressor));
+        self
+    }
+
+    /// Set the maximum context tokens before compression is applied.
+    ///
+    /// Should be set lower than the model's actual context window to leave
+    /// room for the system prompt and response tokens.
+    pub fn max_context_tokens(mut self, tokens: usize) -> Self {
+        self.max_context_tokens = Some(tokens);
         self
     }
 
@@ -268,6 +311,8 @@ where
             temperature: self.temperature,
             tools: toolset,
             tool_choice: self.tool_choice,
+            context_compressor: self.context_compressor,
+            max_context_tokens: self.max_context_tokens,
         }
     }
 
@@ -309,6 +354,8 @@ where
             tool_choice: self.tool_choice,
             dynamic_context: Arc::new(RwLock::new(self.dynamic_context)),
             tool_server_handle,
+            context_compressor: self.context_compressor,
+            max_context_tokens: self.max_context_tokens,
         }
     }
 }
@@ -364,6 +411,10 @@ where
     tools: ToolSet,
     /// Whether or not the underlying LLM should be forced to use a tool before providing a response.
     tool_choice: Option<ToolChoice>,
+    /// Context compressor for managing token limits
+    context_compressor: Option<std::sync::Arc<dyn crate::compression::ContextCompressor>>,
+    /// Maximum context tokens before compression
+    max_context_tokens: Option<usize>,
 }
 
 impl<M> AgentBuilderSimple<M>
@@ -385,6 +436,8 @@ where
             dynamic_tools: vec![],
             tools: ToolSet::default(),
             tool_choice: None,
+            context_compressor: None,
+            max_context_tokens: None,
         }
     }
 
@@ -475,6 +528,37 @@ where
         self
     }
 
+    /// Set a context compressor for managing chat history token limits.
+    ///
+    /// When combined with `max_context_tokens`, the agent will automatically
+    /// compress chat history to fit within the token budget.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use rig::compression::SlidingWindowCompressor;
+    ///
+    /// let agent = client.agent("gpt-4")
+    ///     .context_compressor(SlidingWindowCompressor::new().with_preserve_first(1))
+    ///     .max_context_tokens(8000)
+    ///     .build();
+    /// ```
+    pub fn context_compressor<C: crate::compression::ContextCompressor + 'static>(
+        mut self,
+        compressor: C,
+    ) -> Self {
+        self.context_compressor = Some(std::sync::Arc::new(compressor));
+        self
+    }
+
+    /// Set the maximum context tokens before compression is applied.
+    ///
+    /// Should be set lower than the model's actual context window to leave
+    /// room for the system prompt and response tokens.
+    pub fn max_context_tokens(mut self, tokens: usize) -> Self {
+        self.max_context_tokens = Some(tokens);
+        self
+    }
+
     /// Add some dynamic tools to the agent. On each prompt, `sample` tools from the
     /// dynamic toolset will be inserted in the request.
     pub fn dynamic_tools(
@@ -526,6 +610,8 @@ where
             tool_choice: self.tool_choice,
             dynamic_context: Arc::new(RwLock::new(self.dynamic_context)),
             tool_server_handle,
+            context_compressor: self.context_compressor,
+            max_context_tokens: self.max_context_tokens,
         }
     }
 }

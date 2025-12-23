@@ -73,6 +73,10 @@ where
     pub dynamic_context: DynamicContextStore,
     /// Whether or not the underlying LLM should be forced to use a tool before providing a response.
     pub tool_choice: Option<ToolChoice>,
+    /// Optional context compressor for managing token limits.
+    pub context_compressor: Option<Arc<dyn crate::compression::ContextCompressor>>,
+    /// Maximum context tokens before compression is applied.
+    pub max_context_tokens: Option<usize>,
 }
 
 impl<M> Agent<M>
@@ -95,6 +99,18 @@ where
         chat_history: Vec<Message>,
     ) -> Result<CompletionRequestBuilder<M>, CompletionError> {
         let prompt = prompt.into();
+
+        // Apply context compression if configured
+        let chat_history = match (&self.context_compressor, self.max_context_tokens) {
+            (Some(compressor), Some(max_tokens))
+                if compressor.needs_compression(&chat_history, max_tokens) =>
+            {
+                compressor
+                    .compress(chat_history, max_tokens)
+                    .map_err(|e| CompletionError::RequestError(e.to_string().into()))?
+            }
+            _ => chat_history,
+        };
 
         // Find the latest message in the chat history that contains RAG text
         let rag_text = prompt.rag_text();
