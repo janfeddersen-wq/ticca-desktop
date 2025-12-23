@@ -118,10 +118,21 @@ impl SystemExecutionsState {
         self.next_terminal_id = self.next_terminal_id.saturating_add(1);
 
         // Get environment overrides for external tools (PATH injection)
-        let env = external_tools::env_overrides().unwrap_or_else(|e| {
+        let mut env = external_tools::env_overrides().unwrap_or_else(|e| {
             warn!("Failed to get external tools env: {}", e);
             HashMap::new()
         });
+
+        // Add headless environment variables to disable interactive pagers and prompts.
+        // This prevents tools like `git log`, `less`, `man`, etc. from waiting for user input.
+        // Works across all platforms (Linux, macOS, Windows).
+        env.insert("TERM".to_string(), "dumb".to_string());
+        env.insert("PAGER".to_string(), "cat".to_string());
+        env.insert("GIT_PAGER".to_string(), "cat".to_string());
+        env.insert("BAT_PAGER".to_string(), String::new());
+        env.insert("SYSTEMD_PAGER".to_string(), String::new());
+        env.insert("LESS".to_string(), "-FRX".to_string());
+        env.insert("GIT_TERMINAL_PROMPT".to_string(), "0".to_string());
 
         let backend = BackendSettings {
             program,

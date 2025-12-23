@@ -536,8 +536,13 @@ pub async fn check_missing_external_tools() -> Vec<ExternalToolId> {
 
     let mut missing = Vec::new();
 
-    // Only check pandoc and node for the startup prompt (libreoffice is optional/large)
-    let tools_to_check = [ExternalToolId::Pandoc, ExternalToolId::Node];
+    // Check all tools for the startup prompt
+    let tools_to_check = [
+        ExternalToolId::Pandoc,
+        ExternalToolId::Node,
+        ExternalToolId::Uv,
+        ExternalToolId::LibreOffice,
+    ];
 
     for tool_id in tools_to_check {
         let status = manager.status(tool_id).await;
