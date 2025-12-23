@@ -43,6 +43,11 @@ pub enum Msg {
         chars_in_window: usize,
         window_ms: u64,
     },
+    /// Token usage from the API response
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
     PollStreamStats,
     AnimationTick,
     StopStreaming,

@@ -22,6 +22,7 @@ use crate::tools::{
 
 use futures::StreamExt;
 use rig::agent::AgentBuilder;
+use rig::completion::GetTokenUsage;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -92,6 +93,11 @@ pub enum RunnerEvent {
         id: u64,
         name: String,
         args: String,
+    },
+    /// Token usage from the API response (input includes system prompt, tools, messages)
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
     },
     StreamComplete,
     StreamStopped,
@@ -351,6 +357,18 @@ pub fn run_rig_agent_stream(
     system_exec_tx: mpsc::UnboundedSender<crate::tools::SystemExecRequest>,
 ) -> impl futures::Stream<Item = RunnerEvent> {
     async_stream::stream! {
+        // Log context size for debugging token usage
+        let history_chars: usize = chat_history.iter().map(|m| m.content.len()).sum();
+        let prompt_chars = system_prompt.len();
+        let user_chars = user_message.len();
+        tracing::info!(
+            "Agent request: history={} msgs ({} chars), prompt={} chars, user={} chars",
+            chat_history.len(),
+            history_chars,
+            prompt_chars,
+            user_chars
+        );
+
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RunnerEvent>();
         let (approval_request_tx, mut approval_request_rx) = mpsc::unbounded_channel::<ToolApprovalRequest>();
         let approval_gate = Arc::new(ToolApprovalGate::new(approval_request_tx));
@@ -1065,9 +1083,28 @@ async fn run_agent_stream(
                             let args = tool_call.function.arguments.to_string();
                             let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
                         }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Final(response),
+                        )) => {
+                            // Emit usage after each LLM turn (before tool execution)
+                            if let Some(usage) = response.token_usage() {
+                                tracing::info!(
+                                    "Usage update (provider=chatgpt): input={}, output={}",
+                                    usage.input_tokens,
+                                    usage.output_tokens
+                                );
+                                let _ = event_tx.send(RunnerEvent::Usage {
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                });
+                            }
+                        }
                         Ok(MultiTurnStreamItem::StreamUserItem(
                             StreamedUserContent::ToolResult(_),
                         )) => {}
+                        // Skip FinalResponse - its aggregated_usage sums all turns which is wrong
+                        // for input_tokens (each turn already includes full history)
+                        Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
                         Ok(_) => {}
                         Err(e) => {
                             let error_msg = format!("ChatGPT stream error: {}", e);
@@ -1227,9 +1264,28 @@ async fn run_agent_stream(
                             let args = tool_call.function.arguments.to_string();
                             let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
                         }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Final(response),
+                        )) => {
+                            // Emit usage after each LLM turn (before tool execution)
+                            if let Some(usage) = response.token_usage() {
+                                tracing::info!(
+                                    "Usage update (provider=gemini): input={}, output={}",
+                                    usage.input_tokens,
+                                    usage.output_tokens
+                                );
+                                let _ = event_tx.send(RunnerEvent::Usage {
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                });
+                            }
+                        }
                         Ok(MultiTurnStreamItem::StreamUserItem(
                             StreamedUserContent::ToolResult(_),
                         )) => {}
+                        // Skip FinalResponse - its aggregated_usage sums all turns which is wrong
+                        // for input_tokens (each turn already includes full history)
+                        Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
                         Ok(_) => {}
                         Err(e) => {
                             let error_msg = format!("Gemini stream error: {}", e);
@@ -1392,9 +1448,41 @@ async fn run_agent_stream(
                             let args = tool_call.function.arguments.to_string();
                             let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
                         }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Final(response),
+                        )) => {
+                            // Emit usage after each LLM turn
+                            match response.token_usage() {
+                                Some(usage) => {
+                                    tracing::info!(
+                                        "Usage update (provider=claude): input={}, output={}",
+                                        usage.input_tokens,
+                                        usage.output_tokens
+                                    );
+                                    let _ = event_tx.send(RunnerEvent::Usage {
+                                        input_tokens: usage.input_tokens,
+                                        output_tokens: usage.output_tokens,
+                                    });
+                                }
+                                None => {
+                                    tracing::warn!("Claude Final: token_usage() returned None");
+                                }
+                            }
+                        }
                         Ok(MultiTurnStreamItem::StreamUserItem(
                             StreamedUserContent::ToolResult(_),
-                        )) => {}
+                        )) => {
+                            tracing::debug!("Claude ToolResult received");
+                        }
+                        Ok(MultiTurnStreamItem::FinalResponse(final_response)) => {
+                            // Log what FinalResponse contains (but don't use it)
+                            let usage = final_response.usage();
+                            tracing::info!(
+                                "Claude FinalResponse (aggregated, not used): input={}, output={}",
+                                usage.input_tokens,
+                                usage.output_tokens
+                            );
+                        }
                         Ok(_) => {}
                         Err(e) => {
                             let error_msg = format!("Claude stream error: {}", e);

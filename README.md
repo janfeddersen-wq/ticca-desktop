@@ -1,253 +1,455 @@
-# Ticca Desktop
+<div align="center">
 
-A sleek, Iced-based desktop application for AI-assisted coding. Ticca provides a native GUI for interacting with Claude and other LLM providers, with built-in tools for file operations, code search, and shell commands.
+# 🤖 Ticca Desktop
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)
-![Version](https://img.shields.io/badge/version-0.11.0-green.svg)
+### AI-Powered Coding Assistant with Real Filesystem Access
 
-## Features
+A native desktop application that brings AI coding assistance directly to your machine. Built with [Iced](https://iced.rs/) and Rust for speed, security, and seamless integration with your development workflow.
 
-### 🤖 AI Agents
-- **Coding Agent** - Writes, modifies, and executes code with full tool access
-- **Planning Agent** - Breaks down complex tasks into actionable steps and creates execution roadmaps
-- **Agent Invocation** - Agents can invoke other agents via the `invoke_agent` tool for multi-agent workflows
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://www.rust-lang.org/)
+[![Version](https://img.shields.io/badge/version-0.16.0-green.svg)](https://github.com/jan/ticca-desktop/releases)
+[![CI](https://github.com/jan/ticca-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/jan/ticca-desktop/actions/workflows/ci.yml)
 
-### 🛠️ Native Tools
-All tools are implemented in Rust for maximum performance:
-- **list_files** - List files and directories with intelligent filtering
-- **read_file** - Read file contents with optional line range
-- **write_file** - Write content to files
-- **edit_file** - Edit files using content replacement, text replacements, or snippet deletion
-- **delete_file** - Delete files with diff generation
-- **grep** - Search for text patterns using ripgrep libraries
-- **shell** - Execute shell commands with timeout support
-- **list_agents** - List all available agents with their identifiers and descriptions
-- **invoke_agent** - Invoke another agent with its own isolated message history
+[Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Contributing](#-contributing)
 
-### 🎨 Theming
-11 built-in themes including:
-- Dark / Light
-- Zinc
-- Dracula
-- Nord
-- Catppuccin (Mocha & Latte)
-- Tokyo Night
-- One Dark
-- Gruvbox (Dark & Light)
+</div>
 
-### 🔐 OAuth Authentication
-Native OAuth support for multiple providers:
-- **Claude** (Anthropic) - Public PKCE flow
-- **Gemini** (Google) - Public PKCE flow (using gemini-cli credentials)
-- **Gemini Code Assist** (Google) - Enterprise code assistance provider
-- **ChatGPT** (OpenAI) - Public PKCE flow
+---
 
-### 💾 Session Management
-- Persistent chat sessions stored in SQLite
-- Session history and message recall
-- Configuration persistence
-- Per-agent model pinning
+## 🎯 What is Ticca?
 
-### 📋 Clipboard & Image Support
-- Paste images from clipboard (`Ctrl+V`)
-- Drag & drop image files (X11)
-- Image attachments in chat messages
+Ticca is a **local-first** desktop application that connects you with powerful AI models (Claude, Gemini, ChatGPT) while giving them **real access to your filesystem**. Unlike browser-based tools, Ticca runs natively on your machine—the AI can read files, write code, execute shell commands, and search your codebase through native Rust tools.
 
-## Project Structure
+### Why Choose Ticca?
 
-```
-ticca-desktop/
-├── crates/
-│   ├── ticca-app/          # Iced GUI application
-│   │   ├── src/
-│   │   │   ├── app.rs           # Main application state
-│   │   │   ├── views/           # UI views (chat, config)
-│   │   │   ├── theme/           # Theme definitions (11 themes)
-│   │   │   ├── llm_stream.rs    # Streaming LLM responses
-│   │   │   ├── keybindings.rs   # Keyboard shortcuts
-│   │   │   ├── session_manager.rs # Session persistence
-│   │   │   ├── image_handler.rs # Image clipboard/drag-drop
-│   │   │   ├── agent_graph.rs   # Agent invocation graph visualization
-│   │   │   └── ...
-│   │   └── assets/
-│   │       └── fonts/           # Noto Sans font family
-│   │
-│   ├── ticca-core/         # Core business logic
-│   │   └── src/
-│   │       ├── agents/          # AI agent definitions
-│   │       ├── tools/           # Native tool implementations
-│   │       │   ├── rig_tools.rs # Rig-compatible tool wrappers
-│   │       │   ├── file_ops.rs  # list_files, read_file
-│   │       │   ├── file_mods.rs # edit_file, delete_file
-│   │       │   ├── grep.rs      # Text search
-│   │       │   └── shell.rs     # Shell command execution
-│   │       ├── config/          # SQLite configuration database
-│   │       ├── session/         # Session storage
-│   │       └── llm/             # LLM providers and clients
-│   │           ├── model_service.rs    # Model selection and management
-│   │           ├── provider_registry.rs # LLM provider registry
-│   │           └── providers/          # Claude, Gemini, ChatGPT providers
-│   │
-│   └── ticca-oauth/        # OAuth implementations
-│       └── src/
-│           ├── claude.rs        # Claude/Anthropic OAuth
-│           ├── gemini.rs        # Google Gemini OAuth
-│           ├── chatgpt.rs       # OpenAI ChatGPT OAuth
-│           ├── pkce.rs          # PKCE utilities
-│           └── callback_server.rs # Local OAuth callback server
-│
-├── vendor/
-│   └── rig-core/          # Patched rig-core dependency
-│
-├── Cargo.toml              # Workspace configuration
-├── LICENSE                 # MIT License
-├── AGENTS.md               # Agent configuration guidance
-└── README.md
-```
+| Feature | Benefit |
+|---------|---------|
+| 🔒 **Privacy-First** | Your code stays on your machine. Only prompts go to the LLM API. |
+| ⚡ **Native Performance** | Built in Rust with the Iced GUI framework—fast startup, low memory. |
+| 🛠️ **Real Filesystem Access** | AI agents can actually read, write, and modify your codebase. |
+| 🔗 **Multi-Agent Orchestration** | Specialized agents can invoke each other for complex workflows. |
+| 🎨 **Beautiful Themes** | 11 built-in themes including Catppuccin, Dracula, Nord, and more. |
+| 🔐 **OAuth Authentication** | No API keys to manage—just click and authenticate. |
+| 📦 **Cross-Platform** | Runs on Linux, macOS, and Windows. |
 
-## Requirements
+---
 
-- **Rust** 2024 edition (1.85+)
-- **Linux/macOS/Windows** - Cross-platform support via Iced
-- **SQLite** - Bundled via rusqlite
+## ✨ Features
 
-### Linux Dependencies
+### 🤖 Multi-Provider AI Support
 
-On Linux, you may need to install additional packages for the GUI:
+Authenticate with your preferred AI provider using secure OAuth PKCE—no API keys required:
+
+| Provider | Model Examples | Status |
+|----------|---------------|--------|
+| **Claude** (Anthropic) | Claude Sonnet 4, Claude 3.5 | ✅ Fully Supported |
+| **Gemini** (Google) | Gemini 2.0 Flash, Gemini Pro | ✅ Fully Supported |
+| **ChatGPT** (OpenAI) | GPT-4o, GPT-4 Turbo | ✅ Fully Supported |
+
+### 🧠 Intelligent Agent System
+
+Ticca ships with specialized agents that understand their domain and can orchestrate complex tasks:
+
+#### Coding Agent
+The primary agent for code generation and modification. Capabilities include:
+- Reading and writing files with intelligent diffing
+- Executing shell commands in an integrated terminal
+- Searching codebases with ripgrep-powered regex search
+- Managing long-running processes
+- Tracking tasks with a built-in to-do list
+
+#### Planning Agent
+Strategic task breakdown and project planning:
+- Analyzes complex features and creates step-by-step roadmaps
+- Identifies dependencies and potential blockers
+- Can hand off implementation tasks to the Coding Agent
+
+#### Skills Agent
+Extends Ticca with Python-based capabilities:
+- Runs specialized Python scripts for advanced tasks
+- Manages Python virtual environments automatically
+- Includes bundled skills for common operations
+
+### 🛠️ Native Rust Tooling
+
+Every tool is implemented in Rust for maximum performance and reliability:
+
+#### File Operations
+| Tool | Description |
+|------|-------------|
+| `list_files` | Recursively list files with intelligent filtering (ignores `node_modules`, `target`, etc.) |
+| `read_file` | Read file contents with optional line-range selection |
+| `write_file` | Create new files with automatic directory creation |
+| `edit_file` | Targeted text replacements with diff generation |
+| `delete_file` | Remove files with safety checks and diff output |
+
+#### Search & Execution
+| Tool | Description |
+|------|-------------|
+| `grep` | Blazing-fast regex search powered by ripgrep |
+| `execute_shell` | Run commands in an integrated terminal with real-time output |
+| `list_processes` | View all running terminal processes |
+| `read_process_output` | Stream output from long-running processes |
+| `kill_process` | Gracefully terminate processes |
+
+#### Agent Coordination
+| Tool | Description |
+|------|-------------|
+| `list_agents` | Discover available agents and their capabilities |
+| `invoke_agent` | Delegate tasks to specialized agents with isolated context |
+| `todo_read` / `todo_write` | Maintain agent-scoped task lists for complex workflows |
+
+### 🔌 MCP (Model Context Protocol) Support
+
+Extend Ticca's capabilities with external tools via the Model Context Protocol:
+
+- Import MCP server configurations from Claude Desktop, Cursor, or custom JSON
+- Support for both **stdio** and **HTTP** transports
+- Automatic tool discovery and integration
+- Manage servers through the Settings UI
+
+### 📦 External Tool Management
+
+Ticca can download and manage external tools on-demand:
+
+| Tool | Purpose |
+|------|---------|
+| **UV** | Fast Python package installer (required for Skills) |
+| **Pandoc** | Universal document converter |
+| **Node.js** | JavaScript runtime for document generation |
+| **LibreOffice** | Office suite for spreadsheet operations |
+
+Tools are downloaded to `~/.local/share/ticca-desktop/tools/` and managed through the Settings UI.
+
+### 🎨 Theme Gallery
+
+Choose from 11 beautiful themes to match your editor:
+
+| Dark Themes | Light Themes |
+|-------------|--------------|
+| Dark (default) | Light |
+| Zinc | Catppuccin Latte |
+| Dracula | Gruvbox Light |
+| Nord | |
+| Catppuccin Mocha | |
+| Tokyo Night | |
+| One Dark | |
+| Gruvbox Dark | |
+
+Toggle themes instantly with `Ctrl+T` or select from the Settings panel.
+
+---
+
+## 📥 Installation
+
+### Prerequisites
+
+- **Rust 2024 edition** (1.85 or later)
+- Platform-specific dependencies (see below)
+
+### Linux
+
+Install system dependencies first:
 
 ```bash
 # Ubuntu/Debian
-sudo apt install libxkbcommon-dev libwayland-dev
+sudo apt install libxkbcommon-dev libwayland-dev libgtk-3-dev pkg-config libssl-dev
 
 # Fedora
-sudo dnf install libxkbcommon-devel wayland-devel
+sudo dnf install libxkbcommon-devel wayland-devel gtk3-devel openssl-devel
+
+# Arch Linux
+sudo pacman -S libxkbcommon wayland gtk3 openssl
 ```
 
-## Building
+### macOS
+
+No additional dependencies required. Xcode Command Line Tools should be installed:
+
+```bash
+xcode-select --install
+```
+
+### Windows
+
+No additional dependencies required. Ensure you have the Visual Studio C++ Build Tools installed.
+
+### Building from Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/jan/ticca-desktop
 cd ticca-desktop
 
-# Download UV binaries (required for Python skill support)
-./scripts/download-uv.sh 0.5.14
-
-# Build in release mode
+# Build in release mode (optimized)
 cargo build --release
 
 # Run the application
-cargo run --release
+./target/release/ticca
 ```
 
-The compiled binary will be at `target/release/ticca`.
+### Pre-built Binaries
 
-### UV Binary Bundling
+Download pre-built binaries from the [Releases](https://github.com/jan/ticca-desktop/releases) page:
 
-Ticca bundles the [UV](https://github.com/astral-sh/uv) Python package manager for running Python-based skills. The UV binaries are not committed to the repository due to their size (~177MB total for all platforms).
+| Platform | Download |
+|----------|----------|
+| Linux x86_64 | `ticca-linux-x86_64.tar.gz` |
+| macOS x86_64 | `ticca-macos-x86_64.tar.gz` |
+| macOS ARM64 | `ticca-macos-aarch64.tar.gz` |
+| Windows x86_64 | `ticca-windows-x86_64.zip` |
 
-**Before building**, run the download script:
+---
+
+## 🚀 Quick Start
+
+### 1. Launch Ticca
 
 ```bash
-./scripts/download-uv.sh 0.5.14
+./target/release/ticca
 ```
 
-This downloads UV binaries for all supported platforms to `vendor/uv/`. The build will warn if binaries are missing for your target platform.
+### 2. Authenticate with a Provider
 
-## Configuration
+Click on one of the provider buttons (Claude, Gemini, or ChatGPT) in the sidebar. A browser window will open for OAuth authentication.
 
-Ticca stores its configuration in a platform-specific data directory:
+### 3. Start Coding with AI
 
-- **Linux**: `~/.local/share/ticca-desktop/`
-- **macOS**: `~/Library/Application Support/ticca-desktop/`
-- **Windows**: `C:\Users\<User>\AppData\Roaming\ticca-desktop\`
+Type your request in the chat input and press `Ctrl+Enter` to send. The AI can now:
 
-Configuration includes:
-- `config.db` - Settings, model configurations, OAuth tokens
-- `sessions.db` - Chat session history
+- Read and understand your codebase
+- Write and modify files
+- Run shell commands
+- Search for patterns across your project
 
-## Usage
+### Example Prompts
 
-### Starting a Chat
+```
+"Read the main.rs file and explain what this application does"
 
-1. Launch Ticca Desktop
-2. Authenticate with your preferred LLM provider (Claude, etc.)
-3. Select an agent (Coding or Planning)
-4. Start chatting!
+"Create a new Rust module for handling user authentication"
 
-### Keyboard Shortcuts
+"Find all TODO comments in this project and list them"
+
+"Run the test suite and fix any failing tests"
+
+"Refactor the database module to use connection pooling"
+```
+
+---
+
+## ⌨️ Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+Enter` | Send message |
-| `Ctrl+N` | New session |
+| `Ctrl+N` | New chat session |
 | `Ctrl+,` | Open settings |
-| `Ctrl+T` | Toggle theme |
-| `Ctrl+1` | Switch to Coding agent |
-| `Ctrl+2` | Switch to Planning agent |
-| `Ctrl+V` | Paste (including images) |
-| `Escape` | Close panel |
+| `Ctrl+T` | Cycle through themes |
+| `Ctrl+1` | Switch to Coding Agent |
+| `Ctrl+2` | Switch to Planning Agent |
+| `Ctrl+V` | Paste (supports images) |
+| `Escape` | Cancel current operation |
 
-### Working with Tools
+---
 
-The Coding Agent has access to all native tools. Example prompts:
+## 📁 Project Architecture
 
 ```
-"List all Rust files in the src directory"
-"Read the contents of Cargo.toml"
-"Search for 'TODO' comments in the codebase"
-"Run cargo test"
+ticca-desktop/
+├── crates/
+│   ├── ticca-app/              # Desktop GUI application
+│   │   ├── src/
+│   │   │   ├── app.rs          # Main application state
+│   │   │   ├── views/          # UI components (chat, settings, etc.)
+│   │   │   ├── theme/          # Color schemes and styles
+│   │   │   ├── widgets/        # Custom Iced widgets
+│   │   │   └── messages.rs     # Application message types
+│   │   └── assets/             # Fonts, icons, desktop files
+│   │
+│   ├── ticca-core/             # Business logic library
+│   │   └── src/
+│   │       ├── agents/         # Agent definitions and runner
+│   │       ├── tools/          # Native Rust tool implementations
+│   │       ├── llm/            # LLM provider integrations
+│   │       ├── config/         # SQLite database and settings
+│   │       ├── session/        # Chat history persistence
+│   │       ├── skills/         # Python skill management
+│   │       └── external_tools/ # On-demand tool downloads
+│   │
+│   └── ticca-oauth/            # OAuth PKCE implementation
+│       └── src/
+│           ├── claude.rs       # Anthropic OAuth flow
+│           ├── gemini.rs       # Google OAuth flow
+│           ├── chatgpt.rs      # OpenAI OAuth flow
+│           └── callback_server.rs  # Local callback handler
+│
+├── vendor/                     # Patched dependencies
+│   └── rig-core/               # LLM framework (patched for OAuth)
+│
+├── docs/                       # Additional documentation
+└── skills.zip                  # Bundled Python skills
 ```
 
-## Architecture
+---
 
-### Crate Overview
+## 💾 Data Storage
 
-| Crate | Purpose |
-|-------|---------|
-| `ticca-app` | Iced GUI application, views, theming |
-| `ticca-core` | Business logic, agents, tools, database |
-| `ticca-oauth` | OAuth flows for LLM providers |
+Ticca stores data in platform-specific directories:
 
-### Key Dependencies
+| Platform | Location |
+|----------|----------|
+| **Linux** | `~/.local/share/ticca-desktop/` |
+| **macOS** | `~/Library/Application Support/ticca-desktop/` |
+| **Windows** | `%APPDATA%\ticca-desktop\` |
 
-- **[Iced](https://iced.rs/)** - Cross-platform GUI framework (v0.14)
-- **[rig-core](https://github.com/0xPlaygrounds/rig)** - LLM framework with tool support (v0.27)
-- **[rusqlite](https://github.com/rusqlite/rusqlite)** - SQLite bindings
-- **[tokio](https://tokio.rs/)** - Async runtime
-- **[ripgrep libraries](https://github.com/BurntSushi/ripgrep)** - Fast text search (grep-regex, grep-searcher, ignore)
-- **[arboard](https://github.com/1Password/arboard)** - Cross-platform clipboard with image support
-- **[twemoji-assets](https://crates.io/crates/twemoji-assets)** - Emoji rendering via Twemoji SVGs
+### Directory Structure
 
-## Development
+```
+ticca-desktop/
+├── config.db           # Settings and OAuth tokens (SQLite)
+├── sessions.db         # Chat history (SQLite)
+├── skills/             # Extracted Python skills
+├── tools/              # Downloaded external tools
+├── bin/                # Extracted binaries (UV, etc.)
+└── venvs/              # Python virtual environments
+```
+
+---
+
+## 🔧 Configuration
+
+### Settings UI
+
+Access settings with `Ctrl+,` or click the gear icon. Available options:
+
+- **Theme**: Select from 11 color schemes
+- **Default Model**: Choose your preferred AI model
+- **YOLO Mode**: Skip tool approval prompts (enabled by default)
+- **Expert Mode**: Show advanced UI sections
+- **Max Tool Rounds**: Limit agent iterations (default: 500)
+- **Account Rotation**: How to handle multiple OAuth accounts
+
+### MCP Server Configuration
+
+Import MCP servers from:
+- Claude Desktop (`~/.config/claude/claude_desktop_config.json`)
+- Cursor (`.cursor/mcp.json`)
+- Custom JSON configuration
+
+Example MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+    }
+  }
+}
+```
+
+---
+
+## 🛠️ Development
+
+### Running in Development Mode
+
+```bash
+# With debug logging
+RUST_LOG=debug cargo run -p ticca-app
+
+# With info-level logging
+RUST_LOG=info cargo run -p ticca-app
+```
 
 ### Running Tests
 
 ```bash
-# Run all tests
+# All tests
 cargo test
 
-# Run tests for a specific crate
+# Core library tests only
 cargo test -p ticca-core
+
+# With output
+cargo test -- --nocapture
 ```
 
-### Logging
-
-Set the `RUST_LOG` environment variable to control log output:
+### Code Quality
 
 ```bash
-RUST_LOG=info cargo run
-RUST_LOG=debug cargo run
-RUST_LOG=ticca_core=debug cargo run
+# Format code
+cargo fmt --all
+
+# Check formatting
+cargo fmt --all -- --check
+
+# Run clippy lints
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-## License
+### Building for Release
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+```bash
+# Optimized release build with LTO
+cargo build --release
 
-Copyright (c) 2025 Jan
+# The binary will be at:
+# ./target/release/ticca
+```
 
 ---
 
-*Ticca Desktop - Your AI coding companion*
+## 🤝 Contributing
+
+Contributions are welcome! Please read our guidelines before submitting:
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feat/amazing-feature`)
+3. **Commit** your changes using [Conventional Commits](https://www.conventionalcommits.org/)
+   - `feat:` New features
+   - `fix:` Bug fixes
+   - `refactor:` Code refactoring
+   - `docs:` Documentation updates
+   - `ci:` CI/CD changes
+4. **Push** to your branch (`git push origin feat/amazing-feature`)
+5. **Open** a Pull Request
+
+### Code Style
+
+- Rust 2024 edition with standard `rustfmt` formatting
+- Modules use `snake_case`, types use `PascalCase`
+- Use `anyhow`/`thiserror` for error handling
+- Use `tracing` for logging
+- Keep UI logic in `ticca-app`, domain logic in `ticca-core`
+
+See [AGENTS.md](AGENTS.md) for detailed coding guidelines.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- [Iced](https://iced.rs/) - Cross-platform GUI library for Rust
+- [Rig](https://github.com/0xPlaygrounds/rig) - LLM orchestration framework
+- [ripgrep](https://github.com/BurntSushi/ripgrep) - Fast regex search
+- [Catppuccin](https://github.com/catppuccin/catppuccin) - Soothing pastel theme
+- [Dracula](https://draculatheme.com/) - Dark theme for developers
+
+---
+
+<div align="center">
+
+**[Report Bug](https://github.com/jan/ticca-desktop/issues)** • **[Request Feature](https://github.com/jan/ticca-desktop/issues)** • **[Discussions](https://github.com/jan/ticca-desktop/discussions)**
+
+Made with ❤️ in Rust
+
+</div>

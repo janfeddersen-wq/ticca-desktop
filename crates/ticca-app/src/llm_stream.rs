@@ -34,6 +34,13 @@ impl From<RunnerEvent> for Message {
             RunnerEvent::ToolApprovalRequested { id, name, args } => {
                 Message::Chat(chat::Msg::ToolApprovalRequested { id, name, args })
             }
+            RunnerEvent::Usage {
+                input_tokens,
+                output_tokens,
+            } => Message::Chat(chat::Msg::Usage {
+                input_tokens,
+                output_tokens,
+            }),
             RunnerEvent::StreamComplete => Message::Chat(chat::Msg::StreamComplete),
             RunnerEvent::StreamStopped => Message::Chat(chat::Msg::StreamStopped),
             RunnerEvent::StreamError(error) => Message::Chat(chat::Msg::StreamError(error)),

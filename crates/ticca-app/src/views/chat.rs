@@ -46,6 +46,19 @@ fn agent_label(agent_type: AgentType) -> &'static str {
     }
 }
 
+/// Format token count for display with thousands separator (e.g., 45000 -> "45 000")
+fn format_tokens(tokens: i64) -> String {
+    let s = tokens.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(' ');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
 /// Render the chat view
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
@@ -65,6 +78,8 @@ pub fn view<'a>(
     secs_since_bytes: u64,
     spinner_frame: usize,
     flow_panel_visible: bool,
+    tokens_used: i64,
+    context_limit: i64,
 ) -> Element<'a, Message> {
     let agent_selector: Element<Message> = if expert_mode_enabled {
         let buttons: Vec<Element<Message>> = AgentType::all()
@@ -92,12 +107,74 @@ pub fn view<'a>(
         Space::new().width(Length::Fixed(0.0)).into()
     };
 
+    // Token usage indicator
+    let usage_percentage = if context_limit > 0 {
+        (tokens_used as f64 / context_limit as f64).min(1.0)
+    } else {
+        0.0
+    };
+    let usage_text = format!(
+        "{} / {}",
+        format_tokens(tokens_used),
+        format_tokens(context_limit)
+    );
+
+    // Progress bar dimensions
+    let bar_width = 80.0;
+    let bar_height = 6.0;
+    let filled_width = (bar_width * usage_percentage) as f32;
+
+    // Color based on usage percentage
+    let bar_color = if usage_percentage > 0.9 {
+        iced::Color::from_rgb(0.9, 0.2, 0.2) // Red when > 90%
+    } else if usage_percentage > 0.7 {
+        iced::Color::from_rgb(0.9, 0.7, 0.2) // Orange when > 70%
+    } else {
+        iced::Color::from_rgb(0.3, 0.7, 0.4) // Green otherwise
+    };
+
+    let token_usage_display = container(
+        row![
+            text(usage_text).size(11),
+            // Progress bar using nested containers
+            container(
+                container(Space::new().width(Length::Fixed(filled_width)).height(Length::Fixed(bar_height as f32)))
+                    .style(move |_theme: &iced::Theme| container::Style {
+                        background: Some(bar_color.into()),
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+            )
+            .width(Length::Fixed(bar_width as f32))
+            .height(Length::Fixed(bar_height as f32))
+            .style(|theme: &iced::Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(palette.background.weak.color.into()),
+                    border: iced::Border {
+                        radius: 3.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            }),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding([4, 8]);
+
     // Header with agent switcher and settings
     let header = container(
         row![
             agent_selector,
             // Spacer
             horizontal_space(),
+            // Token usage indicator
+            token_usage_display,
             // Actions
             row![
                 button(

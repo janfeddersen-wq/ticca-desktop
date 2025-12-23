@@ -367,7 +367,10 @@ where
                             did_call_tool = false;
                         },
                         Ok(StreamedAssistantContent::Final(final_resp)) => {
-                            if let Some(usage) = final_resp.token_usage() { aggregated_usage += usage; };
+                            if let Some(usage) = final_resp.token_usage() {
+                                aggregated_usage += usage;
+                            }
+
                             if is_text_response {
                                 if let Some(ref hook) = self.hook {
                                     hook.on_stream_completion_response_finish(&prompt, &final_resp, cancel_signal.clone()).await;
@@ -378,9 +381,10 @@ where
                                 }
 
                                 tracing::Span::current().record("gen_ai.completion", &last_text_response);
-                                yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::Final(final_resp)));
-                                is_text_response = false;
                             }
+
+                            yield Ok(MultiTurnStreamItem::stream_item(StreamedAssistantContent::Final(final_resp)));
+                            is_text_response = false;
                         }
                         Err(e) => {
                             yield Err(e.into());

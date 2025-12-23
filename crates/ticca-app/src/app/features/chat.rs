@@ -25,6 +25,20 @@ use ticca_core::tools::{SystemExecRequest, SystemExecResponse, SystemExecStore};
 
 use super::super::{TiccaApp, Toast, View, effects::Effect};
 
+/// Context window limits by provider (in tokens)
+const CLAUDE_CONTEXT_LIMIT: i64 = 200_000;
+const CHATGPT_CONTEXT_LIMIT: i64 = 270_000;
+const GEMINI_CONTEXT_LIMIT: i64 = 1_000_000;
+
+/// Get context limit for a provider
+fn context_limit_for_provider(provider: ProviderId) -> i64 {
+    match provider {
+        ProviderId::Claude => CLAUDE_CONTEXT_LIMIT,
+        ProviderId::ChatGpt => CHATGPT_CONTEXT_LIMIT,
+        ProviderId::Gemini => GEMINI_CONTEXT_LIMIT,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatPane {
     Chat,
@@ -91,6 +105,9 @@ pub(in crate::app) struct ChatState {
     pub(in crate::app) tps_samples: VecDeque<f64>,
     pub(in crate::app) last_bytes_time: Option<std::time::Instant>,
     pub(in crate::app) spinner_frame: usize,
+    /// Token usage from API responses (input_tokens includes system prompt, tools, all messages)
+    pub(in crate::app) input_tokens: u64,
+    pub(in crate::app) output_tokens: u64,
     pub(in crate::app) call_graph: AgentCallGraph,
     pub(in crate::app) subagent_message_indices: HashMap<usize, usize>,
     panes: iced::widget::pane_grid::State<ChatPane>,
@@ -153,6 +170,8 @@ impl ChatState {
             tps_samples: VecDeque::with_capacity(60),
             last_bytes_time: None,
             spinner_frame: 0,
+            input_tokens: 0,
+            output_tokens: 0,
             call_graph: AgentCallGraph::new(AgentType::Coding),
             subagent_message_indices: HashMap::new(),
             panes,
@@ -199,6 +218,28 @@ impl ChatState {
         ) {
             self.current_session = Some(session);
         }
+    }
+
+    /// Get the current provider based on selected/default model
+    fn current_provider(&self) -> ProviderId {
+        let model_name = self
+            .agent_pinned_models
+            .get(&self.current_agent)
+            .or(self.default_model.as_ref());
+
+        model_name
+            .map(|name| ProviderRegistry::resolve_provider(name))
+            .unwrap_or(ProviderId::Claude)
+    }
+
+    /// Get context limit for the current provider
+    pub(in crate::app) fn context_limit(&self) -> i64 {
+        context_limit_for_provider(self.current_provider())
+    }
+
+    /// Get input tokens used in the current conversation (from API response)
+    pub(in crate::app) fn tokens_used(&self) -> i64 {
+        self.input_tokens as i64
     }
 
     pub(in crate::app) fn subscriptions(&self) -> Vec<Subscription<Message>> {
@@ -429,10 +470,11 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         }
 
         chat::Msg::StreamChunk(chunk) => {
+            app.chat.last_bytes_time = Some(std::time::Instant::now());
+
             if let Some(last) = app.chat.messages.last_mut()
                 && last.is_streaming
             {
-                app.chat.last_bytes_time = Some(std::time::Instant::now());
                 if last.last_was_tool_call && !chunk.trim().is_empty() {
                     last.content.push_str("\n\n💡 ");
                     last.last_was_tool_call = false;
@@ -444,10 +486,11 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         }
 
         chat::Msg::Reasoning(reasoning) => {
+            app.chat.last_bytes_time = Some(std::time::Instant::now());
+
             if let Some(last) = app.chat.messages.last_mut()
                 && last.is_streaming
             {
-                app.chat.last_bytes_time = Some(std::time::Instant::now());
                 if let Some(ref mut existing) = last.reasoning {
                     existing.push_str(&reasoning);
                 } else {
@@ -478,6 +521,20 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                     app.chat.current_tps = sum / app.chat.tps_samples.len() as f64;
                 }
             }
+        }
+
+        chat::Msg::Usage {
+            input_tokens,
+            output_tokens,
+        } => {
+            // Just SET the values from the API - input_tokens is the context window usage
+            tracing::info!(
+                "UI received Usage: input={}, output={}",
+                input_tokens,
+                output_tokens
+            );
+            app.chat.input_tokens = input_tokens;
+            app.chat.output_tokens = output_tokens;
         }
 
         chat::Msg::AnimationTick => {
@@ -749,6 +806,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.raw_view_editors.clear();
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
+            app.chat.input_tokens = 0;
+            app.chat.output_tokens = 0;
             app.chat.sidebar_tab =
                 enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
             app.chat.messages.push(ChatMessage::assistant(
@@ -764,6 +823,10 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             if let Some(loaded) = session_manager::load_session(&session_id) {
                 app.chat.messages = loaded.messages;
                 app.chat.current_session = Some(loaded.session);
+
+                // Reset token tracking - will be updated on next API response
+                app.chat.input_tokens = 0;
+                app.chat.output_tokens = 0;
 
                 app.chat.raw_view_messages.clear();
                 app.chat.raw_view_editors.clear();
@@ -1047,6 +1110,8 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
                 secs_since_bytes,
                 app.chat.spinner_frame,
                 app.chat.flow_pane.is_some(),
+                app.chat.tokens_used(),
+                app.chat.context_limit(),
             ),
             ChatPane::Flow => crate::views::right_sidebar::view(
                 &app.chat.call_graph,
