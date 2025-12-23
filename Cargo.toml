@@ -47,7 +47,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 rig = { version = "0.27", package = "rig-core", features = ["derive", "rmcp"] }
 
 # MCP (Model Context Protocol)
-rmcp = { version = "0.9", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "0.12", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 
 # Markdown & syntax highlighting
 pulldown-cmark = "0.11"
@@ -84,7 +84,7 @@ ticca-core = { path = "crates/ticca-core" }
 ticca-oauth = { path = "crates/ticca-oauth" }
 
 [patch.crates-io]
-rig-core = { path = "vendor/rig-core" }
+rig-core = { git = "https://github.com/janfeddersen-wq/rig.git", branch = "main" }
 
 [profile.release]
 lto = true

@@ -13,7 +13,7 @@ use reqwest::Client as ReqwestClient;
 use serde_json::Value;
 use std::future::Future;
 
-use rig::http_client::{HttpClientExt, LazyBody, MultipartForm, StreamingResponse};
+use rig::http_client::{HttpClientExt, LazyBody, MultipartForm, StreamingResponse, StreamBytesCounter};
 
 /// A wrapper around reqwest::Client that adds custom headers to all requests
 #[derive(Clone, Debug)]
@@ -166,6 +166,32 @@ impl HttpClientExt for OAuthHttpClient {
         let req = Request::from_parts(parts, body_bytes);
 
         self.inner.send_streaming(req)
+    }
+
+    fn send_streaming_with_stats<T>(
+        &self,
+        req: Request<T>,
+        counter: StreamBytesCounter,
+    ) -> impl Future<Output = rig::http_client::Result<StreamingResponse>> + Send
+    where
+        T: Into<Bytes>,
+    {
+        let (mut parts, body) = req.into_parts();
+        parts.headers = self.merge_headers(parts.headers);
+
+        let body_bytes: Bytes = body.into();
+
+        tracing::debug!(
+            "OAuthHttpClient::send_streaming_with_stats - {} {} (headers: {}, body: {} bytes)",
+            parts.method,
+            parts.uri,
+            parts.headers.len(),
+            body_bytes.len()
+        );
+
+        let req = Request::from_parts(parts, body_bytes);
+
+        self.inner.send_streaming_with_stats(req, counter)
     }
 }
 
@@ -479,6 +505,43 @@ impl HttpClientExt for CodexHttpClient {
                     "Codex streaming response header: {}: {}",
                     name,
                     value.to_str().unwrap_or("[non-utf8]")
+                );
+            }
+            Ok(response)
+        }
+    }
+
+    fn send_streaming_with_stats<T>(
+        &self,
+        req: Request<T>,
+        counter: StreamBytesCounter,
+    ) -> impl Future<Output = rig::http_client::Result<StreamingResponse>> + Send
+    where
+        T: Into<Bytes>,
+    {
+        let (mut parts, body) = req.into_parts();
+        parts.headers = self.merge_headers(parts.headers);
+
+        let body_bytes: Bytes = body.into();
+        let body_bytes = self.modify_body_for_codex(body_bytes);
+
+        tracing::debug!(
+            "CodexHttpClient::send_streaming_with_stats - {} {} (headers: {}, body: {} bytes)",
+            parts.method,
+            parts.uri,
+            parts.headers.len(),
+            body_bytes.len()
+        );
+
+        let req = Request::from_parts(parts, body_bytes);
+        let client = self.inner.clone();
+
+        async move {
+            let mut response = client.send_streaming_with_stats(req, counter).await?;
+            if response.headers().get(http::header::CONTENT_TYPE).is_none() {
+                response.headers_mut().insert(
+                    http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/event-stream"),
                 );
             }
             Ok(response)
