@@ -8,6 +8,7 @@
 //! - LLM integration (Claude, etc.)
 
 pub mod agents;
+pub mod compression;
 pub mod config;
 pub mod external_tools;
 pub mod llm;

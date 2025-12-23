@@ -27,6 +27,99 @@ impl AccountRotationPolicy {
     }
 }
 
+/// Compression strategy for managing context window limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompressionStrategy {
+    /// Simple truncation - removes oldest messages first.
+    Truncation,
+    /// Sliding window - preserves first N and last M messages.
+    #[default]
+    SlidingWindow,
+    /// LLM summarization - generates a continuity briefing from removed messages.
+    Summarizing,
+}
+
+impl CompressionStrategy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CompressionStrategy::Truncation => "truncation",
+            CompressionStrategy::SlidingWindow => "sliding_window",
+            CompressionStrategy::Summarizing => "summarizing",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "truncation" => CompressionStrategy::Truncation,
+            "summarizing" => CompressionStrategy::Summarizing,
+            _ => CompressionStrategy::SlidingWindow,
+        }
+    }
+}
+
+/// Compression settings for context window management.
+#[derive(Debug, Clone)]
+pub struct CompressionSettings {
+    /// Whether compression is enabled.
+    pub enabled: bool,
+    /// Percentage of context window that triggers compression (0-100).
+    pub threshold_percent: u32,
+    /// Which compression strategy to use.
+    pub strategy: CompressionStrategy,
+    /// Model to use for summarization (None = use current model).
+    pub summarizer_model: Option<String>,
+    /// Number of initial messages to preserve (e.g., system prompt).
+    pub preserve_first: u32,
+    /// Number of recent messages to always keep.
+    pub preserve_recent: u32,
+}
+
+impl Default for CompressionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::COMPRESSION_ENABLED,
+            threshold_percent: defaults::COMPRESSION_THRESHOLD_PERCENT,
+            strategy: CompressionStrategy::SlidingWindow,
+            summarizer_model: None,
+            preserve_first: defaults::COMPRESSION_PRESERVE_FIRST,
+            preserve_recent: defaults::COMPRESSION_PRESERVE_RECENT,
+        }
+    }
+}
+
+impl CompressionSettings {
+    pub fn load(repo: &impl ConfigRepo) -> Self {
+        let enabled = get_bool(repo, setting_keys::COMPRESSION_ENABLED)
+            .unwrap_or(defaults::COMPRESSION_ENABLED);
+        let threshold_percent = get_u32(repo, setting_keys::COMPRESSION_THRESHOLD_PERCENT)
+            .unwrap_or(defaults::COMPRESSION_THRESHOLD_PERCENT)
+            .clamp(10, 100);
+        let strategy = get_string(repo, setting_keys::COMPRESSION_STRATEGY)
+            .map(|s| CompressionStrategy::parse(&s))
+            .unwrap_or_else(|| CompressionStrategy::parse(defaults::COMPRESSION_STRATEGY));
+        let summarizer_model =
+            get_string(repo, setting_keys::COMPRESSION_SUMMARIZER_MODEL).filter(|s| !s.is_empty());
+        let preserve_first = get_u32(repo, setting_keys::COMPRESSION_PRESERVE_FIRST)
+            .unwrap_or(defaults::COMPRESSION_PRESERVE_FIRST);
+        let preserve_recent = get_u32(repo, setting_keys::COMPRESSION_PRESERVE_RECENT)
+            .unwrap_or(defaults::COMPRESSION_PRESERVE_RECENT);
+
+        Self {
+            enabled,
+            threshold_percent,
+            strategy,
+            summarizer_model,
+            preserve_first,
+            preserve_recent,
+        }
+    }
+
+    /// Calculate the token threshold for a given context window size.
+    pub fn token_threshold(&self, context_window: u64) -> u64 {
+        (context_window * self.threshold_percent as u64) / 100
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypedSettings {
     pub theme: String,
@@ -38,6 +131,7 @@ pub struct TypedSettings {
     pub external_tools_prompt_dismissed: bool,
     pub update_check_skip_remaining: u32,
     pub update_check_dismissed_version: Option<String>,
+    pub compression: CompressionSettings,
 }
 
 impl TypedSettings {
@@ -61,6 +155,7 @@ impl TypedSettings {
             .unwrap_or(defaults::UPDATE_CHECK_SKIP_REMAINING);
         let update_check_dismissed_version =
             get_string(repo, setting_keys::UPDATE_CHECK_DISMISSED_VERSION);
+        let compression = CompressionSettings::load(repo);
 
         Self {
             theme,
@@ -72,6 +167,7 @@ impl TypedSettings {
             external_tools_prompt_dismissed,
             update_check_skip_remaining,
             update_check_dismissed_version,
+            compression,
         }
     }
 }

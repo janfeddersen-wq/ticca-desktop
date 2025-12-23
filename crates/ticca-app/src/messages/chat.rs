@@ -48,6 +48,21 @@ pub enum Msg {
         input_tokens: u64,
         output_tokens: u64,
     },
+    /// Context compression was applied
+    ContextCompressed {
+        original_messages: usize,
+        compressed_messages: usize,
+        original_tokens: usize,
+        compressed_tokens: usize,
+        strategy: String,
+    },
+    /// Context usage warning (approaching limit)
+    ContextUsageWarning {
+        current_tokens: usize,
+        threshold_tokens: u64,
+        context_window: u64,
+        usage_percent: u32,
+    },
     PollStreamStats,
     AnimationTick,
     StopStreaming,

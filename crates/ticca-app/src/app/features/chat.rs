@@ -1025,7 +1025,41 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
 
         chat::Msg::LinkClicked(url) => {
             effects.push(Effect::OpenUrl(url.as_str().to_string()));
-        } // Reserved for future: we used to have ToolResult here.
+        }
+
+        chat::Msg::ContextCompressed {
+            original_messages,
+            compressed_messages,
+            original_tokens,
+            compressed_tokens,
+            strategy,
+        } => {
+            tracing::info!(
+                "Context compressed: {} -> {} messages, {} -> {} tokens ({})",
+                original_messages,
+                compressed_messages,
+                original_tokens,
+                compressed_tokens,
+                strategy
+            );
+            // TODO: Show compression notification in UI
+        }
+
+        chat::Msg::ContextUsageWarning {
+            current_tokens,
+            threshold_tokens,
+            context_window,
+            usage_percent,
+        } => {
+            tracing::debug!(
+                "Context usage: {}% ({}/{} tokens, threshold: {})",
+                usage_percent,
+                current_tokens,
+                context_window,
+                threshold_tokens
+            );
+            // TODO: Update context usage indicator in UI
+        }
     }
 
     effects

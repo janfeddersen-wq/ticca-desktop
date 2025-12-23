@@ -17,7 +17,7 @@ pub use paths::{
 };
 pub use repo::ConfigRepo;
 pub use service::{ConfigService, SettingsSnapshot};
-pub use settings::{AccountRotationPolicy, TypedSettings};
+pub use settings::{AccountRotationPolicy, CompressionSettings, CompressionStrategy, TypedSettings};
 
 /// Well-known setting keys
 pub mod setting_keys {
@@ -38,6 +38,20 @@ pub mod setting_keys {
     pub const UPDATE_CHECK_SKIP_REMAINING: &str = "update_check_skip_remaining";
     /// Version that was dismissed via "Skip This Version" button.
     pub const UPDATE_CHECK_DISMISSED_VERSION: &str = "update_check_dismissed_version";
+
+    // Compression settings
+    /// Whether context compression is enabled.
+    pub const COMPRESSION_ENABLED: &str = "compression_enabled";
+    /// Percentage of context window that triggers compression (0-100).
+    pub const COMPRESSION_THRESHOLD_PERCENT: &str = "compression_threshold_percent";
+    /// Compression strategy: "truncation", "sliding_window", or "summarizing".
+    pub const COMPRESSION_STRATEGY: &str = "compression_strategy";
+    /// Model to use for summarization (if strategy is "summarizing"). Empty = use current model.
+    pub const COMPRESSION_SUMMARIZER_MODEL: &str = "compression_summarizer_model";
+    /// Number of initial messages to preserve (e.g., system prompt).
+    pub const COMPRESSION_PRESERVE_FIRST: &str = "compression_preserve_first";
+    /// Number of recent messages to always keep.
+    pub const COMPRESSION_PRESERVE_RECENT: &str = "compression_preserve_recent";
 }
 
 /// Default values for settings
@@ -51,4 +65,16 @@ pub mod defaults {
     pub const EXTERNAL_TOOLS_PROMPT_DISMISSED: bool = false;
     /// Default skip count: check on first run
     pub const UPDATE_CHECK_SKIP_REMAINING: u32 = 0;
+
+    // Compression defaults
+    /// Compression disabled by default until user enables it.
+    pub const COMPRESSION_ENABLED: bool = false;
+    /// Trigger compression at 80% of context window.
+    pub const COMPRESSION_THRESHOLD_PERCENT: u32 = 80;
+    /// Default to sliding window (preserves system prompt + recent).
+    pub const COMPRESSION_STRATEGY: &str = "sliding_window";
+    /// Number of initial messages to preserve (system prompt).
+    pub const COMPRESSION_PRESERVE_FIRST: u32 = 1;
+    /// Number of recent messages to always keep.
+    pub const COMPRESSION_PRESERVE_RECENT: u32 = 4;
 }

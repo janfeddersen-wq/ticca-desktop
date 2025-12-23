@@ -6,8 +6,9 @@
 #![allow(clippy::items_after_test_module)]
 
 use crate::agents::{AgentProfile, AgentType};
+use crate::compression::{check_compression_needed, compress_messages};
 use crate::config::models::providers;
-use crate::config::{ConfigDatabase, McpServer, McpTransport, setting_keys};
+use crate::config::{CompressionSettings, ConfigDatabase, McpServer, McpTransport, setting_keys};
 use crate::llm;
 use crate::llm::auth::{self, AuthToken};
 use crate::llm::providers::GeminiCodeAssistRigClient;
@@ -98,6 +99,30 @@ pub enum RunnerEvent {
     Usage {
         input_tokens: u64,
         output_tokens: u64,
+    },
+    /// Context compression was applied
+    ContextCompressed {
+        /// Messages before compression
+        original_messages: usize,
+        /// Messages after compression
+        compressed_messages: usize,
+        /// Estimated tokens before compression
+        original_tokens: usize,
+        /// Estimated tokens after compression
+        compressed_tokens: usize,
+        /// Strategy used
+        strategy: String,
+    },
+    /// Context usage warning (approaching limit)
+    ContextUsageWarning {
+        /// Current estimated tokens
+        current_tokens: usize,
+        /// Threshold tokens (when compression triggers)
+        threshold_tokens: u64,
+        /// Context window size
+        context_window: u64,
+        /// Percentage used
+        usage_percent: u32,
     },
     StreamComplete,
     StreamStopped,
@@ -956,8 +981,75 @@ async fn run_agent_stream(
 
     let history = build_chat_history(chat_history);
     let user_msg = build_user_message(&user_message, image_data);
-    let mut full_history = history;
-    full_history.push(user_msg);
+
+    // Load compression settings and apply if needed
+    let compression_settings = ConfigDatabase::open()
+        .ok()
+        .map(|db| CompressionSettings::load(&db))
+        .unwrap_or_default();
+
+    // Convert to rig messages for compression check
+    let mut rig_messages: Vec<rig::message::Message> = history.clone();
+    rig_messages.push(user_msg.clone());
+
+    // Check if compression is needed
+    let compression_check = check_compression_needed(
+        &rig_messages,
+        &model_name,
+        &compression_settings,
+        None, // No API-provided context window yet
+    );
+
+    // Emit context usage warning if approaching threshold
+    if compression_check.usage_percent >= 50 && !compression_check.needs_compression {
+        let _ = event_tx.send(RunnerEvent::ContextUsageWarning {
+            current_tokens: compression_check.current_tokens,
+            threshold_tokens: compression_check.threshold_tokens,
+            context_window: compression_check.context_window,
+            usage_percent: compression_check.usage_percent,
+        });
+    }
+
+    // Apply compression if needed
+    let full_history = if compression_check.needs_compression {
+        let original_count = rig_messages.len();
+        let original_tokens = compression_check.current_tokens;
+
+        // Apply compression
+        let compressed = compress_messages(
+            rig_messages,
+            &compression_settings,
+            compression_check.threshold_tokens as usize,
+        );
+
+        let compressed_count = compressed.len();
+        let compressed_tokens = rig::compression::estimate_messages_tokens(&compressed);
+
+        tracing::info!(
+            "Context compressed: {} -> {} messages, {} -> {} tokens (strategy: {:?})",
+            original_count,
+            compressed_count,
+            original_tokens,
+            compressed_tokens,
+            compression_settings.strategy
+        );
+
+        // Emit compression event
+        let _ = event_tx.send(RunnerEvent::ContextCompressed {
+            original_messages: original_count,
+            compressed_messages: compressed_count,
+            original_tokens,
+            compressed_tokens,
+            strategy: compression_settings.strategy.as_str().to_string(),
+        });
+
+        compressed
+    } else {
+        let mut full_history = history;
+        full_history.push(user_msg);
+        full_history
+    };
+
     let node_id = tool_context.node_id;
 
     match ProviderRegistry::resolve_provider(&model_name) {
