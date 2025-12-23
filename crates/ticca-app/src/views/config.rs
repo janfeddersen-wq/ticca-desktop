@@ -17,7 +17,7 @@ use ticca_core::external_tools::{
 };
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{McpServer, McpTransport, OAuthAccount};
+use ticca_core::config::{CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount};
 use ticca_core::session::Session;
 
 /// Create horizontal space that fills available width (iced 0.14 helper)
@@ -81,6 +81,7 @@ pub fn view<'a>(
     mcp_import_json: &'a text_editor::Content,
     agent_mcp_server_ids: &'a HashMap<AgentType, Vec<String>>,
     external_tools: &'a HashMap<ExternalToolId, settings::ToolStatusInfo>,
+    compression: &'a CompressionSettings,
 ) -> Element<'a, Message> {
     let header = row![
         button(row![icon(icons::ARROW_BACK).size(16), text(" Back").size(14),].spacing(4))
@@ -159,7 +160,7 @@ pub fn view<'a>(
         agent_pinned_models,
         is_loading_models,
     );
-    let tools_section = build_tools_section(yolo_mode_enabled, external_tools);
+    let tools_section = build_tools_section(yolo_mode_enabled, external_tools, compression);
     let sessions_section = build_sessions_section(recent_sessions);
     let accounts_section = build_accounts_section(
         auth_status,
@@ -987,6 +988,7 @@ impl std::fmt::Display for ModelOption {
 fn build_tools_section<'a>(
     yolo_mode_enabled: bool,
     external_tools: &'a HashMap<ExternalToolId, settings::ToolStatusInfo>,
+    compression: &'a CompressionSettings,
 ) -> Element<'a, Message> {
     let status_label = if yolo_mode_enabled {
         "On (no prompts)"
@@ -1031,12 +1033,129 @@ fn build_tools_section<'a>(
     .padding(20)
     .style(styles::card_container);
 
+    // Build compression settings section
+    let compression_section = build_compression_section(compression);
+
     // Build external tools section
     let external_tools_section = build_external_tools_section(external_tools);
 
-    column![yolo_section, external_tools_section,]
+    column![yolo_section, compression_section, external_tools_section,]
         .spacing(16)
         .into()
+}
+
+/// Build the context compression settings section
+fn build_compression_section(compression: &CompressionSettings) -> Element<'_, Message> {
+    // Compression enabled toggle
+    let enabled_row = row![
+        icon(icons::COMPRESS).size(16),
+        text("Context Compression:").size(14).width(Length::Fixed(140.0)),
+        checkbox(compression.enabled)
+            .on_toggle(|v| Message::Settings(settings::Msg::SetCompressionEnabled(v))),
+        text(if compression.enabled { "Enabled" } else { "Disabled" }).size(12),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    // Threshold slider
+    let threshold_row = row![
+        text("Threshold:").size(14).width(Length::Fixed(140.0)),
+        iced::widget::slider(50..=95, compression.threshold_percent, |v| {
+            Message::Settings(settings::Msg::SetCompressionThreshold(v))
+        })
+        .width(Length::Fixed(200.0)),
+        text(format!("{}%", compression.threshold_percent)).size(12),
+        text("of context window").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
+            color: Some(Color::from_rgb8(120, 120, 120)),
+        }),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    // Strategy picker
+    let strategy_options = vec![
+        CompressionStrategy::SlidingWindow,
+        CompressionStrategy::Truncation,
+        CompressionStrategy::Summarizing,
+    ];
+    let strategy_row = row![
+        text("Strategy:").size(14).width(Length::Fixed(140.0)),
+        pick_list(strategy_options, Some(compression.strategy), |s| {
+            Message::Settings(settings::Msg::SetCompressionStrategy(s))
+        })
+        .width(Length::Fixed(180.0)),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    // Strategy description
+    let strategy_desc = match compression.strategy {
+        CompressionStrategy::SlidingWindow => {
+            "Preserves system prompt and recent messages, removes middle context"
+        }
+        CompressionStrategy::Truncation => {
+            "Removes oldest messages first, keeps recent messages"
+        }
+        CompressionStrategy::Summarizing => {
+            "Generates a summary of removed context (uses LLM tokens)"
+        }
+    };
+    let strategy_desc_row = row![
+        Space::new().width(Length::Fixed(140.0)),
+        text(strategy_desc).size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
+            color: Some(Color::from_rgb8(120, 120, 120)),
+        }),
+    ]
+    .spacing(10);
+
+    // Preserve first messages
+    let preserve_first_row = row![
+        text("Preserve First:").size(14).width(Length::Fixed(140.0)),
+        iced::widget::slider(0..=5, compression.preserve_first, |v| {
+            Message::Settings(settings::Msg::SetCompressionPreserveFirst(v))
+        })
+        .width(Length::Fixed(120.0)),
+        text(format!("{} messages", compression.preserve_first)).size(12),
+        text("(system prompt)").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
+            color: Some(Color::from_rgb8(120, 120, 120)),
+        }),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    // Preserve recent messages
+    let preserve_recent_row = row![
+        text("Preserve Recent:").size(14).width(Length::Fixed(140.0)),
+        iced::widget::slider(1..=10, compression.preserve_recent, |v| {
+            Message::Settings(settings::Msg::SetCompressionPreserveRecent(v))
+        })
+        .width(Length::Fixed(120.0)),
+        text(format!("{} messages", compression.preserve_recent)).size(12),
+        text("(latest conversation)").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
+            color: Some(Color::from_rgb8(120, 120, 120)),
+        }),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    container(
+        column![
+            text("Context Compression").size(18),
+            text("Automatically compress context when approaching token limits.").size(12).style(|_theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb8(120, 120, 120)),
+            }),
+            enabled_row,
+            threshold_row,
+            strategy_row,
+            strategy_desc_row,
+            preserve_first_row,
+            preserve_recent_row,
+        ]
+        .spacing(12),
+    )
+    .padding(20)
+    .style(styles::card_container)
+    .into()
 }
 
 /// Build the external tools management section

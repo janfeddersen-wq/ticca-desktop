@@ -57,6 +57,16 @@ impl CompressionStrategy {
     }
 }
 
+impl std::fmt::Display for CompressionStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompressionStrategy::Truncation => write!(f, "Truncation"),
+            CompressionStrategy::SlidingWindow => write!(f, "Sliding Window"),
+            CompressionStrategy::Summarizing => write!(f, "Summarizing (LLM)"),
+        }
+    }
+}
+
 /// Compression settings for context window management.
 #[derive(Debug, Clone)]
 pub struct CompressionSettings {
@@ -88,7 +98,17 @@ impl Default for CompressionSettings {
 }
 
 impl CompressionSettings {
-    pub fn load(repo: &impl ConfigRepo) -> Self {
+    /// Load compression settings from the database.
+    pub fn load() -> Self {
+        use crate::config::ConfigDatabase;
+        match ConfigDatabase::open() {
+            Ok(db) => Self::load_from(&db),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Load compression settings from a config repo.
+    pub fn load_from(repo: &impl ConfigRepo) -> Self {
         let enabled = get_bool(repo, setting_keys::COMPRESSION_ENABLED)
             .unwrap_or(defaults::COMPRESSION_ENABLED);
         let threshold_percent = get_u32(repo, setting_keys::COMPRESSION_THRESHOLD_PERCENT)
@@ -155,7 +175,7 @@ impl TypedSettings {
             .unwrap_or(defaults::UPDATE_CHECK_SKIP_REMAINING);
         let update_check_dismissed_version =
             get_string(repo, setting_keys::UPDATE_CHECK_DISMISSED_VERSION);
-        let compression = CompressionSettings::load(repo);
+        let compression = CompressionSettings::load_from(repo);
 
         Self {
             theme,

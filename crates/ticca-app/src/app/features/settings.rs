@@ -10,7 +10,9 @@ use crate::views::config::{McpServerFormState, ProviderAuthStatus};
 use ticca_core::AgentType;
 use ticca_core::config::OAuthAccount;
 use ticca_core::config::models::providers;
-use ticca_core::config::{ConfigService, McpServer, setting_keys};
+use ticca_core::config::{
+    CompressionSettings, CompressionStrategy, ConfigService, McpServer, setting_keys,
+};
 use ticca_core::external_tools::{ExternalToolId, ExternalToolManager, ToolStatus};
 use ticca_core::llm::ProviderId;
 use ticca_core::llm::auth;
@@ -30,6 +32,7 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) mcp_form: McpServerFormState,
     pub(in crate::app) mcp_import_json: text_editor::Content,
     pub(in crate::app) external_tools: HashMap<ExternalToolId, settings::ToolStatusInfo>,
+    pub(in crate::app) compression: CompressionSettings,
 }
 
 impl SettingsState {
@@ -46,6 +49,7 @@ impl SettingsState {
             mcp_form: McpServerFormState::default(),
             mcp_import_json: text_editor::Content::with_text(""),
             external_tools: HashMap::new(),
+            compression: CompressionSettings::load(),
         }
     }
 
@@ -522,6 +526,43 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
         settings::Msg::OpenUrl(url) => {
             effects.push(Effect::OpenUrl(url));
         }
+
+        // Compression settings
+        settings::Msg::SetCompressionEnabled(enabled) => {
+            app.settings.compression.enabled = enabled;
+            let value = if enabled { "true" } else { "false" };
+            let _ = ConfigService::set_setting(setting_keys::COMPRESSION_ENABLED, value);
+        }
+        settings::Msg::SetCompressionThreshold(percent) => {
+            app.settings.compression.threshold_percent = percent;
+            let _ = ConfigService::set_setting(
+                setting_keys::COMPRESSION_THRESHOLD_PERCENT,
+                &percent.to_string(),
+            );
+        }
+        settings::Msg::SetCompressionStrategy(strategy) => {
+            app.settings.compression.strategy = strategy;
+            let value = match strategy {
+                CompressionStrategy::Truncation => "truncation",
+                CompressionStrategy::SlidingWindow => "sliding_window",
+                CompressionStrategy::Summarizing => "summarizing",
+            };
+            let _ = ConfigService::set_setting(setting_keys::COMPRESSION_STRATEGY, value);
+        }
+        settings::Msg::SetCompressionPreserveFirst(count) => {
+            app.settings.compression.preserve_first = count;
+            let _ = ConfigService::set_setting(
+                setting_keys::COMPRESSION_PRESERVE_FIRST,
+                &count.to_string(),
+            );
+        }
+        settings::Msg::SetCompressionPreserveRecent(count) => {
+            app.settings.compression.preserve_recent = count;
+            let _ = ConfigService::set_setting(
+                setting_keys::COMPRESSION_PRESERVE_RECENT,
+                &count.to_string(),
+            );
+        }
     }
 
     effects
@@ -734,5 +775,6 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
         &app.settings.mcp_import_json,
         &app.settings.agent_mcp_server_ids,
         &app.settings.external_tools,
+        &app.settings.compression,
     )
 }

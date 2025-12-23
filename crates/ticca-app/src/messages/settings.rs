@@ -84,6 +84,13 @@ pub enum Msg {
     DismissExternalToolsPromptPermanently,
     InstallAllMissingTools,
 
+    // Compression settings
+    SetCompressionEnabled(bool),
+    SetCompressionThreshold(u32),
+    SetCompressionStrategy(ticca_core::config::CompressionStrategy),
+    SetCompressionPreserveFirst(u32),
+    SetCompressionPreserveRecent(u32),
+
     // Misc
     OpenUrl(String),
 }

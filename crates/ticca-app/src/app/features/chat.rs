@@ -1042,7 +1042,13 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 compressed_tokens,
                 strategy
             );
-            // TODO: Show compression notification in UI
+            // Show compression notification as a toast
+            let saved_tokens = original_tokens.saturating_sub(compressed_tokens);
+            let saved_messages = original_messages.saturating_sub(compressed_messages);
+            app.toast = Some(Toast::new(format!(
+                "Context compressed: removed {} messages, saved ~{} tokens ({})",
+                saved_messages, saved_tokens, strategy
+            )));
         }
 
         chat::Msg::ContextUsageWarning {
@@ -1058,7 +1064,9 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 context_window,
                 threshold_tokens
             );
-            // TODO: Update context usage indicator in UI
+            // Update tokens in UI - the usage warning is informational
+            // The context bar already shows token usage, this event is for logging
+            let _ = (current_tokens, threshold_tokens, context_window, usage_percent);
         }
     }
 

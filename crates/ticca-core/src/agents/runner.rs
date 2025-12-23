@@ -985,7 +985,7 @@ async fn run_agent_stream(
     // Load compression settings and apply if needed
     let compression_settings = ConfigDatabase::open()
         .ok()
-        .map(|db| CompressionSettings::load(&db))
+        .map(|db| CompressionSettings::load_from(&db))
         .unwrap_or_default();
 
     // Convert to rig messages for compression check
