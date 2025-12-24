@@ -4,7 +4,7 @@
 
 use iced::widget::{
     Column, Space, button, column, container, markdown, row, scrollable, text, text_editor,
-    text_input,
+    text_input, tooltip,
 };
 use iced::{Element, Length, widget};
 
@@ -26,6 +26,18 @@ pub const CHAT_SCROLLABLE_ID: &str = "chat_messages";
 /// Create horizontal space that fills available width
 fn horizontal_space() -> Space {
     Space::new().width(Length::Fill)
+}
+
+/// Create a styled tooltip with consistent appearance
+fn styled_tooltip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    tip: &'a str,
+    position: tooltip::Position,
+) -> tooltip::Tooltip<'a, Message, iced::Theme, iced::Renderer> {
+    tooltip(content, text(tip).size(12), position)
+        .padding(8)
+        .gap(4)
+        .style(styles::tooltip_style)
 }
 
 /// Get the icon for an agent type
@@ -88,16 +100,21 @@ pub fn view<'a>(
                 let is_selected = current_agent == agent_type;
                 let agent_icon = agent_icon(agent_type);
                 let label = agent_label(agent_type);
-                button(
-                    row![
-                        icon(agent_icon).size(14),
-                        text(format!(" {}", label)).size(14),
-                    ]
-                    .spacing(4),
+                let description = agent_type.description();
+                styled_tooltip(
+                    button(
+                        row![
+                            icon(agent_icon).size(14),
+                            text(format!(" {}", label)).size(14),
+                        ]
+                        .spacing(4),
+                    )
+                    .on_press(Message::Chat(chat::Msg::SwitchAgent(agent_type)))
+                    .style(move |theme, status| styles::tab_button(theme, status, is_selected))
+                    .padding([8, 12]),
+                    description,
+                    tooltip::Position::Bottom,
                 )
-                .on_press(Message::Chat(chat::Msg::SwitchAgent(agent_type)))
-                .style(move |theme, status| styles::tab_button(theme, status, is_selected))
-                .padding([8, 12])
                 .into()
             })
             .collect();
@@ -177,29 +194,45 @@ pub fn view<'a>(
             token_usage_display,
             // Actions
             row![
-                button(
-                    icon(if flow_panel_visible {
-                        icons::CLOSE
-                    } else {
-                        icons::MENU
-                    })
-                    .size(18)
-                )
-                .on_press(Message::Chat(chat::Msg::ToggleFlowPanel))
-                .style(styles::icon_button)
-                .padding(8),
-                button(icon(icons::CONTRAST).size(18))
-                    .on_press(Message::Settings(settings::Msg::ThemeToggle))
+                styled_tooltip(
+                    button(
+                        icon(if flow_panel_visible {
+                            icons::CLOSE
+                        } else {
+                            icons::MENU
+                        })
+                        .size(18)
+                    )
+                    .on_press(Message::Chat(chat::Msg::ToggleFlowPanel))
                     .style(styles::icon_button)
                     .padding(8),
-                button(icon(icons::SETTINGS).size(18))
-                    .on_press(Message::Settings(settings::Msg::OpenSettings))
-                    .style(styles::icon_button)
-                    .padding(8),
-                button(icon(icons::ADD).size(18))
-                    .on_press(Message::Chat(chat::Msg::NewSession))
-                    .style(styles::icon_button)
-                    .padding(8),
+                    if flow_panel_visible { "Hide sidebar" } else { "Show sidebar" },
+                    tooltip::Position::Bottom,
+                ),
+                styled_tooltip(
+                    button(icon(icons::CONTRAST).size(18))
+                        .on_press(Message::Settings(settings::Msg::ThemeToggle))
+                        .style(styles::icon_button)
+                        .padding(8),
+                    "Toggle theme",
+                    tooltip::Position::Bottom,
+                ),
+                styled_tooltip(
+                    button(icon(icons::SETTINGS).size(18))
+                        .on_press(Message::Settings(settings::Msg::OpenSettings))
+                        .style(styles::icon_button)
+                        .padding(8),
+                    "Settings",
+                    tooltip::Position::Bottom,
+                ),
+                styled_tooltip(
+                    button(icon(icons::ADD).size(18))
+                        .on_press(Message::Chat(chat::Msg::NewSession))
+                        .style(styles::icon_button)
+                        .padding(8),
+                    "New session",
+                    tooltip::Position::Bottom,
+                ),
             ]
             .spacing(4),
         ]
@@ -213,13 +246,20 @@ pub fn view<'a>(
     let dir_display = working_directory.to_string_lossy();
     let dir_bar = container(
         row![
-            icon(icons::FOLDER).size(16),
-            text(format!(" {}", dir_display)).size(12),
-            horizontal_space(),
-            button(text("Change").size(12))
+            styled_tooltip(
+                button(
+                    row![icon(icons::FOLDER_OPEN).size(14), text(" Select Workdir").size(12)]
+                        .spacing(2),
+                )
                 .on_press(Message::Chat(chat::Msg::SelectWorkingDirectory))
                 .style(styles::secondary_button)
                 .padding([4, 8]),
+                "Change working directory",
+                tooltip::Position::Bottom,
+            ),
+            icon(icons::FOLDER).size(16),
+            text(format!(" {}", dir_display)).size(12),
+            horizontal_space(),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center),
@@ -307,10 +347,14 @@ pub fn view<'a>(
     // Input area
     let mut input_row = row![
         // Add image button (works on Wayland via xdg-portal)
-        button(icon(icons::ATTACH_FILE).size(20))
-            .on_press(Message::Chat(chat::Msg::SelectImageFile))
-            .style(styles::icon_button)
-            .padding([8, 8]),
+        styled_tooltip(
+            button(icon(icons::ATTACH_FILE).size(20))
+                .on_press(Message::Chat(chat::Msg::SelectImageFile))
+                .style(styles::icon_button)
+                .padding([8, 8]),
+            "Attach image",
+            tooltip::Position::Top,
+        ),
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);
@@ -319,6 +363,27 @@ pub fn view<'a>(
     if let Some(indicator) = streaming_indicator {
         input_row = input_row.push(indicator);
     }
+
+    // Send/Stop button with tooltip
+    let send_button_tooltip = if is_streaming { "Stop generation" } else { "Send message" };
+    let send_button = styled_tooltip(
+        button(if is_streaming {
+            icon(icons::CANCEL).size(20)
+        } else {
+            icon(icons::ARROW_UPWARD).size(20)
+        })
+        .on_press_maybe(if is_streaming {
+            Some(Message::Chat(chat::Msg::StopStreaming))
+        } else if can_send {
+            Some(Message::Chat(chat::Msg::SendMessage))
+        } else {
+            None
+        })
+        .style(styles::send_button)
+        .padding([8, 8]),
+        send_button_tooltip,
+        tooltip::Position::Top,
+    );
 
     // Add the text input and send button
     input_row = input_row
@@ -335,22 +400,7 @@ pub fn view<'a>(
                 .size(14)
                 .width(Length::Fill),
         )
-        .push(
-            button(if is_streaming {
-                icon(icons::CANCEL).size(20)
-            } else {
-                icon(icons::ARROW_UPWARD).size(20)
-            })
-            .on_press_maybe(if is_streaming {
-                Some(Message::Chat(chat::Msg::StopStreaming))
-            } else if can_send {
-                Some(Message::Chat(chat::Msg::SendMessage))
-            } else {
-                None
-            })
-            .style(styles::send_button)
-            .padding([8, 8]),
-        );
+        .push(send_button);
 
     let input_content: Element<'_, Message> = if let Some(preview) = attachment_preview {
         column![preview, input_row].spacing(0).into()
@@ -492,21 +542,34 @@ fn render_message<'a>(
     } else {
         icons::CODE
     };
+    let toggle_tooltip = if is_raw_view {
+        "Show formatted"
+    } else {
+        "Show raw markdown"
+    };
 
     // Header row with label, toggle button, and copy button
     let header = row![
         text(label).size(12),
         horizontal_space(),
         // Raw/Markdown toggle button
-        button(icon(toggle_icon).size(16))
-            .on_press(Message::Chat(chat::Msg::ToggleRawView(index)))
-            .style(styles::icon_button)
-            .padding([4, 6]),
+        styled_tooltip(
+            button(icon(toggle_icon).size(16))
+                .on_press(Message::Chat(chat::Msg::ToggleRawView(index)))
+                .style(styles::icon_button)
+                .padding([4, 6]),
+            toggle_tooltip,
+            tooltip::Position::Bottom,
+        ),
         // Copy button
-        button(icon(icons::CONTENT_COPY).size(16))
-            .on_press(Message::Chat(chat::Msg::CopyMessage(index)))
-            .style(styles::icon_button)
-            .padding([4, 6]),
+        styled_tooltip(
+            button(icon(icons::CONTENT_COPY).size(16))
+                .on_press(Message::Chat(chat::Msg::CopyMessage(index)))
+                .style(styles::icon_button)
+                .padding([4, 6]),
+            "Copy message",
+            tooltip::Position::Bottom,
+        ),
     ]
     .spacing(4)
     .align_y(iced::Alignment::Center);

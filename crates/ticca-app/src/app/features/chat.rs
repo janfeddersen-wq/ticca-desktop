@@ -642,8 +642,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.subagent_message_indices.clear();
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
-            app.chat.sidebar_tab =
-                enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
+            // Don't auto-switch sidebar tab - let user control it
         }
 
         chat::Msg::ToggleFlowPanel => {
@@ -741,10 +740,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                             .system_exec
                             .store
                             .respond(request_id, SystemExecResponse::Started { process_id });
-                        app.chat.sidebar_tab = enforce_sidebar_tab(
-                            app.expert_mode_enabled,
-                            RightSidebarTab::SystemExecutions,
-                        );
+                        // Don't auto-switch sidebar tab - let user control it
                     }
                     Err(e) => {
                         app.chat
@@ -847,8 +843,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.input_tokens = 0;
             app.chat.output_tokens = 0;
             app.chat.estimated_tokens = 0;
-            app.chat.sidebar_tab =
-                enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
+            // Don't auto-switch sidebar tab - let user control it
             app.chat.messages.push(ChatMessage::assistant(
                 "New session started. How can I help you?",
             ));
@@ -872,8 +867,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 app.chat.raw_view_editors.clear();
                 app.chat.todo_lists = loaded.todo_lists;
                 app.chat.todo_selected_node = 0;
-                app.chat.sidebar_tab =
-                    enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
+                // Don't auto-switch sidebar tab - let user control it
 
                 if let Some(agent_type) = loaded.agent_type {
                     app.chat.current_agent = agent_type;

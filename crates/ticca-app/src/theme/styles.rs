@@ -1031,3 +1031,22 @@ pub fn streaming_indicator_container(theme: &Theme) -> container::Style {
         ..container::Style::default()
     }
 }
+
+/// Tooltip style - styled floating hint
+pub fn tooltip_style(theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(bg_elevated(theme).into()),
+        text_color: Some(text_primary(theme)),
+        border: Border {
+            color: border_default(theme),
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+            offset: iced::Vector::new(0.0, 2.0),
+            blur_radius: 8.0,
+        },
+        ..container::Style::default()
+    }
+}
