@@ -1,12 +1,24 @@
 //! System Executions sidebar panel.
 
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input, tooltip};
 use iced::{Color, Element, Length};
 
 use crate::material_icons::{icon, icons};
 use crate::messages::{Message, chat};
 use crate::system_executions::SystemExecutionsState;
 use crate::theme::{AppTheme, styles};
+
+/// Create a styled tooltip with consistent appearance
+fn styled_tooltip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    tip: &'a str,
+    position: tooltip::Position,
+) -> tooltip::Tooltip<'a, Message, iced::Theme, iced::Renderer> {
+    tooltip(content, text(tip).size(12), position)
+        .padding(8)
+        .gap(4)
+        .style(styles::tooltip_style)
+}
 
 pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Element<'a, Message> {
     let _ = theme;
@@ -31,14 +43,18 @@ pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Elemen
             text_input("New terminal name", &state.new_terminal_name)
                 .on_input(|value| Message::Chat(chat::Msg::SystemExecNewTerminalNameChanged(value)))
                 .width(Length::Fill),
-            button(
-                row![icon(icons::ADD).size(14), text("New Terminal").size(12),]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center),
-            )
-            .on_press(Message::Chat(chat::Msg::SystemExecCreateUserTerminal))
-            .style(styles::secondary_button)
-            .padding([6, 10]),
+            styled_tooltip(
+                button(
+                    row![icon(icons::ADD).size(14), text("New Terminal").size(12),]
+                        .spacing(6)
+                        .align_y(iced::Alignment::Center),
+                )
+                .on_press(Message::Chat(chat::Msg::SystemExecCreateUserTerminal))
+                .style(styles::secondary_button)
+                .padding([6, 10]),
+                "Create a terminal that the LLM can read from",
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(10)
         .align_y(iced::Alignment::Center),
@@ -51,24 +67,36 @@ pub fn contents<'a>(state: &'a SystemExecutionsState, theme: AppTheme) -> Elemen
     for (process_id, instance) in state.terminals.iter() {
         let title = row![
             text(process_id.clone()).size(12).width(Length::Fill),
-            button(row![icon(icons::CONTENT_COPY).size(16)].spacing(6))
-                .on_press(Message::Chat(chat::Msg::SystemExecCopyTerminal(
-                    process_id.clone()
-                )))
-                .style(styles::secondary_button)
-                .padding([4, 8]),
-            button(row![icon(icons::CANCEL).size(16)].spacing(6))
-                .on_press(Message::Chat(chat::Msg::SystemExecKillTerminal(
-                    process_id.clone()
-                )))
-                .style(styles::danger_icon_button)
-                .padding([4, 8]),
-            button(row![icon(icons::CLOSE).size(16)].spacing(6))
-                .on_press(Message::Chat(chat::Msg::SystemExecCloseTerminal(
-                    process_id.clone()
-                )))
-                .style(styles::secondary_button)
-                .padding([4, 8]),
+            styled_tooltip(
+                button(row![icon(icons::CONTENT_COPY).size(16)].spacing(6))
+                    .on_press(Message::Chat(chat::Msg::SystemExecCopyTerminal(
+                        process_id.clone()
+                    )))
+                    .style(styles::secondary_button)
+                    .padding([4, 8]),
+                "Copy terminal output",
+                tooltip::Position::Bottom,
+            ),
+            styled_tooltip(
+                button(row![icon(icons::CANCEL).size(16)].spacing(6))
+                    .on_press(Message::Chat(chat::Msg::SystemExecKillTerminal(
+                        process_id.clone()
+                    )))
+                    .style(styles::danger_icon_button)
+                    .padding([4, 8]),
+                "Kill process",
+                tooltip::Position::Bottom,
+            ),
+            styled_tooltip(
+                button(row![icon(icons::CLOSE).size(16)].spacing(6))
+                    .on_press(Message::Chat(chat::Msg::SystemExecCloseTerminal(
+                        process_id.clone()
+                    )))
+                    .style(styles::secondary_button)
+                    .padding([4, 8]),
+                "Close terminal",
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(8)
         .width(Length::Fill)
