@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::config::OAuthAccount;
+use crate::config::{ApiKeyAccount, OAuthAccount};
 use crate::config::models::providers as provider_names;
 use crate::config::{AccountRotationPolicy, ConfigDatabase, TypedSettings};
 
@@ -111,6 +111,96 @@ pub fn mark_cooldown(account_id: &str, reason: &str, cooldown_secs: i64) -> bool
     let cooldown_until = Utc::now() + chrono::Duration::seconds(cooldown_secs);
     let now_str = Utc::now().to_rfc3339();
     db.set_oauth_account_cooldown(
+        account_id,
+        Some(cooldown_until.to_rfc3339()),
+        Some(reason.to_string()),
+        Some(now_str),
+    )
+    .unwrap_or(false)
+}
+
+// ============================================================================
+// API Key Account Selection
+// ============================================================================
+
+/// API key token for direct API access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyToken {
+    pub account_id: String,
+    pub provider: String,
+    pub api_key: String,
+}
+
+/// List all API key accounts for a provider
+pub fn list_api_key_accounts(provider: &str) -> Vec<ApiKeyAccount> {
+    let db = match ConfigDatabase::open() {
+        Ok(db) => db,
+        Err(_) => return Vec::new(),
+    };
+
+    db.list_api_key_accounts(Some(provider)).unwrap_or_default()
+}
+
+/// Select the best available API key for a provider
+pub fn select_api_key(provider: &str) -> Option<ApiKeyToken> {
+    let accounts = list_api_key_accounts(provider);
+
+    let mut eligible: Vec<ApiKeyAccount> = accounts
+        .into_iter()
+        .filter(|a| a.is_active)
+        .filter(|a| !a.is_cooling())
+        .collect();
+
+    let rotation_policy = ConfigDatabase::open()
+        .ok()
+        .map(|db| TypedSettings::load(&db).account_rotation_policy)
+        .unwrap_or(crate::config::defaults::ACCOUNT_ROTATION_POLICY);
+
+    eligible.sort_by(|a, b| match rotation_policy {
+        AccountRotationPolicy::PriorityThenLeastRecentlyUsed => {
+            let priority_cmp = b.priority.cmp(&a.priority);
+            if priority_cmp != std::cmp::Ordering::Equal {
+                return priority_cmp;
+            }
+            let a_used = parse_time(&a.last_used_at);
+            let b_used = parse_time(&b.last_used_at);
+            a_used.cmp(&b_used)
+        }
+        AccountRotationPolicy::PriorityOnly => b.priority.cmp(&a.priority),
+        AccountRotationPolicy::LeastRecentlyUsed => {
+            let a_used = parse_time(&a.last_used_at);
+            let b_used = parse_time(&b.last_used_at);
+            a_used.cmp(&b_used)
+        }
+    });
+
+    let account = eligible.into_iter().next()?;
+    if let Ok(db) = ConfigDatabase::open() {
+        let _ = db.set_api_key_account_last_used(&account.id, Utc::now().to_rfc3339());
+    }
+
+    Some(ApiKeyToken {
+        account_id: account.id,
+        provider: account.provider,
+        api_key: account.api_key,
+    })
+}
+
+/// Check if a provider has a valid API key configured
+pub fn has_valid_api_key(provider: &str) -> bool {
+    select_api_key(provider).is_some()
+}
+
+/// Mark an API key account as rate-limited with cooldown
+pub fn mark_api_key_cooldown(account_id: &str, reason: &str, cooldown_secs: i64) -> bool {
+    let db = match ConfigDatabase::open() {
+        Ok(db) => db,
+        Err(_) => return false,
+    };
+
+    let cooldown_until = Utc::now() + chrono::Duration::seconds(cooldown_secs);
+    let now_str = Utc::now().to_rfc3339();
+    db.set_api_key_account_cooldown(
         account_id,
         Some(cooldown_until.to_rfc3339()),
         Some(reason.to_string()),

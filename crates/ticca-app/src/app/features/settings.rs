@@ -8,7 +8,7 @@ use crate::messages::{Message, settings};
 use crate::views::config;
 use crate::views::config::{McpServerFormState, ProviderAuthStatus};
 use ticca_core::AgentType;
-use ticca_core::config::OAuthAccount;
+use ticca_core::config::{ApiKeyAccount, ApiKeyProvider, OAuthAccount};
 use ticca_core::config::models::providers;
 use ticca_core::config::{
     CompressionSettings, CompressionStrategy, ConfigService, McpServer, setting_keys,
@@ -26,6 +26,10 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) accounts_claude: Vec<OAuthAccount>,
     pub(in crate::app) accounts_gemini: Vec<OAuthAccount>,
     pub(in crate::app) accounts_chatgpt: Vec<OAuthAccount>,
+    pub(in crate::app) api_key_accounts: HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
+    pub(in crate::app) api_key_form_provider: Option<ApiKeyProvider>,
+    pub(in crate::app) api_key_form_value: String,
+    pub(in crate::app) api_key_form_label: String,
     pub(in crate::app) recent_sessions: Vec<Session>,
     pub(in crate::app) mcp_servers: Vec<McpServer>,
     pub(in crate::app) agent_mcp_server_ids: HashMap<AgentType, Vec<String>>,
@@ -43,6 +47,10 @@ impl SettingsState {
             accounts_claude: Vec::new(),
             accounts_gemini: Vec::new(),
             accounts_chatgpt: Vec::new(),
+            api_key_accounts: HashMap::new(),
+            api_key_form_provider: None,
+            api_key_form_value: String::new(),
+            api_key_form_label: String::new(),
             recent_sessions: Vec::new(),
             mcp_servers: Vec::new(),
             agent_mcp_server_ids: HashMap::new(),
@@ -60,6 +68,18 @@ impl SettingsState {
             ConfigService::list_oauth_accounts_pruned(providers::GEMINI).unwrap_or_default();
         self.accounts_chatgpt =
             ConfigService::list_oauth_accounts_pruned(providers::CHATGPT).unwrap_or_default();
+        self.refresh_api_key_accounts();
+    }
+
+    fn refresh_api_key_accounts(&mut self) {
+        self.api_key_accounts.clear();
+        for provider in ApiKeyProvider::ALL {
+            let accounts =
+                ConfigService::list_api_key_accounts(Some(provider.id())).unwrap_or_default();
+            if !accounts.is_empty() {
+                self.api_key_accounts.insert(*provider, accounts);
+            }
+        }
     }
 
     fn refresh_sessions(&mut self) {
@@ -199,6 +219,82 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             let _ = ConfigService::adjust_oauth_account_priority(&account_id, delta);
             app.settings.refresh_accounts();
         }
+
+        // API key accounts
+        settings::Msg::StartAddApiKey(provider) => {
+            app.settings.api_key_form_provider = Some(provider);
+            app.settings.api_key_form_value = String::new();
+            app.settings.api_key_form_label = String::new();
+        }
+        settings::Msg::CancelAddApiKey => {
+            app.settings.api_key_form_provider = None;
+            app.settings.api_key_form_value = String::new();
+            app.settings.api_key_form_label = String::new();
+        }
+        settings::Msg::ApiKeyFormChanged(value) => {
+            app.settings.api_key_form_value = value;
+        }
+        settings::Msg::ApiKeyLabelFormChanged(value) => {
+            app.settings.api_key_form_label = value;
+        }
+        settings::Msg::SaveApiKey => {
+            let Some(provider) = app.settings.api_key_form_provider else {
+                return effects;
+            };
+
+            let api_key = app.settings.api_key_form_value.trim().to_string();
+            if api_key.is_empty() {
+                app.toast = Some(Toast::new("API key is required"));
+                return effects;
+            }
+
+            let label = app.settings.api_key_form_label.trim();
+            let label = if label.is_empty() {
+                None
+            } else {
+                Some(label.to_string())
+            };
+
+            let account = ApiKeyAccount::new(uuid::Uuid::new_v4().to_string(), provider.id(), api_key);
+            let account = if let Some(l) = label {
+                account.with_label(l)
+            } else {
+                account
+            };
+
+            match ConfigService::upsert_api_key_account(&account) {
+                Ok(()) => {
+                    app.toast = None;
+                    app.settings.api_key_form_provider = None;
+                    app.settings.api_key_form_value = String::new();
+                    app.settings.api_key_form_label = String::new();
+                    app.settings.refresh_api_key_accounts();
+                }
+                Err(e) => {
+                    app.toast = Some(Toast::new(format!("Failed to save API key: {}", e)));
+                }
+            }
+        }
+        settings::Msg::RemoveApiKeyAccount(account_id) => {
+            let _ = ConfigService::delete_api_key_account(&account_id);
+            app.settings.refresh_api_key_accounts();
+        }
+        settings::Msg::ToggleApiKeyAccountActive {
+            account_id,
+            is_active,
+        } => {
+            let _ = ConfigService::set_api_key_account_active(&account_id, is_active);
+            app.settings.refresh_api_key_accounts();
+        }
+        settings::Msg::ResetApiKeyCooldown(account_id) => {
+            let _ = ConfigService::clear_api_key_account_cooldown(&account_id);
+            app.settings.refresh_api_key_accounts();
+        }
+        settings::Msg::AdjustApiKeyAccountPriority { account_id, delta } => {
+            let _ = ConfigService::adjust_api_key_account_priority(&account_id, delta);
+            app.settings.refresh_api_key_accounts();
+        }
+
         settings::Msg::RefreshModels => {
             if app.chat.is_loading_models {
                 return effects;
@@ -765,6 +861,10 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
         &app.settings.accounts_claude,
         &app.settings.accounts_gemini,
         &app.settings.accounts_chatgpt,
+        &app.settings.api_key_accounts,
+        app.settings.api_key_form_provider,
+        &app.settings.api_key_form_value,
+        &app.settings.api_key_form_label,
         app.chat.yolo_mode_enabled,
         app.expert_mode_enabled,
         &app.settings.recent_sessions,

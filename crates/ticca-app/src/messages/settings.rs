@@ -1,5 +1,5 @@
 use ticca_core::agents::AgentType;
-use ticca_core::config::McpTransport;
+use ticca_core::config::{ApiKeyProvider, McpTransport};
 use ticca_core::external_tools::ExternalToolId;
 
 use crate::theme::AppTheme;
@@ -30,6 +30,23 @@ pub enum Msg {
     },
     ResetOAuthCooldown(String),
     AdjustOAuthAccountPriority {
+        account_id: String,
+        delta: i64,
+    },
+
+    // API key accounts
+    StartAddApiKey(ApiKeyProvider),
+    CancelAddApiKey,
+    ApiKeyFormChanged(String),
+    ApiKeyLabelFormChanged(String),
+    SaveApiKey,
+    RemoveApiKeyAccount(String),
+    ToggleApiKeyAccountActive {
+        account_id: String,
+        is_active: bool,
+    },
+    ResetApiKeyCooldown(String),
+    AdjustApiKeyAccountPriority {
         account_id: String,
         delta: i64,
     },

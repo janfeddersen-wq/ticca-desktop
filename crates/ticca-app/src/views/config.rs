@@ -17,7 +17,7 @@ use ticca_core::external_tools::{
 };
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount};
+use ticca_core::config::{ApiKeyAccount, ApiKeyProvider, CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount};
 use ticca_core::session::Session;
 
 /// Create horizontal space that fills available width (iced 0.14 helper)
@@ -72,6 +72,10 @@ pub fn view<'a>(
     claude_accounts: &'a [OAuthAccount],
     gemini_accounts: &'a [OAuthAccount],
     chatgpt_accounts: &'a [OAuthAccount],
+    api_key_accounts: &'a HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
+    api_key_form_provider: Option<ApiKeyProvider>,
+    api_key_form_value: &'a str,
+    api_key_form_label: &'a str,
     yolo_mode_enabled: bool,
     expert_mode_enabled: bool,
     recent_sessions: &'a [Session],
@@ -167,6 +171,10 @@ pub fn view<'a>(
         claude_accounts,
         gemini_accounts,
         chatgpt_accounts,
+        api_key_accounts,
+        api_key_form_provider,
+        api_key_form_value,
+        api_key_form_label,
         expert_mode_enabled,
     );
     let mcp_servers_section =
@@ -781,13 +789,17 @@ fn build_agent_mcp_section<'a>(
     column![help, table_card].spacing(12).into()
 }
 
-fn build_accounts_section(
+fn build_accounts_section<'a>(
     auth_status: &ProviderAuthStatus,
     claude_accounts: &[OAuthAccount],
     gemini_accounts: &[OAuthAccount],
     chatgpt_accounts: &[OAuthAccount],
+    api_key_accounts: &'a HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
+    api_key_form_provider: Option<ApiKeyProvider>,
+    api_key_form_value: &'a str,
+    api_key_form_label: &'a str,
     expert_mode_enabled: bool,
-) -> Element<'static, Message> {
+) -> Element<'a, Message> {
     let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
         let auth_icon = if is_authenticated {
             icons::CHECK_CIRCLE
@@ -958,15 +970,235 @@ fn build_accounts_section(
     );
 
     if expert_mode_enabled {
-        children.push(accounts_section("Claude Accounts", claude_accounts));
-        children.push(accounts_section("Gemini Accounts", gemini_accounts));
-        children.push(accounts_section("ChatGPT Accounts", chatgpt_accounts));
+        children.push(accounts_section("Claude (OAuth)", claude_accounts));
+        children.push(accounts_section("Gemini (OAuth)", gemini_accounts));
+        children.push(accounts_section("ChatGPT (OAuth)", chatgpt_accounts));
     }
 
-    container(Column::with_children(children).spacing(12))
+    let oauth_card: Element<'a, Message> = container(Column::with_children(children).spacing(12))
         .padding(20)
         .style(styles::card_container)
-        .into()
+        .into();
+
+    // Build API key providers section
+    let api_key_section = build_api_key_providers_section(
+        api_key_accounts,
+        api_key_form_provider,
+        api_key_form_value,
+        api_key_form_label,
+    );
+
+    column![oauth_card, api_key_section].spacing(16).into()
+}
+
+/// Build the API key providers section
+fn build_api_key_providers_section<'a>(
+    api_key_accounts: &'a HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
+    form_provider: Option<ApiKeyProvider>,
+    form_value: &'a str,
+    form_label: &'a str,
+) -> Element<'a, Message> {
+    // Build provider cards
+    let mut provider_cards: Vec<Element<'a, Message>> = Vec::new();
+
+    for provider in ApiKeyProvider::ALL {
+        let accounts = api_key_accounts.get(provider).cloned().unwrap_or_default();
+        let has_accounts = !accounts.is_empty();
+        let is_form_open = form_provider == Some(*provider);
+
+        // Provider header with Add button
+        let add_button = if is_form_open {
+            button(row![icon(icons::CLOSE).size(14), text(" Cancel").size(12),].spacing(4))
+                .on_press(Message::Settings(settings::Msg::CancelAddApiKey))
+                .style(styles::secondary_button)
+                .padding([6, 10])
+        } else {
+            button(row![icon(icons::ADD).size(14), text(" Add").size(12),].spacing(4))
+                .on_press(Message::Settings(settings::Msg::StartAddApiKey(*provider)))
+                .style(if has_accounts {
+                    styles::success_button
+                } else {
+                    styles::secondary_button
+                })
+                .padding([6, 10])
+        };
+
+        let header = row![
+            text(provider.display_name()).size(16),
+            horizontal_space(),
+            add_button,
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+
+        // Form (if open for this provider)
+        let form_element: Option<Element<'a, Message>> = if is_form_open {
+            Some(
+                container(
+                    column![
+                        row![
+                            text("API Key:").size(13).width(Length::Fixed(80.0)),
+                            text_input("Enter API key...", form_value)
+                                .on_input(|v| Message::Settings(settings::Msg::ApiKeyFormChanged(v)))
+                                .width(Length::Fill)
+                                .secure(true),
+                        ]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center),
+                        row![
+                            text("Label:").size(13).width(Length::Fixed(80.0)),
+                            text_input("Optional label...", form_label)
+                                .on_input(|v| Message::Settings(settings::Msg::ApiKeyLabelFormChanged(v)))
+                                .width(Length::Fill),
+                        ]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center),
+                        row![
+                            horizontal_space(),
+                            button(row![icon(icons::SAVE).size(14), text(" Save").size(12),].spacing(4))
+                                .on_press(Message::Settings(settings::Msg::SaveApiKey))
+                                .style(styles::primary_button)
+                                .padding([6, 10]),
+                        ]
+                        .spacing(8),
+                    ]
+                    .spacing(10),
+                )
+                .padding(12)
+                .style(styles::card_container)
+                .into(),
+            )
+        } else {
+            None
+        };
+
+        // Account list
+        let account_rows: Vec<Element<'a, Message>> = accounts
+            .into_iter()
+            .map(|account| {
+                let status = if !account.is_active {
+                    "inactive"
+                } else if account.is_cooling() {
+                    "cooldown"
+                } else {
+                    "ready"
+                };
+
+                let label_text = account
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| account.masked_key());
+
+                let detail = account
+                    .cooldown_until
+                    .clone()
+                    .map(|until| {
+                        format!(
+                            "priority {} • {} • cooldown until {}",
+                            account.priority, status, until
+                        )
+                    })
+                    .unwrap_or_else(|| format!("priority {} • {}", account.priority, status));
+
+                container(
+                    row![
+                        column![text(label_text).size(13), text(detail).size(10),]
+                            .spacing(2)
+                            .width(Length::Fill),
+                        row![
+                            button(icon(if account.is_active {
+                                icons::CHECK_CIRCLE
+                            } else {
+                                icons::CANCEL
+                            }).size(14))
+                            .on_press(Message::Settings(
+                                settings::Msg::ToggleApiKeyAccountActive {
+                                    account_id: account.id.clone(),
+                                    is_active: !account.is_active,
+                                }
+                            ))
+                            .style(styles::secondary_button)
+                            .padding([4, 6]),
+                            button(icon(icons::ARROW_BACK).size(14))
+                                .on_press(Message::Settings(
+                                    settings::Msg::AdjustApiKeyAccountPriority {
+                                        account_id: account.id.clone(),
+                                        delta: -1,
+                                    }
+                                ))
+                                .style(styles::secondary_button)
+                                .padding([4, 6]),
+                            button(icon(icons::ARROW_FORWARD).size(14))
+                                .on_press(Message::Settings(
+                                    settings::Msg::AdjustApiKeyAccountPriority {
+                                        account_id: account.id.clone(),
+                                        delta: 1,
+                                    }
+                                ))
+                                .style(styles::secondary_button)
+                                .padding([4, 6]),
+                            button(icon(icons::REFRESH).size(14))
+                                .on_press(Message::Settings(settings::Msg::ResetApiKeyCooldown(
+                                    account.id.clone(),
+                                )))
+                                .style(styles::secondary_button)
+                                .padding([4, 6]),
+                            button(icon(icons::DELETE).size(14))
+                                .on_press(Message::Settings(settings::Msg::RemoveApiKeyAccount(
+                                    account.id,
+                                )))
+                                .style(styles::danger_icon_button)
+                                .padding([4, 6]),
+                        ]
+                        .spacing(4)
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding(6)
+                .width(Length::Fill)
+                .into()
+            })
+            .collect();
+
+        let accounts_list: Element<'a, Message> = if account_rows.is_empty() {
+            text("No API keys configured.").size(12).into()
+        } else {
+            Column::with_children(account_rows).spacing(4).into()
+        };
+
+        // Combine header, form, and accounts list
+        let mut card_children: Vec<Element<'a, Message>> = vec![header.into()];
+        if let Some(form) = form_element {
+            card_children.push(form);
+        }
+        card_children.push(accounts_list);
+
+        let provider_card: Element<'a, Message> = container(
+            Column::with_children(card_children).spacing(10),
+        )
+        .padding(12)
+        .style(styles::card_container)
+        .into();
+
+        provider_cards.push(provider_card);
+    }
+
+    container(
+        column![
+            text("API Key Providers").size(18),
+            text("Configure API keys for direct API access. Multiple keys per provider enable automatic failover on rate limits.")
+                .size(12)
+                .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb8(120, 120, 120)),
+                }),
+            Column::with_children(provider_cards).spacing(10),
+        ]
+        .spacing(12),
+    )
+    .padding(20)
+    .style(styles::card_container)
+    .into()
 }
 
 /// Option type for agent model picker

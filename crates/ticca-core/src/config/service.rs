@@ -7,7 +7,7 @@ use crate::config::TypedSettings;
 use crate::config::database::ConfigDatabase;
 use crate::config::mcp_import::parse_mcp_servers_json;
 use crate::config::models::providers;
-use crate::config::models::{McpServer, OAuthAccount, OAuthToken};
+use crate::config::models::{ApiKeyAccount, McpServer, OAuthAccount, OAuthToken};
 
 pub struct ConfigService;
 
@@ -164,5 +164,41 @@ impl ConfigService {
             db.upsert_mcp_server(server)?;
         }
         Ok(servers)
+    }
+
+    // API key accounts
+
+    pub fn list_api_key_accounts(provider: Option<&str>) -> Result<Vec<ApiKeyAccount>> {
+        let db = ConfigDatabase::open()?;
+        db.list_api_key_accounts(provider)
+    }
+
+    pub fn upsert_api_key_account(account: &ApiKeyAccount) -> Result<()> {
+        let db = ConfigDatabase::open()?;
+        db.upsert_api_key_account(account)
+    }
+
+    pub fn delete_api_key_account(account_id: &str) -> Result<bool> {
+        let db = ConfigDatabase::open()?;
+        db.delete_api_key_account(account_id)
+    }
+
+    pub fn set_api_key_account_active(account_id: &str, is_active: bool) -> Result<bool> {
+        let db = ConfigDatabase::open()?;
+        db.set_api_key_account_active(account_id, is_active)
+    }
+
+    pub fn clear_api_key_account_cooldown(account_id: &str) -> Result<bool> {
+        let db = ConfigDatabase::open()?;
+        db.clear_api_key_account_cooldown(account_id)
+    }
+
+    pub fn adjust_api_key_account_priority(account_id: &str, delta: i64) -> Result<bool> {
+        let db = ConfigDatabase::open()?;
+        let Some(account) = db.get_api_key_account(account_id)? else {
+            return Ok(false);
+        };
+        let new_priority = account.priority.saturating_add(delta);
+        db.set_api_key_account_priority(account_id, new_priority)
     }
 }

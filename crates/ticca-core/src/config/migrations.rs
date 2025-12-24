@@ -74,6 +74,30 @@ pub fn run_config_migrations(conn: &Connection) -> Result<()> {
         [],
     )?;
 
+    // Create api_key_accounts table for API key-based providers
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS api_key_accounts (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            label TEXT,
+            is_active INTEGER DEFAULT 1,
+            priority INTEGER DEFAULT 0,
+            cooldown_until TEXT,
+            last_error TEXT,
+            last_429_at TEXT,
+            last_used_at TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_api_key_accounts_provider ON api_key_accounts(provider)",
+        [],
+    )?;
+
     // Create MCP server tables
     conn.execute(
         "CREATE TABLE IF NOT EXISTS mcp_servers (

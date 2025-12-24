@@ -2,7 +2,7 @@
 
 use crate::config::migrations;
 use crate::config::models::{
-    McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken, Setting,
+    ApiKeyAccount, McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken, Setting,
 };
 use anyhow::Result;
 use rusqlite::{Connection, params};
@@ -485,6 +485,171 @@ impl ConfigDatabase {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    // API key accounts CRUD
+
+    pub fn get_api_key_account(&self, id: &str) -> Result<Option<ApiKeyAccount>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, provider, api_key, label, is_active, priority, cooldown_until,
+                    last_error, last_429_at, last_used_at, created_at, updated_at
+             FROM api_key_accounts WHERE id = ?",
+        )?;
+
+        let result = stmt.query_row(params![id], |row| {
+            Ok(ApiKeyAccount {
+                id: row.get(0)?,
+                provider: row.get(1)?,
+                api_key: row.get(2)?,
+                label: row.get(3)?,
+                is_active: row.get::<_, i64>(4)? != 0,
+                priority: row.get(5)?,
+                cooldown_until: row.get(6)?,
+                last_error: row.get(7)?,
+                last_429_at: row.get(8)?,
+                last_used_at: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        });
+
+        match result {
+            Ok(account) => Ok(Some(account)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn list_api_key_accounts(&self, provider: Option<&str>) -> Result<Vec<ApiKeyAccount>> {
+        fn map_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyAccount> {
+            Ok(ApiKeyAccount {
+                id: row.get(0)?,
+                provider: row.get(1)?,
+                api_key: row.get(2)?,
+                label: row.get(3)?,
+                is_active: row.get::<_, i64>(4)? != 0,
+                priority: row.get(5)?,
+                cooldown_until: row.get(6)?,
+                last_error: row.get(7)?,
+                last_429_at: row.get(8)?,
+                last_used_at: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        }
+
+        let mut stmt = if provider.is_some() {
+            self.conn.prepare(
+                "SELECT id, provider, api_key, label, is_active, priority, cooldown_until,
+                        last_error, last_429_at, last_used_at, created_at, updated_at
+                 FROM api_key_accounts WHERE provider = ? ORDER BY priority DESC, updated_at DESC",
+            )?
+        } else {
+            self.conn.prepare(
+                "SELECT id, provider, api_key, label, is_active, priority, cooldown_until,
+                        last_error, last_429_at, last_used_at, created_at, updated_at
+                 FROM api_key_accounts ORDER BY provider, priority DESC, updated_at DESC",
+            )?
+        };
+
+        let rows = if let Some(p) = provider {
+            stmt.query_map(params![p], map_account)?
+        } else {
+            stmt.query_map([], map_account)?
+        };
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn upsert_api_key_account(&self, account: &ApiKeyAccount) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO api_key_accounts (
+                id, provider, api_key, label, is_active, priority, cooldown_until,
+                last_error, last_429_at, last_used_at, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET
+                provider = excluded.provider,
+                api_key = excluded.api_key,
+                label = excluded.label,
+                is_active = excluded.is_active,
+                priority = excluded.priority,
+                cooldown_until = excluded.cooldown_until,
+                last_error = excluded.last_error,
+                last_429_at = excluded.last_429_at,
+                last_used_at = excluded.last_used_at,
+                updated_at = datetime('now')",
+            params![
+                account.id,
+                account.provider,
+                account.api_key,
+                account.label,
+                if account.is_active { 1 } else { 0 },
+                account.priority,
+                account.cooldown_until,
+                account.last_error,
+                account.last_429_at,
+                account.last_used_at,
+                account.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_api_key_account(&self, id: &str) -> Result<bool> {
+        let changes = self
+            .conn
+            .execute("DELETE FROM api_key_accounts WHERE id = ?", params![id])?;
+        Ok(changes > 0)
+    }
+
+    pub fn set_api_key_account_active(&self, id: &str, is_active: bool) -> Result<bool> {
+        let changes = self.conn.execute(
+            "UPDATE api_key_accounts SET is_active = ?, updated_at = datetime('now') WHERE id = ?",
+            params![if is_active { 1 } else { 0 }, id],
+        )?;
+        Ok(changes > 0)
+    }
+
+    pub fn set_api_key_account_cooldown(
+        &self,
+        id: &str,
+        cooldown_until: Option<String>,
+        last_error: Option<String>,
+        last_429_at: Option<String>,
+    ) -> Result<bool> {
+        let changes = self.conn.execute(
+            "UPDATE api_key_accounts
+             SET cooldown_until = ?, last_error = ?, last_429_at = ?, updated_at = datetime('now')
+             WHERE id = ?",
+            params![cooldown_until, last_error, last_429_at, id],
+        )?;
+        Ok(changes > 0)
+    }
+
+    pub fn clear_api_key_account_cooldown(&self, id: &str) -> Result<bool> {
+        let changes = self.conn.execute(
+            "UPDATE api_key_accounts
+             SET cooldown_until = NULL, last_error = NULL, last_429_at = NULL, updated_at = datetime('now')
+             WHERE id = ?",
+            params![id],
+        )?;
+        Ok(changes > 0)
+    }
+
+    pub fn set_api_key_account_last_used(&self, id: &str, last_used_at: String) -> Result<bool> {
+        let changes = self.conn.execute(
+            "UPDATE api_key_accounts SET last_used_at = ?, updated_at = datetime('now') WHERE id = ?",
+            params![last_used_at, id],
+        )?;
+        Ok(changes > 0)
+    }
+
+    pub fn set_api_key_account_priority(&self, id: &str, priority: i64) -> Result<bool> {
+        let changes = self.conn.execute(
+            "UPDATE api_key_accounts SET priority = ?, updated_at = datetime('now') WHERE id = ?",
+            params![priority, id],
+        )?;
+        Ok(changes > 0)
+    }
+
     // Agent model pinning
 
     /// Get the pinned model for a specific agent
@@ -812,5 +977,75 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn test_api_key_accounts_crud() {
+        use crate::config::models::ApiKeyAccount;
+
+        let test = test_db();
+        let db = &test.db;
+
+        // Create account
+        let account = ApiKeyAccount::new("acc1", "openai", "sk-test-123")
+            .with_label("Test Key")
+            .with_priority(10);
+        db.upsert_api_key_account(&account).unwrap();
+
+        // Read account
+        let retrieved = db.get_api_key_account("acc1").unwrap().unwrap();
+        assert_eq!(retrieved.provider, "openai");
+        assert_eq!(retrieved.api_key, "sk-test-123");
+        assert_eq!(retrieved.label, Some("Test Key".to_string()));
+        assert_eq!(retrieved.priority, 10);
+        assert!(retrieved.is_active);
+
+        // List by provider
+        let listed = db.list_api_key_accounts(Some("openai")).unwrap();
+        assert_eq!(listed.len(), 1);
+
+        // Create another account for same provider
+        let account2 = ApiKeyAccount::new("acc2", "openai", "sk-test-456").with_priority(5);
+        db.upsert_api_key_account(&account2).unwrap();
+
+        // List should be ordered by priority DESC
+        let listed = db.list_api_key_accounts(Some("openai")).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, "acc1"); // Higher priority first
+        assert_eq!(listed[1].id, "acc2");
+
+        // Toggle active
+        db.set_api_key_account_active("acc1", false).unwrap();
+        let retrieved = db.get_api_key_account("acc1").unwrap().unwrap();
+        assert!(!retrieved.is_active);
+
+        // Set cooldown
+        let cooldown = (Utc::now() + Duration::seconds(60)).to_rfc3339();
+        db.set_api_key_account_cooldown("acc1", Some(cooldown.clone()), Some("429 error".to_string()), Some(Utc::now().to_rfc3339()))
+            .unwrap();
+        let retrieved = db.get_api_key_account("acc1").unwrap().unwrap();
+        assert!(retrieved.cooldown_until.is_some());
+        assert_eq!(retrieved.last_error, Some("429 error".to_string()));
+
+        // Clear cooldown
+        db.clear_api_key_account_cooldown("acc1").unwrap();
+        let retrieved = db.get_api_key_account("acc1").unwrap().unwrap();
+        assert!(retrieved.cooldown_until.is_none());
+        assert!(retrieved.last_error.is_none());
+
+        // Update priority
+        db.set_api_key_account_priority("acc2", 20).unwrap();
+        let listed = db.list_api_key_accounts(Some("openai")).unwrap();
+        assert_eq!(listed[0].id, "acc2"); // Now higher priority
+
+        // Delete account
+        assert!(db.delete_api_key_account("acc1").unwrap());
+        assert!(db.get_api_key_account("acc1").unwrap().is_none());
+
+        // List all providers
+        let account3 = ApiKeyAccount::new("acc3", "anthropic", "sk-ant-test");
+        db.upsert_api_key_account(&account3).unwrap();
+        let all = db.list_api_key_accounts(None).unwrap();
+        assert_eq!(all.len(), 2);
     }
 }

@@ -36,6 +36,8 @@ fn context_limit_for_provider(provider: ProviderId) -> i64 {
         ProviderId::Claude => CLAUDE_CONTEXT_LIMIT,
         ProviderId::ChatGpt => CHATGPT_CONTEXT_LIMIT,
         ProviderId::Gemini => GEMINI_CONTEXT_LIMIT,
+        // For API key providers, use a reasonable default (128K)
+        ProviderId::ApiKey(_) => 128_000,
     }
 }
 
@@ -390,6 +392,9 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 }
                 ProviderId::ChatGpt => {
                     auth::has_valid_account(ticca_core::config::models::providers::CHATGPT)
+                }
+                ProviderId::ApiKey(api_provider) => {
+                    auth::has_valid_api_key(api_provider.id())
                 }
             };
 

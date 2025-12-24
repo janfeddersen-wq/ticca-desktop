@@ -13,6 +13,7 @@ use crate::llm;
 use crate::llm::auth::{self, AuthToken};
 use crate::llm::providers::GeminiCodeAssistRigClient;
 use crate::llm::providers::chatgpt::ChatGptOAuthClient;
+use crate::llm::providers::OpenAICompatibleApiClient;
 use crate::llm::{ClaudeOAuthClient, ProviderId, ProviderRegistry};
 use crate::session::MessageRole;
 use crate::tools::{
@@ -828,6 +829,84 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 claude_history,
                 max_tool_rounds,
                 "Claude",
+            )
+            .await
+        }
+        ProviderId::ApiKey(api_provider) => {
+            let provider_name = api_provider.display_name();
+            tracing::info!("Using {} backend for model: {}", provider_name, model_name);
+
+            if !api_provider.is_openai_compatible() {
+                return Err(format!(
+                    "{} API key provider requires special handling not yet implemented",
+                    provider_name
+                ));
+            }
+
+            let api_key_token = auth::select_api_key(api_provider.id()).ok_or_else(|| {
+                format!(
+                    "{} API key required. Please add an API key in Settings.",
+                    provider_name
+                )
+            })?;
+
+            let client = OpenAICompatibleApiClient::new(api_provider, &api_key_token.api_key)?;
+
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            tracing::info!(
+                "API key provider model: '{}' -> extracted: '{}'",
+                model_name,
+                actual_model_id
+            );
+            let model = client.completion_model(actual_model_id);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_read,
+                todo_write,
+                todo_list,
+                invoke_agent_tool,
+            ) = crate::tools::create_tools(tool_context);
+
+            let builder = AgentBuilder::new(model)
+                .preamble(&profile.system_prompt)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
+                .tool(todo_list)
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
+
+            let agent = builder.temperature(0.7).max_tokens(8192).build();
+
+            stream_invoked_agent(
+                request.node_id,
+                &parent_context,
+                agent,
+                history,
+                max_tool_rounds,
+                provider_name,
             )
             .await
         }
@@ -1670,6 +1749,214 @@ async fn run_agent_stream(
                 }
 
                 // Use first prompt on pass 1, retry prompt on subsequent passes
+                let guard_prompt = if passes == 1 {
+                    TODO_GUARD_FIRST_PROMPT
+                } else {
+                    TODO_GUARD_RETRY_PROMPT
+                };
+                history.push(RigMessage::user(guard_prompt));
+            }
+        }
+        ProviderId::ApiKey(api_provider) => {
+            let provider_name = api_provider.display_name();
+            tracing::info!("Using {} backend for model: {}", provider_name, model_name);
+
+            if !api_provider.is_openai_compatible() {
+                return Err(format!(
+                    "{} API key provider requires special handling not yet implemented",
+                    provider_name
+                ));
+            }
+
+            let api_key_token = auth::select_api_key(api_provider.id()).ok_or_else(|| {
+                format!(
+                    "{} API key required. Please add an API key in Settings.",
+                    provider_name
+                )
+            })?;
+
+            let client = OpenAICompatibleApiClient::new(api_provider, &api_key_token.api_key)
+                .map_err(|e| format!("Failed to create {} client: {}", provider_name, e))?;
+
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            tracing::info!(
+                "API key provider model: '{}' -> extracted: '{}'",
+                model_name,
+                actual_model_id
+            );
+            let model = client.completion_model(actual_model_id);
+            let (
+                execute_shell,
+                list_processes,
+                read_process_output,
+                kill_process,
+                read_file,
+                list_files,
+                edit_file,
+                delete_file,
+                grep,
+                write_file,
+                list_agents,
+                todo_read,
+                todo_write,
+                todo_list,
+                invoke_agent_tool,
+            ) = crate::tools::create_tools(tool_context.clone());
+
+            let builder = AgentBuilder::new(model)
+                .preamble(&system_prompt)
+                .tool(execute_shell)
+                .tool(list_processes)
+                .tool(read_process_output)
+                .tool(kill_process)
+                .tool(read_file)
+                .tool(list_files)
+                .tool(edit_file)
+                .tool(delete_file)
+                .tool(grep)
+                .tool(write_file)
+                .tool(list_agents)
+                .tool(todo_read)
+                .tool(todo_write)
+                .tool(todo_list)
+                .tool(invoke_agent_tool);
+
+            let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
+
+            let agent = builder.temperature(0.7).max_tokens(8192).build();
+
+            use rig::agent::MultiTurnStreamItem;
+            use rig::message::Message as RigMessage;
+            use rig::streaming::StreamingPrompt;
+            use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
+
+            let mut passes = 0usize;
+            let mut history = full_history;
+            let max_turns = max_tool_rounds.max(1) as usize;
+
+            loop {
+                passes += 1;
+
+                let mut stream = agent
+                    .stream_prompt("")
+                    .with_history(history.clone())
+                    .multi_turn(max_turns)
+                    .await;
+
+                let mut collected_pass = String::new();
+                let mut chunk_count = 0u32;
+                while let Some(chunk_result) = stream.next().await {
+                    chunk_count += 1;
+                    match chunk_result {
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Text(text_chunk),
+                        )) => {
+                            if !text_chunk.text.is_empty() {
+                                let chunk_len = text_chunk.text.len();
+                                collected_pass.push_str(&text_chunk.text);
+                                tracing::trace!(
+                                    "{} text chunk #{}: {} chars",
+                                    provider_name,
+                                    chunk_count,
+                                    text_chunk.text.len()
+                                );
+                                let _ = event_tx.send(RunnerEvent::StreamChunk(text_chunk.text));
+                                stats_window_chars += chunk_len;
+                                if let Some(stats) = emit_stream_stats(
+                                    &mut stats_window_chars,
+                                    &mut stats_window_start,
+                                ) {
+                                    let _ = event_tx.send(stats);
+                                }
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Reasoning(reasoning),
+                        )) => {
+                            let text = reasoning.reasoning.join("");
+                            if !text.is_empty() {
+                                tracing::debug!(
+                                    "{} reasoning chunk #{}: {} chars",
+                                    provider_name,
+                                    chunk_count,
+                                    text.len()
+                                );
+                                let _ = event_tx.send(RunnerEvent::Reasoning(text));
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::ToolCall(tool_call),
+                        )) => {
+                            let name = tool_call.function.name;
+                            let args = tool_call.function.arguments.to_string();
+                            let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
+                        }
+                        Ok(MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Final(response),
+                        )) => {
+                            if let Some(usage) = response.token_usage() {
+                                tracing::info!(
+                                    "Usage update (provider={}): input={}, output={}",
+                                    provider_name,
+                                    usage.input_tokens,
+                                    usage.output_tokens
+                                );
+                                let _ = event_tx.send(RunnerEvent::Usage {
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                });
+                            }
+                        }
+                        Ok(MultiTurnStreamItem::StreamUserItem(
+                            StreamedUserContent::ToolResult(_),
+                        )) => {}
+                        Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
+                        Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            let _ = event_tx.send(RunnerEvent::ContextEstimate {
+                                system_prompt_tokens: estimate.system_prompt_tokens,
+                                tool_definitions_tokens: estimate.tool_definitions_tokens,
+                                messages_tokens: estimate.messages_tokens,
+                                total_tokens: estimate.total_tokens,
+                                context_window: estimate.context_window,
+                                usage_percent: estimate.usage_percent,
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            let error_msg = format!("{} stream error: {}", provider_name, e);
+                            if is_rate_limit_error(&error_msg) {
+                                auth::mark_api_key_cooldown(
+                                    &api_key_token.account_id,
+                                    &error_msg,
+                                    DEFAULT_COOLDOWN_SECS,
+                                );
+                            }
+                            return Err(error_msg);
+                        }
+                    }
+                }
+
+                if !collected_pass.is_empty() {
+                    history.push(RigMessage::assistant(&collected_pass));
+                }
+
+                let todo_ok = match &tool_context.todo_store {
+                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
+                    None => true,
+                };
+
+                if todo_ok {
+                    return Ok(());
+                }
+
+                if passes >= TODO_GUARD_MAX_PASSES {
+                    let _ = event_tx.send(RunnerEvent::StreamChunk(
+                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
+                    ));
+                    return Ok(());
+                }
+
                 let guard_prompt = if passes == 1 {
                     TODO_GUARD_FIRST_PROMPT
                 } else {

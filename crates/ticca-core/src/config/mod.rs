@@ -10,7 +10,10 @@ pub mod service;
 pub mod settings;
 
 pub use database::ConfigDatabase;
-pub use models::{McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken, Setting};
+pub use models::{
+    ApiKeyAccount, ApiKeyProvider, McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken,
+    Setting,
+};
 pub use paths::{
     ensure_dirs_exist, get_bin_dir, get_data_dir, get_skills_dir, get_tools_dir,
     get_uv_binary_path, get_venvs_dir,
