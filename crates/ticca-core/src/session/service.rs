@@ -55,11 +55,12 @@ impl SessionService {
             .iter()
             .find(|m| m.role == MessageRole::User)
             .map(|m| {
-                let preview: String = m.content.chars().take(50).collect();
-                if m.content.len() > 50 {
+                let char_count = m.content.chars().count();
+                if char_count > 50 {
+                    let preview: String = m.content.chars().take(47).collect();
                     format!("{}...", preview)
                 } else {
-                    preview
+                    m.content.clone()
                 }
             })
             .unwrap_or_else(|| format!("Session {}", Local::now().format("%Y-%m-%d %H:%M")));

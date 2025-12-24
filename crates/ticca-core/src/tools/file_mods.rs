@@ -217,12 +217,14 @@ fn edit_with_delete_snippet(payload: &DeleteSnippetPayload) -> Result<ToolResult
     )))
 }
 
-/// Truncate a string for display purposes
-fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+/// Truncate a string for display purposes (char-safe, not byte-safe)
+fn truncate_string(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+        format!("{}...", truncated)
     }
 }
 

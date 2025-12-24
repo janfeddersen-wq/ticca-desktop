@@ -1,5 +1,28 @@
 //! Helper functions for the application
 
+/// Truncate a string to a maximum number of characters (char-safe, not byte-safe)
+fn truncate_end(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+        format!("{}...", truncated)
+    }
+}
+
+/// Truncate a string from the start, keeping the end (char-safe)
+fn truncate_start(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        s.to_string()
+    } else {
+        let skip = char_count - max_chars.saturating_sub(3);
+        let truncated: String = s.chars().skip(skip).collect();
+        format!("...{}", truncated)
+    }
+}
+
 /// Format a tool call as a concise one-liner for display
 pub fn format_tool_call_oneliner(
     name: &str,
@@ -37,11 +60,7 @@ pub fn format_tool_call_oneliner(
                 .or(parsed.get("path"))
                 .and_then(|v| v.as_str())
             {
-                let display = if dir.len() > 80 {
-                    format!("...{}", &dir[dir.len() - 77..])
-                } else {
-                    dir.to_string()
-                };
+                let display = truncate_start(dir, 80);
                 format!("Directory: {}", display)
             } else {
                 String::new()
@@ -50,11 +69,7 @@ pub fn format_tool_call_oneliner(
         "read_file" => {
             // Show just the path (clickable)
             if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
-                let display = if path.len() > 80 {
-                    format!("...{}", &path[path.len() - 77..])
-                } else {
-                    path.to_string()
-                };
+                let display = truncate_start(path, 80);
                 let full_path = resolve_path(path);
                 link_path(display, &full_path)
             } else {
@@ -78,11 +93,7 @@ pub fn format_tool_call_oneliner(
         "execute_shell" => {
             // Show command, limited to 80 chars
             if let Some(cmd) = parsed.get("command").and_then(|v| v.as_str()) {
-                let display = if cmd.len() > 80 {
-                    format!("{}...", &cmd[..77])
-                } else {
-                    cmd.to_string()
-                };
+                let display = truncate_end(cmd, 80);
                 format!("`{}`", display)
             } else {
                 String::new()
@@ -100,18 +111,10 @@ pub fn format_tool_call_oneliner(
             let path = parsed.get("path").and_then(|v| v.as_str());
             let mut display = format!("\"{}\"", pattern);
             if let Some(p) = path {
-                let short_path = if p.len() > 40 {
-                    format!("...{}", &p[p.len() - 37..])
-                } else {
-                    p.to_string()
-                };
+                let short_path = truncate_start(p, 40);
                 display.push_str(&format!(" in {}", short_path));
             }
-            if display.len() > 80 {
-                format!("{}...", &display[..77])
-            } else {
-                display
-            }
+            truncate_end(&display, 80)
         }
         "invoke_agent" => {
             let agent = parsed.get("agent").and_then(|v| v.as_str()).unwrap_or("");
@@ -146,11 +149,7 @@ pub fn format_tool_call_oneliner(
                         _ => val.to_string(),
                     };
                     let display = format!("{}: {}", key, val_str);
-                    if display.len() > 80 {
-                        format!("{}...", &display[..77])
-                    } else {
-                        display
-                    }
+                    truncate_end(&display, 80)
                 } else {
                     String::new()
                 }
