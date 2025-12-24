@@ -195,6 +195,22 @@ pub fn view<'a>(
             // Actions
             row![
                 styled_tooltip(
+                    button(icon(icons::DELETE).size(18))
+                        .on_press(Message::Chat(chat::Msg::NewSession))
+                        .style(styles::icon_button)
+                        .padding(8),
+                    "New session",
+                    tooltip::Position::Bottom,
+                ),
+                styled_tooltip(
+                    button(icon(icons::SETTINGS).size(18))
+                        .on_press(Message::Settings(settings::Msg::OpenSettings))
+                        .style(styles::icon_button)
+                        .padding(8),
+                    "Settings",
+                    tooltip::Position::Bottom,
+                ),
+                styled_tooltip(
                     button(
                         icon(if flow_panel_visible {
                             icons::CLOSE
@@ -207,30 +223,6 @@ pub fn view<'a>(
                     .style(styles::icon_button)
                     .padding(8),
                     if flow_panel_visible { "Hide sidebar" } else { "Show sidebar" },
-                    tooltip::Position::Bottom,
-                ),
-                styled_tooltip(
-                    button(icon(icons::CONTRAST).size(18))
-                        .on_press(Message::Settings(settings::Msg::ThemeToggle))
-                        .style(styles::icon_button)
-                        .padding(8),
-                    "Toggle theme",
-                    tooltip::Position::Bottom,
-                ),
-                styled_tooltip(
-                    button(icon(icons::SETTINGS).size(18))
-                        .on_press(Message::Settings(settings::Msg::OpenSettings))
-                        .style(styles::icon_button)
-                        .padding(8),
-                    "Settings",
-                    tooltip::Position::Bottom,
-                ),
-                styled_tooltip(
-                    button(icon(icons::ADD).size(18))
-                        .on_press(Message::Chat(chat::Msg::NewSession))
-                        .style(styles::icon_button)
-                        .padding(8),
-                    "New session",
                     tooltip::Position::Bottom,
                 ),
             ]
