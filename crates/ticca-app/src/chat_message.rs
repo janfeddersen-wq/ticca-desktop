@@ -71,6 +71,21 @@ impl ChatMessage {
         }
     }
 
+    /// System message for notifications (compression, etc.)
+    pub fn system(content: impl Into<String>) -> Self {
+        let content = content.into();
+        let parsed_items = markdown::parse(&content).collect();
+        Self {
+            role: MessageRole::System,
+            content,
+            is_streaming: false,
+            author_label: None,
+            reasoning: None,
+            parsed_items,
+            last_was_tool_call: false,
+        }
+    }
+
     /// Update parsed items when content changes
     pub fn update_parsed_items(&mut self) {
         self.parsed_items = markdown::parse(&self.content).collect();

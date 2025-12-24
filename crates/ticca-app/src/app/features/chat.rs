@@ -108,6 +108,9 @@ pub(in crate::app) struct ChatState {
     /// Token usage from API responses (input_tokens includes system prompt, tools, all messages)
     pub(in crate::app) input_tokens: u64,
     pub(in crate::app) output_tokens: u64,
+    /// Pre-request context estimate (from rig's ContextEstimate)
+    pub(in crate::app) estimated_tokens: usize,
+    pub(in crate::app) context_window: u64,
     pub(in crate::app) call_graph: AgentCallGraph,
     pub(in crate::app) subagent_message_indices: HashMap<usize, usize>,
     panes: iced::widget::pane_grid::State<ChatPane>,
@@ -172,6 +175,8 @@ impl ChatState {
             spinner_frame: 0,
             input_tokens: 0,
             output_tokens: 0,
+            estimated_tokens: 0,
+            context_window: 200_000, // Default to Claude's context window
             call_graph: AgentCallGraph::new(AgentType::Coding),
             subagent_message_indices: HashMap::new(),
             panes,
@@ -232,14 +237,23 @@ impl ChatState {
             .unwrap_or(ProviderId::Claude)
     }
 
-    /// Get context limit for the current provider
+    /// Get context limit for the current provider (or from estimate if available)
     pub(in crate::app) fn context_limit(&self) -> i64 {
-        context_limit_for_provider(self.current_provider())
+        if self.context_window > 0 {
+            self.context_window as i64
+        } else {
+            context_limit_for_provider(self.current_provider())
+        }
     }
 
-    /// Get input tokens used in the current conversation (from API response)
+    /// Get estimated tokens used (pre-request estimate, more accurate than API response)
     pub(in crate::app) fn tokens_used(&self) -> i64 {
-        self.input_tokens as i64
+        // Use pre-estimation if available, otherwise fall back to API response
+        if self.estimated_tokens > 0 {
+            self.estimated_tokens as i64
+        } else {
+            self.input_tokens as i64
+        }
     }
 
     pub(in crate::app) fn subscriptions(&self) -> Vec<Subscription<Message>> {
@@ -527,7 +541,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             input_tokens,
             output_tokens,
         } => {
-            // Just SET the values from the API - input_tokens is the context window usage
+            // Update token values from the API - input_tokens is the actual context usage
             tracing::info!(
                 "UI received Usage: input={}, output={}",
                 input_tokens,
@@ -535,6 +549,30 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             );
             app.chat.input_tokens = input_tokens;
             app.chat.output_tokens = output_tokens;
+            // Also update estimated_tokens so tokens_used() shows the actual value
+            app.chat.estimated_tokens = input_tokens as usize;
+        }
+
+        chat::Msg::ContextEstimate {
+            system_prompt_tokens,
+            tool_definitions_tokens,
+            messages_tokens,
+            total_tokens,
+            context_window,
+            usage_percent,
+        } => {
+            // Update pre-request context estimate for UI display
+            tracing::info!(
+                "Context estimate: system={}, tools={}, messages={}, total={} ({:.1}% of {})",
+                system_prompt_tokens,
+                tool_definitions_tokens,
+                messages_tokens,
+                total_tokens,
+                usage_percent,
+                context_window
+            );
+            app.chat.estimated_tokens = total_tokens;
+            app.chat.context_window = context_window;
         }
 
         chat::Msg::AnimationTick => {
@@ -808,6 +846,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.todo_selected_node = 0;
             app.chat.input_tokens = 0;
             app.chat.output_tokens = 0;
+            app.chat.estimated_tokens = 0;
             app.chat.sidebar_tab =
                 enforce_sidebar_tab(app.expert_mode_enabled, RightSidebarTab::AgentsFlow);
             app.chat.messages.push(ChatMessage::assistant(
@@ -824,9 +863,10 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 app.chat.messages = loaded.messages;
                 app.chat.current_session = Some(loaded.session);
 
-                // Reset token tracking - will be updated on next API response
+                // Reset token tracking - will be updated on next request
                 app.chat.input_tokens = 0;
                 app.chat.output_tokens = 0;
+                app.chat.estimated_tokens = 0;
 
                 app.chat.raw_view_messages.clear();
                 app.chat.raw_view_editors.clear();
@@ -1042,13 +1082,20 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 compressed_tokens,
                 strategy
             );
-            // Show compression notification as a toast
+            // Show compression notification as a system message in chat
             let saved_tokens = original_tokens.saturating_sub(compressed_tokens);
             let saved_messages = original_messages.saturating_sub(compressed_messages);
-            app.toast = Some(Toast::new(format!(
-                "Context compressed: removed {} messages, saved ~{} tokens ({})",
-                saved_messages, saved_tokens, strategy
-            )));
+            let notification = format!(
+                "📦 **Context compressed** ({} strategy)\n\
+                 - Removed {} messages (~{} tokens)\n\
+                 - Keeping {} messages (~{} tokens)",
+                strategy,
+                saved_messages,
+                saved_tokens,
+                compressed_messages,
+                compressed_tokens
+            );
+            app.chat.messages.push(ChatMessage::system(notification));
         }
 
         chat::Msg::ContextUsageWarning {

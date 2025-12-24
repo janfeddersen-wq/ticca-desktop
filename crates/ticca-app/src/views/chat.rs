@@ -441,6 +441,7 @@ fn render_message<'a>(
     raw_view_editors: &'a HashMap<usize, text_editor::Content>,
 ) -> Element<'a, Message> {
     let is_user = msg.role == MessageRole::User;
+    let is_system = msg.role == MessageRole::System;
     let is_dark = theme.is_dark();
     let is_raw_view = raw_view_messages.contains(&index);
 
@@ -534,6 +535,12 @@ fn render_message<'a>(
     container(msg_column)
         .padding(12)
         .width(Length::FillPortion(4))
-        .style(move |theme| styles::message_bubble(theme, is_user))
+        .style(move |theme| {
+            if is_system {
+                styles::system_message_bubble(theme)
+            } else {
+                styles::message_bubble(theme, is_user)
+            }
+        })
         .into()
 }

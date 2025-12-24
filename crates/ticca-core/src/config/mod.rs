@@ -44,14 +44,14 @@ pub mod setting_keys {
     pub const COMPRESSION_ENABLED: &str = "compression_enabled";
     /// Percentage of context window that triggers compression (0-100).
     pub const COMPRESSION_THRESHOLD_PERCENT: &str = "compression_threshold_percent";
-    /// Compression strategy: "truncation", "sliding_window", or "summarizing".
+    /// Compression strategy: "truncation" or "summarizing".
     pub const COMPRESSION_STRATEGY: &str = "compression_strategy";
     /// Model to use for summarization (if strategy is "summarizing"). Empty = use current model.
     pub const COMPRESSION_SUMMARIZER_MODEL: &str = "compression_summarizer_model";
     /// Number of initial messages to preserve (e.g., system prompt).
     pub const COMPRESSION_PRESERVE_FIRST: &str = "compression_preserve_first";
-    /// Number of recent messages to always keep.
-    pub const COMPRESSION_PRESERVE_RECENT: &str = "compression_preserve_recent";
+    /// Number of tokens to protect for recent messages (like code_puppy's protected_token_count).
+    pub const COMPRESSION_PROTECTED_TOKENS: &str = "compression_protected_tokens";
 }
 
 /// Default values for settings
@@ -71,10 +71,10 @@ pub mod defaults {
     pub const COMPRESSION_ENABLED: bool = false;
     /// Trigger compression at 80% of context window.
     pub const COMPRESSION_THRESHOLD_PERCENT: u32 = 80;
-    /// Default to sliding window (preserves system prompt + recent).
-    pub const COMPRESSION_STRATEGY: &str = "sliding_window";
+    /// Default to truncation (token-based, like code_puppy).
+    pub const COMPRESSION_STRATEGY: &str = "truncation";
     /// Number of initial messages to preserve (system prompt).
     pub const COMPRESSION_PRESERVE_FIRST: u32 = 1;
-    /// Number of recent messages to always keep.
-    pub const COMPRESSION_PRESERVE_RECENT: u32 = 4;
+    /// Number of tokens to protect for recent messages (default 50k like code_puppy).
+    pub const COMPRESSION_PROTECTED_TOKENS: u32 = 50_000;
 }

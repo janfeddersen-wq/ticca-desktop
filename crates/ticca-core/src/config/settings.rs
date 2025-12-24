@@ -30,12 +30,13 @@ impl AccountRotationPolicy {
 /// Compression strategy for managing context window limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompressionStrategy {
-    /// Simple truncation - removes oldest messages first.
-    Truncation,
-    /// Sliding window - preserves first N and last M messages.
+    /// Token-based truncation - keeps system prompt and recent messages up to protected token limit.
+    /// Similar to code_puppy's LIFO approach: always preserves first message (system prompt),
+    /// then keeps as many recent messages as fit within the protected token budget.
     #[default]
-    SlidingWindow,
+    Truncation,
     /// LLM summarization - generates a continuity briefing from removed messages.
+    /// Uses an LLM to create a semantic summary of the compressed context.
     Summarizing,
 }
 
@@ -43,16 +44,15 @@ impl CompressionStrategy {
     pub fn as_str(&self) -> &'static str {
         match self {
             CompressionStrategy::Truncation => "truncation",
-            CompressionStrategy::SlidingWindow => "sliding_window",
             CompressionStrategy::Summarizing => "summarizing",
         }
     }
 
     pub fn parse(value: &str) -> Self {
         match value {
-            "truncation" => CompressionStrategy::Truncation,
             "summarizing" => CompressionStrategy::Summarizing,
-            _ => CompressionStrategy::SlidingWindow,
+            // Default to truncation for any other value (including legacy "sliding_window")
+            _ => CompressionStrategy::Truncation,
         }
     }
 }
@@ -61,7 +61,6 @@ impl std::fmt::Display for CompressionStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CompressionStrategy::Truncation => write!(f, "Truncation"),
-            CompressionStrategy::SlidingWindow => write!(f, "Sliding Window"),
             CompressionStrategy::Summarizing => write!(f, "Summarizing (LLM)"),
         }
     }
@@ -80,8 +79,10 @@ pub struct CompressionSettings {
     pub summarizer_model: Option<String>,
     /// Number of initial messages to preserve (e.g., system prompt).
     pub preserve_first: u32,
-    /// Number of recent messages to always keep.
-    pub preserve_recent: u32,
+    /// Number of tokens to protect for recent messages.
+    /// Like code_puppy's protected_token_count - recent messages totaling up to this
+    /// many tokens will be preserved during compression.
+    pub protected_tokens: u32,
 }
 
 impl Default for CompressionSettings {
@@ -89,10 +90,10 @@ impl Default for CompressionSettings {
         Self {
             enabled: defaults::COMPRESSION_ENABLED,
             threshold_percent: defaults::COMPRESSION_THRESHOLD_PERCENT,
-            strategy: CompressionStrategy::SlidingWindow,
+            strategy: CompressionStrategy::Truncation,
             summarizer_model: None,
             preserve_first: defaults::COMPRESSION_PRESERVE_FIRST,
-            preserve_recent: defaults::COMPRESSION_PRESERVE_RECENT,
+            protected_tokens: defaults::COMPRESSION_PROTECTED_TOKENS,
         }
     }
 }
@@ -121,8 +122,8 @@ impl CompressionSettings {
             get_string(repo, setting_keys::COMPRESSION_SUMMARIZER_MODEL).filter(|s| !s.is_empty());
         let preserve_first = get_u32(repo, setting_keys::COMPRESSION_PRESERVE_FIRST)
             .unwrap_or(defaults::COMPRESSION_PRESERVE_FIRST);
-        let preserve_recent = get_u32(repo, setting_keys::COMPRESSION_PRESERVE_RECENT)
-            .unwrap_or(defaults::COMPRESSION_PRESERVE_RECENT);
+        let protected_tokens = get_u32(repo, setting_keys::COMPRESSION_PROTECTED_TOKENS)
+            .unwrap_or(defaults::COMPRESSION_PROTECTED_TOKENS);
 
         Self {
             enabled,
@@ -130,7 +131,7 @@ impl CompressionSettings {
             strategy,
             summarizer_model,
             preserve_first,
-            preserve_recent,
+            protected_tokens,
         }
     }
 

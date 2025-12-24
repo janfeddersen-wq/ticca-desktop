@@ -2,15 +2,21 @@
 //!
 //! This module provides:
 //! - Model context window lookup
-//! - Token estimation for chat history
-//! - Compression strategies (truncation, sliding window, summarizing)
+//! - Compression strategies:
+//!   - Truncation: Token-based LIFO (like code_puppy) - keeps system prompt + recent messages
+//!   - Summarizing: LLM-based summarization of removed context
+//!
+//! Token estimation is handled by rig-core's compression module (uses chars/3.4 ratio).
 
-use rig::compression::{
-    estimate_messages_tokens, ContextCompressor, SlidingWindowCompressor, TruncationCompressor,
-};
-use rig::completion::Message;
+use std::sync::Arc;
+
+use rig::compression::SummarizingCompressor;
+use rig::completion::{Message, Prompt};
 
 use crate::config::{CompressionSettings, CompressionStrategy};
+
+// Re-export rig's context estimation for use throughout ticca
+pub use rig::compression::{estimate_tokens, CompressionError, ContextEstimate};
 
 /// Known model context window sizes (in tokens).
 /// These are fallback values when the API doesn't provide context_window.
@@ -79,76 +85,171 @@ pub fn get_model_context_window(model_id: &str) -> u64 {
     100_000
 }
 
-/// Result of compression check.
-#[derive(Debug, Clone)]
-pub struct CompressionCheck {
-    /// Current estimated token count.
-    pub current_tokens: usize,
-    /// Maximum tokens before compression triggers.
-    pub threshold_tokens: u64,
-    /// Context window size for the model.
-    pub context_window: u64,
-    /// Whether compression is needed.
-    pub needs_compression: bool,
-    /// Percentage of context window used.
-    pub usage_percent: u32,
-}
-
-/// Check if compression is needed for the given messages.
-pub fn check_compression_needed(
+/// Create a comprehensive context estimate including all components.
+///
+/// This is the main function to call before each LLM request. It calculates
+/// tokens for the system prompt, tool definitions, and all messages.
+///
+/// # Arguments
+/// * `system_prompt` - The system prompt/preamble text
+/// * `tool_definitions` - Tool definitions to serialize and estimate
+/// * `messages` - All conversation messages
+/// * `model_id` - Model identifier for context window lookup
+/// * `api_context_window` - Optional API-provided context window (overrides lookup)
+pub fn create_context_estimate(
+    system_prompt: &str,
+    tool_definitions: &[crate::tools::ToolDefinition],
     messages: &[Message],
     model_id: &str,
-    settings: &CompressionSettings,
     api_context_window: Option<u64>,
-) -> CompressionCheck {
+) -> ContextEstimate {
+    // Serialize tool definitions to JSON for estimation
+    let tool_definitions_json = if tool_definitions.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(tool_definitions).unwrap_or_default()
+    };
+
     // Use API-provided context window if available, otherwise fall back to lookup
     let context_window = api_context_window.unwrap_or_else(|| get_model_context_window(model_id));
 
-    let threshold_tokens = settings.token_threshold(context_window);
-    let current_tokens = estimate_messages_tokens(messages);
-    let usage_percent = ((current_tokens as u64 * 100) / context_window.max(1)) as u32;
-    let needs_compression = settings.enabled && current_tokens as u64 > threshold_tokens;
+    ContextEstimate::new(system_prompt, &tool_definitions_json, messages, context_window)
+}
 
-    CompressionCheck {
-        current_tokens,
-        threshold_tokens,
-        context_window,
-        needs_compression,
-        usage_percent,
-    }
+/// Check if compression is needed based on a context estimate.
+pub fn needs_compression(estimate: &ContextEstimate, settings: &CompressionSettings) -> bool {
+    settings.enabled && estimate.needs_compression(settings.threshold_percent)
+}
+
+/// Legacy compression check - use create_context_estimate for full context estimation.
+#[deprecated(note = "Use create_context_estimate for comprehensive estimation including system prompt and tools")]
+pub fn check_compression_needed(
+    messages: &[Message],
+    model_id: &str,
+    _settings: &CompressionSettings,
+    api_context_window: Option<u64>,
+) -> ContextEstimate {
+    // Create estimate with empty system prompt and tools for backwards compatibility
+    create_context_estimate("", &[], messages, model_id, api_context_window)
 }
 
 /// Compress messages using the configured strategy (sync version).
 ///
-/// For the summarizing strategy, this falls back to sliding window
+/// For the summarizing strategy, this falls back to truncation
 /// since summarization requires async. Use `compress_messages_async` for full support.
 pub fn compress_messages(
     messages: Vec<Message>,
     settings: &CompressionSettings,
-    target_tokens: usize,
+    _target_tokens: usize,
 ) -> Vec<Message> {
     if messages.is_empty() {
         return messages;
     }
 
+    // Both strategies use the same truncation logic for sync calls.
+    // Summarizing uses async for full LLM-based compression.
+    truncate_messages_by_tokens(
+        messages,
+        settings.preserve_first as usize,
+        settings.protected_tokens as usize,
+    )
+}
+
+/// Token-based truncation similar to code_puppy's implementation.
+///
+/// This strategy:
+/// 1. Always preserves the first N messages (typically system prompt)
+/// 2. Scans messages from most recent backwards
+/// 3. Keeps messages until protected_tokens limit is exceeded
+/// 4. Returns: preserved_first + recent messages within token budget
+///
+/// This is a LIFO approach that prioritizes recent context.
+pub fn truncate_messages_by_tokens(
+    messages: Vec<Message>,
+    preserve_first: usize,
+    protected_tokens: usize,
+) -> Vec<Message> {
+    if messages.is_empty() {
+        return messages;
+    }
+
+    let total = messages.len();
+    let preserve_start = preserve_first.min(total);
+
+    // Always keep the first N messages (system prompt, etc.)
+    let mut result: Vec<Message> = messages.iter().take(preserve_start).cloned().collect();
+
+    // If there's nothing after the preserved first, return as-is
+    if preserve_start >= total {
+        return result;
+    }
+
+    // Build a stack of recent messages (LIFO) until we exceed protected_tokens
+    let remaining_messages = &messages[preserve_start..];
+    let mut stack: Vec<Message> = Vec::new();
+    let mut accumulated_tokens: usize = 0;
+
+    // Scan from most recent backwards
+    for msg in remaining_messages.iter().rev() {
+        let msg_tokens = rig::compression::estimate_message_tokens(msg);
+        if accumulated_tokens + msg_tokens > protected_tokens {
+            // This message would exceed the budget, stop here
+            break;
+        }
+        accumulated_tokens += msg_tokens;
+        stack.push(msg.clone());
+    }
+
+    // Pop from stack to restore chronological order
+    while let Some(msg) = stack.pop() {
+        result.push(msg);
+    }
+
+    tracing::debug!(
+        "Truncation: kept {} of {} messages ({} tokens in protected region)",
+        result.len(),
+        total,
+        accumulated_tokens
+    );
+
+    result
+}
+
+/// Async compression using LLM-based summarization.
+///
+/// This function uses rig's SummarizingCompressor to:
+/// 1. Identify messages that would be truncated
+/// 2. Send those messages to an LLM to generate a "Continuity Briefing"
+/// 3. Inject the briefing between preserved initial context and recent messages
+///
+/// The summarizer can be any model that implements the Prompt trait.
+pub async fn compress_messages_async<P: Prompt + Send + Sync + 'static>(
+    messages: Vec<Message>,
+    settings: &CompressionSettings,
+    target_tokens: usize,
+    summarizer: Arc<P>,
+) -> Result<Vec<Message>, CompressionError> {
+    if messages.is_empty() {
+        return Ok(messages);
+    }
+
     match settings.strategy {
         CompressionStrategy::Truncation => {
-            let compressor = TruncationCompressor::new()
-                .with_min_preserve(settings.preserve_recent as usize);
-
-            compressor
-                .compress(messages.clone(), target_tokens)
-                .unwrap_or(messages)
+            // For truncation, just use the sync version
+            Ok(truncate_messages_by_tokens(
+                messages,
+                settings.preserve_first as usize,
+                settings.protected_tokens as usize,
+            ))
         }
-        CompressionStrategy::SlidingWindow | CompressionStrategy::Summarizing => {
-            // For sync, summarizing falls back to sliding window
-            let compressor = SlidingWindowCompressor::new()
+        CompressionStrategy::Summarizing => {
+            // Use rig's SummarizingCompressor for LLM-based summarization
+            let compressor = SummarizingCompressor::from_arc(summarizer)
                 .with_preserve_first(settings.preserve_first as usize)
-                .with_min_recent(settings.preserve_recent as usize);
+                .with_preserve_recent(4) // Keep last 4 messages for context
+                .with_max_summary_tokens(2000); // Reasonable summary size
 
-            compressor
-                .compress(messages.clone(), target_tokens)
-                .unwrap_or(messages)
+            compressor.compress_async(messages, target_tokens).await
         }
     }
 }
@@ -232,22 +333,74 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_check() {
+    fn test_context_estimate() {
         let settings = CompressionSettings {
             enabled: true,
             threshold_percent: 80,
-            strategy: CompressionStrategy::SlidingWindow,
+            strategy: CompressionStrategy::Truncation,
             summarizer_model: None,
             preserve_first: 1,
-            preserve_recent: 4,
+            protected_tokens: 50_000,
         };
 
         let messages = vec![Message::user("Hello"), Message::assistant("Hi there!")];
 
-        let check = check_compression_needed(&messages, "claude-3-5-sonnet", &settings, None);
+        let estimate = create_context_estimate(
+            "You are a helpful assistant.",
+            &[],
+            &messages,
+            "claude-3-5-sonnet",
+            None,
+        );
 
-        assert_eq!(check.context_window, 200_000);
-        assert_eq!(check.threshold_tokens, 160_000); // 80% of 200k
-        assert!(!check.needs_compression); // Small messages don't need compression
+        assert_eq!(estimate.context_window, 200_000);
+        assert_eq!(estimate.threshold_tokens(80), 160_000); // 80% of 200k
+        assert!(!needs_compression(&estimate, &settings)); // Small messages don't need compression
+
+        // Verify components are calculated
+        assert!(estimate.system_prompt_tokens > 0);
+        assert!(estimate.messages_tokens > 0);
+        assert_eq!(
+            estimate.total_tokens,
+            estimate.system_prompt_tokens + estimate.tool_definitions_tokens + estimate.messages_tokens
+        );
+    }
+
+    #[test]
+    fn test_truncate_messages_by_tokens() {
+        // Create messages with longer content to test truncation
+        let long_text = "This is a fairly long message that will use up quite a few tokens. ".repeat(20);
+        let messages = vec![
+            Message::user("System prompt - this should always be preserved"),
+            Message::assistant(long_text.clone()),
+            Message::user(long_text.clone()),
+            Message::assistant(long_text.clone()),
+            Message::user("Third user message - relatively short"),
+            Message::assistant("Third response - most recent, also short"),
+        ];
+
+        // With a small protected_tokens limit, only recent short messages should be kept
+        let result = truncate_messages_by_tokens(messages.clone(), 1, 200);
+
+        // Should keep first message (system prompt) + some recent messages
+        assert!(!result.is_empty());
+        assert!(result.len() < messages.len(), "Expected truncation but got {} of {} messages", result.len(), messages.len());
+
+        // With large protected_tokens, all should be kept
+        let result_all = truncate_messages_by_tokens(messages.clone(), 1, 100_000);
+        assert_eq!(result_all.len(), messages.len());
+    }
+
+    #[test]
+    fn test_truncate_preserves_first() {
+        let messages = vec![
+            Message::user("First message"),
+            Message::assistant("Second message"),
+            Message::user("Third message"),
+        ];
+
+        // Even with 0 protected tokens, first message should be preserved
+        let result = truncate_messages_by_tokens(messages, 1, 0);
+        assert_eq!(result.len(), 1);
     }
 }

@@ -174,7 +174,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1327,7 +1327,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2198,7 +2198,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.58.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -3304,7 +3304,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4373,7 +4373,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4744,7 +4744,7 @@ dependencies = [
 [[package]]
 name = "rig-core"
 version = "0.27.0"
-source = "git+https://github.com/janfeddersen-wq/rig.git?branch=main#f39d0ad4e8581a0aaaa126867db6f61fc984d9d7"
+source = "git+https://github.com/janfeddersen-wq/rig.git?branch=main#c97d27d215e5cfa392296956491a211266259579"
 dependencies = [
  "as-any",
  "async-stream",
@@ -4776,7 +4776,7 @@ dependencies = [
 [[package]]
 name = "rig-derive"
 version = "0.1.10"
-source = "git+https://github.com/janfeddersen-wq/rig.git?branch=main#f39d0ad4e8581a0aaaa126867db6f61fc984d9d7"
+source = "git+https://github.com/janfeddersen-wq/rig.git?branch=main#c97d27d215e5cfa392296956491a211266259579"
 dependencies = [
  "convert_case",
  "deluxe",
@@ -4896,7 +4896,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5578,7 +5578,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5641,7 +5641,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-app"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5676,7 +5676,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-core"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5714,7 +5714,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-oauth"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "base64",

@@ -41,6 +41,21 @@ impl From<RunnerEvent> for Message {
                 input_tokens,
                 output_tokens,
             }),
+            RunnerEvent::ContextEstimate {
+                system_prompt_tokens,
+                tool_definitions_tokens,
+                messages_tokens,
+                total_tokens,
+                context_window,
+                usage_percent,
+            } => Message::Chat(chat::Msg::ContextEstimate {
+                system_prompt_tokens,
+                tool_definitions_tokens,
+                messages_tokens,
+                total_tokens,
+                context_window,
+                usage_percent,
+            }),
             RunnerEvent::ContextCompressed {
                 original_messages,
                 compressed_messages,

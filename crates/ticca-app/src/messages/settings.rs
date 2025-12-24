@@ -89,7 +89,7 @@ pub enum Msg {
     SetCompressionThreshold(u32),
     SetCompressionStrategy(ticca_core::config::CompressionStrategy),
     SetCompressionPreserveFirst(u32),
-    SetCompressionPreserveRecent(u32),
+    SetCompressionProtectedTokens(u32),
 
     // Misc
     OpenUrl(String),

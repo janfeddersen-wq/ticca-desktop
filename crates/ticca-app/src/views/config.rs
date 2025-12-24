@@ -1074,7 +1074,6 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
 
     // Strategy picker
     let strategy_options = vec![
-        CompressionStrategy::SlidingWindow,
         CompressionStrategy::Truncation,
         CompressionStrategy::Summarizing,
     ];
@@ -1090,11 +1089,8 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
 
     // Strategy description
     let strategy_desc = match compression.strategy {
-        CompressionStrategy::SlidingWindow => {
-            "Preserves system prompt and recent messages, removes middle context"
-        }
         CompressionStrategy::Truncation => {
-            "Removes oldest messages first, keeps recent messages"
+            "Keeps system prompt + recent messages (by token count)"
         }
         CompressionStrategy::Summarizing => {
             "Generates a summary of removed context (uses LLM tokens)"
@@ -1123,15 +1119,17 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
     .spacing(10)
     .align_y(iced::Alignment::Center);
 
-    // Preserve recent messages
+    // Protected tokens for recent messages
+    // Range: 10k to 100k tokens, step by 5k
+    let protected_tokens_k = compression.protected_tokens / 1000;
     let preserve_recent_row = row![
-        text("Preserve Recent:").size(14).width(Length::Fixed(140.0)),
-        iced::widget::slider(1..=10, compression.preserve_recent, |v| {
-            Message::Settings(settings::Msg::SetCompressionPreserveRecent(v))
+        text("Protected Tokens:").size(14).width(Length::Fixed(140.0)),
+        iced::widget::slider(10..=100, protected_tokens_k, |v| {
+            Message::Settings(settings::Msg::SetCompressionProtectedTokens(v * 1000))
         })
         .width(Length::Fixed(120.0)),
-        text(format!("{} messages", compression.preserve_recent)).size(12),
-        text("(latest conversation)").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
+        text(format!("{}k tokens", protected_tokens_k)).size(12),
+        text("(recent context budget)").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
             color: Some(Color::from_rgb8(120, 120, 120)),
         }),
     ]

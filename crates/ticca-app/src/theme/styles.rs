@@ -802,6 +802,31 @@ pub fn message_bubble(theme: &Theme, is_user: bool) -> container::Style {
     }
 }
 
+/// System message bubble (for compression notifications, etc.)
+pub fn system_message_bubble(theme: &Theme) -> container::Style {
+    // Use a muted, distinct color for system messages
+    let bg_color = if is_dark_theme(theme) {
+        Color::from_rgb8(50, 55, 65)  // Dark blue-gray
+    } else {
+        Color::from_rgb8(230, 235, 245)  // Light blue-gray
+    };
+
+    container::Style {
+        background: Some(bg_color.into()),
+        text_color: Some(text_secondary(theme)),
+        border: Border {
+            color: if is_dark_theme(theme) {
+                Color::from_rgb8(70, 80, 100)
+            } else {
+                Color::from_rgb8(180, 190, 210)
+            },
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 /// Card container - settings sections
 pub fn card_container(theme: &Theme) -> container::Style {
     container::Style {

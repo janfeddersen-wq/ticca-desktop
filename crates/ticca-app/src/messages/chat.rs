@@ -48,6 +48,15 @@ pub enum Msg {
         input_tokens: u64,
         output_tokens: u64,
     },
+    /// Pre-request context estimate (calculated before sending to LLM)
+    ContextEstimate {
+        system_prompt_tokens: usize,
+        tool_definitions_tokens: usize,
+        messages_tokens: usize,
+        total_tokens: usize,
+        context_window: u64,
+        usage_percent: u32,
+    },
     /// Context compression was applied
     ContextCompressed {
         original_messages: usize,
@@ -56,7 +65,7 @@ pub enum Msg {
         compressed_tokens: usize,
         strategy: String,
     },
-    /// Context usage warning (approaching limit)
+    /// Context usage warning (approaching limit) - deprecated, use ContextEstimate
     ContextUsageWarning {
         current_tokens: usize,
         threshold_tokens: u64,

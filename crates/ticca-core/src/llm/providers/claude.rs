@@ -130,11 +130,12 @@ impl ClaudeOAuthClient {
     /// Get a completion model for the given model name
     ///
     /// Returns a model that can be used with `AgentBuilder::new(model)`.
+    /// Prompt caching is enabled by default to reduce latency and costs.
     pub fn completion_model(
         &self,
         model: &str,
     ) -> <ClaudeClient as CompletionClient>::CompletionModel {
-        self.inner.completion_model(model)
+        self.inner.completion_model(model).with_prompt_caching()
     }
 
     /// Get the configured model name

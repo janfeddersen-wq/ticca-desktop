@@ -6,7 +6,7 @@
 #![allow(clippy::items_after_test_module)]
 
 use crate::agents::{AgentProfile, AgentType};
-use crate::compression::{check_compression_needed, compress_messages};
+use crate::compression::compress_messages;
 use crate::config::models::providers;
 use crate::config::{CompressionSettings, ConfigDatabase, McpServer, McpTransport, setting_keys};
 use crate::llm;
@@ -99,6 +99,22 @@ pub enum RunnerEvent {
     Usage {
         input_tokens: u64,
         output_tokens: u64,
+    },
+    /// Pre-request context estimate (calculated before sending to LLM)
+    /// Includes system prompt, tool definitions, and all messages
+    ContextEstimate {
+        /// Tokens used by the system prompt
+        system_prompt_tokens: usize,
+        /// Tokens used by tool definitions
+        tool_definitions_tokens: usize,
+        /// Tokens used by messages (user, assistant, tool calls, reasoning)
+        messages_tokens: usize,
+        /// Total estimated tokens
+        total_tokens: usize,
+        /// Model's context window size
+        context_window: u64,
+        /// Percentage of context used
+        usage_percent: u32,
     },
     /// Context compression was applied
     ContextCompressed {
@@ -992,34 +1008,41 @@ async fn run_agent_stream(
     let mut rig_messages: Vec<rig::message::Message> = history.clone();
     rig_messages.push(user_msg.clone());
 
-    // Check if compression is needed
-    let compression_check = check_compression_needed(
+    // Create comprehensive context estimate (includes system prompt, tools, messages)
+    // Note: We use empty tool definitions here since we don't have access to them yet
+    // The full estimate with tools will be done per-provider below
+    let context_estimate = crate::compression::create_context_estimate(
+        &system_prompt,
+        &[], // Tool definitions added per-provider
         &rig_messages,
         &model_name,
-        &compression_settings,
         None, // No API-provided context window yet
     );
 
-    // Emit context usage warning if approaching threshold
-    if compression_check.usage_percent >= 50 && !compression_check.needs_compression {
-        let _ = event_tx.send(RunnerEvent::ContextUsageWarning {
-            current_tokens: compression_check.current_tokens,
-            threshold_tokens: compression_check.threshold_tokens,
-            context_window: compression_check.context_window,
-            usage_percent: compression_check.usage_percent,
-        });
-    }
+    // Emit context estimate for UI display
+    let _ = event_tx.send(RunnerEvent::ContextEstimate {
+        system_prompt_tokens: context_estimate.system_prompt_tokens,
+        tool_definitions_tokens: context_estimate.tool_definitions_tokens,
+        messages_tokens: context_estimate.messages_tokens,
+        total_tokens: context_estimate.total_tokens,
+        context_window: context_estimate.context_window,
+        usage_percent: context_estimate.usage_percent,
+    });
+
+    // Check if compression is needed
+    let compression_needed = crate::compression::needs_compression(&context_estimate, &compression_settings);
+    let threshold_tokens = context_estimate.threshold_tokens(compression_settings.threshold_percent);
 
     // Apply compression if needed
-    let full_history = if compression_check.needs_compression {
+    let full_history = if compression_needed {
         let original_count = rig_messages.len();
-        let original_tokens = compression_check.current_tokens;
+        let original_tokens = context_estimate.total_tokens;
 
         // Apply compression
         let compressed = compress_messages(
             rig_messages,
             &compression_settings,
-            compression_check.threshold_tokens as usize,
+            threshold_tokens as usize,
         );
 
         let compressed_count = compressed.len();
@@ -1123,6 +1146,7 @@ async fn run_agent_stream(
 
             loop {
                 passes += 1;
+
                 let mut stream = agent
                     .stream_prompt("")
                     .with_history(history.clone())
@@ -1197,6 +1221,17 @@ async fn run_agent_stream(
                         // Skip FinalResponse - its aggregated_usage sums all turns which is wrong
                         // for input_tokens (each turn already includes full history)
                         Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
+                        // Pre-request context estimate from rig
+                        Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            let _ = event_tx.send(RunnerEvent::ContextEstimate {
+                                system_prompt_tokens: estimate.system_prompt_tokens,
+                                tool_definitions_tokens: estimate.tool_definitions_tokens,
+                                messages_tokens: estimate.messages_tokens,
+                                total_tokens: estimate.total_tokens,
+                                context_window: estimate.context_window,
+                                usage_percent: estimate.usage_percent,
+                            });
+                        }
                         Ok(_) => {}
                         Err(e) => {
                             let error_msg = format!("ChatGPT stream error: {}", e);
@@ -1304,6 +1339,7 @@ async fn run_agent_stream(
 
             loop {
                 passes += 1;
+
                 let mut stream = agent
                     .stream_prompt("")
                     .with_history(history.clone())
@@ -1378,6 +1414,17 @@ async fn run_agent_stream(
                         // Skip FinalResponse - its aggregated_usage sums all turns which is wrong
                         // for input_tokens (each turn already includes full history)
                         Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
+                        // Pre-request context estimate from rig
+                        Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            let _ = event_tx.send(RunnerEvent::ContextEstimate {
+                                system_prompt_tokens: estimate.system_prompt_tokens,
+                                tool_definitions_tokens: estimate.tool_definitions_tokens,
+                                messages_tokens: estimate.messages_tokens,
+                                total_tokens: estimate.total_tokens,
+                                context_window: estimate.context_window,
+                                usage_percent: estimate.usage_percent,
+                            });
+                        }
                         Ok(_) => {}
                         Err(e) => {
                             let error_msg = format!("Gemini stream error: {}", e);
@@ -1574,6 +1621,17 @@ async fn run_agent_stream(
                                 usage.input_tokens,
                                 usage.output_tokens
                             );
+                        }
+                        // Pre-request context estimate from rig
+                        Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            let _ = event_tx.send(RunnerEvent::ContextEstimate {
+                                system_prompt_tokens: estimate.system_prompt_tokens,
+                                tool_definitions_tokens: estimate.tool_definitions_tokens,
+                                messages_tokens: estimate.messages_tokens,
+                                total_tokens: estimate.total_tokens,
+                                context_window: estimate.context_window,
+                                usage_percent: estimate.usage_percent,
+                            });
                         }
                         Ok(_) => {}
                         Err(e) => {

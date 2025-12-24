@@ -544,7 +544,6 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             app.settings.compression.strategy = strategy;
             let value = match strategy {
                 CompressionStrategy::Truncation => "truncation",
-                CompressionStrategy::SlidingWindow => "sliding_window",
                 CompressionStrategy::Summarizing => "summarizing",
             };
             let _ = ConfigService::set_setting(setting_keys::COMPRESSION_STRATEGY, value);
@@ -556,11 +555,11 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 &count.to_string(),
             );
         }
-        settings::Msg::SetCompressionPreserveRecent(count) => {
-            app.settings.compression.preserve_recent = count;
+        settings::Msg::SetCompressionProtectedTokens(tokens) => {
+            app.settings.compression.protected_tokens = tokens;
             let _ = ConfigService::set_setting(
-                setting_keys::COMPRESSION_PRESERVE_RECENT,
-                &count.to_string(),
+                setting_keys::COMPRESSION_PROTECTED_TOKENS,
+                &tokens.to_string(),
             );
         }
     }
