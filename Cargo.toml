@@ -9,7 +9,7 @@ members = [
 [workspace.package]
 version = "0.21.2"
 edition = "2024"
-authors = ["Jan"]
+authors = ["Jan Feddersen"]
 license = "MIT"
 repository = "https://github.com/jan/ticca-desktop"
 description = "A sleek, Iced-based desktop application for AI-assisted coding"
