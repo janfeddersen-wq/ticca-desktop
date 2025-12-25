@@ -578,21 +578,30 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             tool_definitions_tokens,
             messages_tokens,
             total_tokens,
-            context_window,
-            usage_percent,
+            context_window: _,
+            usage_percent: _,
         } => {
             // Update pre-request context estimate for UI display
+            // Use our own context window lookup instead of rig's default (200k)
+            let our_context_window = app.chat.selected_model_name()
+                .map(|m| ticca_core::llm::ModelService::get_context_length(&m) as u64)
+                .unwrap_or(app.chat.context_window);
+            let our_usage_percent = if our_context_window > 0 {
+                (total_tokens as f64 / our_context_window as f64) * 100.0
+            } else {
+                0.0
+            };
             tracing::info!(
                 "Context estimate: system={}, tools={}, messages={}, total={} ({:.1}% of {})",
                 system_prompt_tokens,
                 tool_definitions_tokens,
                 messages_tokens,
                 total_tokens,
-                usage_percent,
-                context_window
+                our_usage_percent,
+                our_context_window
             );
             app.chat.estimated_tokens = total_tokens;
-            app.chat.context_window = context_window;
+            app.chat.context_window = our_context_window;
         }
 
         chat::Msg::AnimationTick => {
