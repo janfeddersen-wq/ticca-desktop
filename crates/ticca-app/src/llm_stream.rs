@@ -17,7 +17,9 @@ impl From<RunnerEvent> for Message {
     fn from(value: RunnerEvent) -> Self {
         match value {
             RunnerEvent::StreamChunk(chunk) => Message::Chat(chat::Msg::StreamChunk(chunk)),
-            RunnerEvent::Reasoning(text) => Message::Chat(chat::Msg::Reasoning(text)),
+            RunnerEvent::Reasoning { text, signature } => {
+                Message::Chat(chat::Msg::Reasoning { text, signature })
+            }
             RunnerEvent::StreamStats {
                 chars_in_window,
                 window_ms,

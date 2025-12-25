@@ -5641,7 +5641,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-app"
-version = "0.22.5"
+version = "0.24.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5676,7 +5676,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-core"
-version = "0.22.5"
+version = "0.24.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5701,6 +5701,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "strsim 0.11.1",
  "tar",
  "tempfile",
  "thiserror 2.0.17",
@@ -5715,7 +5716,7 @@ dependencies = [
 
 [[package]]
 name = "ticca-oauth"
-version = "0.22.5"
+version = "0.24.1"
 dependencies = [
  "anyhow",
  "base64",

@@ -56,11 +56,22 @@ impl SessionDatabase {
                 content TEXT NOT NULL,
                 tool_calls_json TEXT,
                 tool_result_json TEXT,
+                reasoning TEXT,
+                reasoning_signature TEXT,
                 tokens INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now'))
             )",
             [],
         )?;
+
+        // Migration: add reasoning columns if they don't exist (for existing databases)
+        let _ = self
+            .conn
+            .execute("ALTER TABLE messages ADD COLUMN reasoning TEXT", []);
+        let _ = self.conn.execute(
+            "ALTER TABLE messages ADD COLUMN reasoning_signature TEXT",
+            [],
+        );
 
         // Create index for efficient message retrieval
         self.conn.execute(
@@ -197,14 +208,16 @@ impl SessionDatabase {
     /// Add a message to a session
     pub fn add_message(&self, message: &SessionMessage) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO messages (session_id, role, content, tool_calls_json, tool_result_json, tokens, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+            "INSERT INTO messages (session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
             params![
                 message.session_id,
                 message.role.as_str(),
                 message.content,
                 message.tool_calls_json,
                 message.tool_result_json,
+                message.reasoning,
+                message.reasoning_signature,
                 message.tokens,
                 message.created_at,
             ],
@@ -219,7 +232,7 @@ impl SessionDatabase {
     /// Get all messages for a session
     pub fn get_messages(&self, session_id: &str) -> Result<Vec<SessionMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, session_id, role, content, tool_calls_json, tool_result_json, tokens, created_at 
+            "SELECT id, session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at
              FROM messages WHERE session_id = ? ORDER BY created_at ASC"
         )?;
 
@@ -232,8 +245,10 @@ impl SessionDatabase {
                 content: row.get(3)?,
                 tool_calls_json: row.get(4)?,
                 tool_result_json: row.get(5)?,
-                tokens: row.get(6)?,
-                created_at: row.get(7)?,
+                reasoning: row.get(6)?,
+                reasoning_signature: row.get(7)?,
+                tokens: row.get(8)?,
+                created_at: row.get(9)?,
             })
         })?;
 
@@ -247,7 +262,7 @@ impl SessionDatabase {
         limit: usize,
     ) -> Result<Vec<SessionMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, session_id, role, content, tool_calls_json, tool_result_json, tokens, created_at 
+            "SELECT id, session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at
              FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?"
         )?;
 
@@ -260,8 +275,10 @@ impl SessionDatabase {
                 content: row.get(3)?,
                 tool_calls_json: row.get(4)?,
                 tool_result_json: row.get(5)?,
-                tokens: row.get(6)?,
-                created_at: row.get(7)?,
+                reasoning: row.get(6)?,
+                reasoning_signature: row.get(7)?,
+                tokens: row.get(8)?,
+                created_at: row.get(9)?,
             })
         })?;
 

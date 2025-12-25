@@ -2,6 +2,28 @@
 //!
 //! These wrappers implement rig's `Tool` trait to enable the ReAct loop.
 
+/// Maximum tool output size in characters (~50KB, roughly 15K tokens)
+/// Tool outputs larger than this will be truncated to prevent context explosion
+const MAX_TOOL_OUTPUT_CHARS: usize = 50_000;
+
+/// Truncate a string to a maximum length, adding a truncation notice if needed
+fn truncate_output(output: &str, max_chars: usize) -> String {
+    if output.len() <= max_chars {
+        return output.to_string();
+    }
+
+    // Find a good break point (newline) near the limit
+    let truncated = &output[..max_chars];
+    let cut_point = truncated.rfind('\n').unwrap_or(max_chars);
+
+    format!(
+        "{}\n\n[... OUTPUT TRUNCATED: {} chars total, showing first {} chars ...]",
+        &output[..cut_point],
+        output.len(),
+        cut_point
+    )
+}
+
 use super::policy::ToolPolicy;
 use super::todo::{TodoItem, TodoListEvent, TodoListState, TodoStatus, TodoStore};
 use crate::agents::{AgentType, get_all_agents};
@@ -48,8 +70,10 @@ pub enum AgentStreamEvent {
         name: String,
         args: String,
     },
+    /// Agent completed with final output (the pure result without tool call formatting)
     Complete {
         node_id: usize,
+        output: String,
     },
 }
 
@@ -263,13 +287,16 @@ impl Tool for ExecuteShellTool {
         .await;
 
         match completed {
-            Ok(Ok((exit_code, output))) => Ok(json!({
-                "process_id": process_id,
-                "stdout": output,
-                "stderr": "",
-                "exit_code": exit_code,
-            })
-            .to_string()),
+            Ok(Ok((exit_code, output))) => {
+                let truncated_output = truncate_output(&output, MAX_TOOL_OUTPUT_CHARS);
+                Ok(json!({
+                    "process_id": process_id,
+                    "stdout": truncated_output,
+                    "stderr": "",
+                    "exit_code": exit_code,
+                })
+                .to_string())
+            }
             Ok(Err(e)) => Err(ExecuteShellError(e)),
             Err(_) => Ok(format!(
                 "Process started successfully with ID: `{}`. It is still running. You can use other tools to monitor its output, send further commands, or terminate it.",
@@ -401,8 +428,9 @@ impl Tool for ReadProcessOutputTool {
 
         offsets.insert(args.process_id, start + new_output.len());
 
+        let truncated_output = truncate_output(&new_output, MAX_TOOL_OUTPUT_CHARS);
         Ok(json!({
-            "stdout": new_output,
+            "stdout": truncated_output,
             "stderr": "",
         })
         .to_string())
@@ -568,7 +596,7 @@ impl Tool for ReadFileTool {
         .map_err(|e| ReadFileError(e.to_string()))?;
 
         if result.success {
-            Ok(result.content)
+            Ok(truncate_output(&result.content, MAX_TOOL_OUTPUT_CHARS))
         } else {
             Err(ReadFileError(
                 result.error.unwrap_or_else(|| "Unknown error".to_string()),
@@ -653,7 +681,7 @@ impl Tool for ListFilesTool {
         .map_err(|e| ListFilesError(e.to_string()))?;
 
         if result.success {
-            Ok(result.content)
+            Ok(truncate_output(&result.content, MAX_TOOL_OUTPUT_CHARS))
         } else {
             Err(ListFilesError(
                 result.error.unwrap_or_else(|| "Unknown error".to_string()),
@@ -670,14 +698,25 @@ impl Tool for ListFilesTool {
 #[error("Edit file error: {0}")]
 pub struct EditFileError(String);
 
+/// A single text replacement
+#[derive(Debug, Clone, Deserialize)]
+pub struct EditReplacement {
+    /// The text to find
+    pub old_text: String,
+    /// The replacement text
+    pub new_text: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct EditFileArgs {
     /// Path to the file to edit
     pub path: String,
-    /// The text to find and replace
-    pub old_text: String,
-    /// The new text to insert
-    pub new_text: String,
+    /// The text to find and replace (for single replacement, mutually exclusive with replacements)
+    pub old_text: Option<String>,
+    /// The new text to insert (for single replacement, mutually exclusive with replacements)
+    pub new_text: Option<String>,
+    /// Array of replacements for batch editing (alternative to old_text/new_text)
+    pub replacements: Option<Vec<EditReplacement>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -735,13 +774,35 @@ impl Tool for EditFileTool {
 
         let path_str = full_path.to_string_lossy().to_string();
 
+        // Build the replacements array from either:
+        // 1. The replacements array directly, or
+        // 2. Single old_text/new_text pair
+        let replacements: Vec<serde_json::Value> = if let Some(batch) = args.replacements {
+            batch
+                .into_iter()
+                .map(|r| {
+                    json!({
+                        "old_str": r.old_text,
+                        "new_str": r.new_text
+                    })
+                })
+                .collect()
+        } else if let (Some(old_text), Some(new_text)) = (args.old_text, args.new_text) {
+            vec![json!({
+                "old_str": old_text,
+                "new_str": new_text
+            })]
+        } else {
+            return Err(EditFileError(
+                "Either 'replacements' array or both 'old_text' and 'new_text' must be provided"
+                    .to_string(),
+            ));
+        };
+
         // Build the JSON params expected by edit_file_impl
         let params = json!({
             "file_path": path_str,
-            "replacements": [{
-                "old_str": args.old_text,
-                "new_str": args.new_text
-            }]
+            "replacements": replacements
         });
 
         // Run synchronous edit in blocking task
@@ -926,7 +987,7 @@ impl Tool for GrepTool {
                 .map_err(|e| GrepError(e.to_string()))?;
 
         if result.success {
-            Ok(result.content)
+            Ok(truncate_output(&result.content, MAX_TOOL_OUTPUT_CHARS))
         } else {
             Err(GrepError(
                 result.error.unwrap_or_else(|| "Unknown error".to_string()),
@@ -1369,6 +1430,47 @@ impl Tool for TodoWriteTool {
     }
 }
 
+// ============================================================================
+// ShareReasoningTool - Share important discoveries with the user
+// ============================================================================
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ShareReasoningArgs {
+    /// A concise summary of an important discovery or non-obvious finding
+    pub insight: String,
+}
+
+pub struct ShareReasoningTool;
+
+impl ShareReasoningTool {
+    pub fn new(_context: Arc<ToolContext>) -> Self {
+        Self
+    }
+}
+
+impl Tool for ShareReasoningTool {
+    const NAME: &'static str = "share_reasoning";
+
+    type Error = std::convert::Infallible;
+    type Args = ShareReasoningArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        let spec = super::spec::share_reasoning_spec();
+        ToolDefinition {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            parameters: spec.rig_parameters,
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        // The insight is returned as tool output, which gets displayed in chat history
+        // and kept for context in future turns
+        Ok(format!("💡 {}", args.insight))
+    }
+}
+
 /// Create all tools with the given context
 pub fn create_tools(context: Arc<ToolContext>) -> RigTools {
     (
@@ -1386,6 +1488,7 @@ pub fn create_tools(context: Arc<ToolContext>) -> RigTools {
         TodoReadTool::new(context.clone()),
         TodoWriteTool::new(context.clone()),
         TodoListTool::new(context.clone()),
+        ShareReasoningTool::new(context.clone()),
         InvokeAgentTool::new(context),
     )
 }
@@ -1405,6 +1508,7 @@ pub type RigTools = (
     TodoReadTool,
     TodoWriteTool,
     TodoListTool,
+    ShareReasoningTool,
     InvokeAgentTool,
 );
 

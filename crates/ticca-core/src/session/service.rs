@@ -10,6 +10,8 @@ use crate::tools::TodoListState;
 pub struct SessionMessageInput {
     pub role: MessageRole,
     pub content: String,
+    pub reasoning: Option<String>,
+    pub reasoning_signature: Option<String>,
 }
 
 pub struct LoadedSessionData {
@@ -89,6 +91,8 @@ impl SessionService {
                 content: msg.content.clone(),
                 tool_calls_json: None,
                 tool_result_json: None,
+                reasoning: msg.reasoning.clone(),
+                reasoning_signature: msg.reasoning_signature.clone(),
                 tokens: 0,
                 created_at: None,
             };

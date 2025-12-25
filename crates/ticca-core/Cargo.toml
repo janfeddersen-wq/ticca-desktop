@@ -51,6 +51,9 @@ grep-searcher.workspace = true
 ignore.workspace = true
 regex = "1.10"
 
+# string similarity for fuzzy matching
+strsim = "0.11"
+
 # icons
 material-icons.workspace = true
 

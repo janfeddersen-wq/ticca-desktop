@@ -38,7 +38,10 @@ pub enum Msg {
         id: u64,
         approved: bool,
     },
-    Reasoning(String),
+    Reasoning {
+        text: String,
+        signature: Option<String>,
+    },
     StreamStats {
         chars_in_window: usize,
         window_ms: u64,

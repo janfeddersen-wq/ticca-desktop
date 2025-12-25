@@ -11,6 +11,49 @@ pub struct ToolSpec {
     pub registry_parameters: ToolParameterSchema,
 }
 
+/// Get all tool specs for estimation purposes
+pub fn all_specs() -> Vec<ToolSpec> {
+    vec![
+        list_files_spec(),
+        read_file_spec(),
+        edit_file_spec(),
+        delete_file_spec(),
+        grep_spec(50),
+        execute_shell_spec(120_000), // default timeout
+        list_processes_spec(),
+        read_process_output_spec(),
+        kill_process_spec(),
+        write_file_spec(),
+        list_agents_spec(),
+        invoke_agent_spec(),
+        todo_read_spec(),
+        todo_write_spec(),
+        todo_list_spec(),
+        share_reasoning_spec(),
+    ]
+}
+
+/// Estimate total tokens for all tool definitions
+/// Uses chars/3.4 ratio consistent with rig's estimation
+pub fn estimate_all_tools_tokens() -> usize {
+    let specs = all_specs();
+    let mut total_chars = 0usize;
+
+    for spec in specs {
+        // Name
+        total_chars += spec.name.len();
+        // Description
+        total_chars += spec.description.len();
+        // Parameters JSON
+        if let Ok(json_str) = serde_json::to_string(&spec.rig_parameters) {
+            total_chars += json_str.len();
+        }
+    }
+
+    // chars / 3.4 ratio (consistent with rig's estimation)
+    (total_chars as f32 / 3.4).ceil() as usize
+}
+
 pub fn list_files_spec() -> ToolSpec {
     let mut params = std::collections::HashMap::new();
     params.insert(
@@ -106,15 +149,27 @@ pub fn edit_file_spec() -> ToolSpec {
 
     ToolSpec {
         name: "edit_file",
-        description: "Edit a file using one of three methods: full content replacement, targeted text replacements, or snippet deletion.",
+        description: "Edit a file by replacing text. Supports multiple replacements in one call. Uses fuzzy matching (Jaro-Winkler ≥95%) to recover from minor whitespace/indent errors.",
         rig_parameters: json!({
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Path to the file to edit" },
-                "old_text": { "type": "string", "description": "Exact text to find and replace" },
-                "new_text": { "type": "string", "description": "Replacement text" }
+                "old_text": { "type": "string", "description": "Text to find and replace (for single replacement)" },
+                "new_text": { "type": "string", "description": "Replacement text (for single replacement)" },
+                "replacements": {
+                    "type": "array",
+                    "description": "Array of replacements for batch editing (alternative to old_text/new_text)",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_text": { "type": "string", "description": "Text to find" },
+                            "new_text": { "type": "string", "description": "Replacement text" }
+                        },
+                        "required": ["old_text", "new_text"]
+                    }
+                }
             },
-            "required": ["path", "old_text", "new_text"]
+            "required": ["path"]
         }),
         registry_parameters: ToolParameterSchema::object(params, vec!["path".to_string()]),
     }
@@ -424,6 +479,27 @@ pub fn todo_list_spec() -> ToolSpec {
     }
 }
 
+pub fn share_reasoning_spec() -> ToolSpec {
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "insight".to_string(),
+        ToolParameterSchema::string("A concise summary of an important discovery or non-obvious finding that should be remembered."),
+    );
+
+    ToolSpec {
+        name: "share_reasoning",
+        description: "Share important reasoning or discoveries with the user. Use this tool when you discover something non-obvious, make an important connection, or find something that should be remembered during the session. Keep insights concise and actionable.",
+        rig_parameters: json!({
+            "type": "object",
+            "properties": {
+                "insight": { "type": "string", "description": "A concise summary of an important discovery or non-obvious finding" }
+            },
+            "required": ["insight"]
+        }),
+        registry_parameters: ToolParameterSchema::object(params, vec!["insight".to_string()]),
+    }
+}
+
 pub fn tool_specs_for_names(names: &[&str]) -> Vec<ToolSpec> {
     names
         .iter()
@@ -443,6 +519,7 @@ pub fn tool_specs_for_names(names: &[&str]) -> Vec<ToolSpec> {
             "todo_read" => Some(todo_read_spec()),
             "todo_write" => Some(todo_write_spec()),
             "todo_list" => Some(todo_list_spec()),
+            "share_reasoning" => Some(share_reasoning_spec()),
             _ => None,
         })
         .collect()

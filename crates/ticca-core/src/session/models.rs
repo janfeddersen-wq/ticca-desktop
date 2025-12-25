@@ -76,6 +76,8 @@ pub struct SessionMessage {
     pub content: String,
     pub tool_calls_json: Option<String>, // For assistant tool calls
     pub tool_result_json: Option<String>, // For tool responses
+    pub reasoning: Option<String>,        // Thinking/reasoning content
+    pub reasoning_signature: Option<String>, // Signature for reasoning verification (Claude)
     pub tokens: i64,
     pub created_at: Option<String>,
 }
@@ -89,6 +91,8 @@ impl SessionMessage {
             content: content.into(),
             tool_calls_json: None,
             tool_result_json: None,
+            reasoning: None,
+            reasoning_signature: None,
             tokens: 0,
             created_at: None,
         }
@@ -102,6 +106,8 @@ impl SessionMessage {
             content: content.into(),
             tool_calls_json: None,
             tool_result_json: None,
+            reasoning: None,
+            reasoning_signature: None,
             tokens: 0,
             created_at: None,
         }
@@ -115,6 +121,8 @@ impl SessionMessage {
             content: content.into(),
             tool_calls_json: None,
             tool_result_json: None,
+            reasoning: None,
+            reasoning_signature: None,
             tokens: 0,
             created_at: None,
         }
@@ -128,6 +136,8 @@ impl SessionMessage {
             content: content.into(),
             tool_calls_json: None,
             tool_result_json: None,
+            reasoning: None,
+            reasoning_signature: None,
             tokens: 0,
             created_at: None,
         }
@@ -145,6 +155,16 @@ impl SessionMessage {
 
     pub fn with_tool_result(mut self, json: impl Into<String>) -> Self {
         self.tool_result_json = Some(json.into());
+        self
+    }
+
+    pub fn with_reasoning(
+        mut self,
+        reasoning: Option<String>,
+        signature: Option<String>,
+    ) -> Self {
+        self.reasoning = reasoning;
+        self.reasoning_signature = signature;
         self
     }
 }

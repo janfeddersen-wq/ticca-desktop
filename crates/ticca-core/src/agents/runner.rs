@@ -70,6 +70,9 @@ REQUIRED: Call `todo_write` with `mark_all_complete: true` to complete your sess
 Or if empty: `{ "items": [], "confirmed_complete": true }`"#;
 const TODO_GUARD_MAX_PASSES: usize = 4;
 const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Maximum characters for subagent output to prevent context explosion
+/// ~30k tokens at 3.4 chars/token = ~100k chars
+const MAX_SUBAGENT_OUTPUT_CHARS: usize = 100_000;
 
 #[derive(Debug, Clone)]
 pub struct ChatHistoryMessage {
@@ -84,7 +87,11 @@ pub struct ChatHistoryMessage {
 #[derive(Debug, Clone)]
 pub enum RunnerEvent {
     StreamChunk(String),
-    Reasoning(String),
+    /// Reasoning/thinking content with optional signature (for Claude verification)
+    Reasoning {
+        text: String,
+        signature: Option<String>,
+    },
     StreamStats {
         chars_in_window: usize,
         window_ms: u64,
@@ -652,6 +659,13 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             agent_type,
         });
     }
+    // Explore agent doesn't use todo tools - it's a fast, focused agent
+    let (todo_store, todo_tx) = if agent_type == AgentType::Explore {
+        (None, None)
+    } else {
+        (parent_context.todo_store.clone(), parent_context.todo_tx.clone())
+    };
+
     let tool_context = Arc::new(ToolContext {
         working_directory: parent_context.working_directory.clone(),
         approval_gate: parent_context.approval_gate.clone(),
@@ -665,13 +679,14 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
         call_graph_counter: parent_context.call_graph_counter.clone(),
         node_id: request.node_id,
         agent_invoker: parent_context.agent_invoker.clone(),
-        todo_store: parent_context.todo_store.clone(),
-        todo_tx: parent_context.todo_tx.clone(),
+        todo_store,
+        todo_tx,
         system_exec_store: parent_context.system_exec_store.clone(),
         system_exec_tx: parent_context.system_exec_tx.clone(),
         process_output_offsets: parent_context.process_output_offsets.clone(),
     });
 
+    // Only reset todo for agents that use it
     if let Some(store) = &tool_context.todo_store {
         let state = store.reset_node(request.node_id).await;
         if let Some(tx) = &tool_context.todo_tx {
@@ -720,8 +735,9 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
-            ) = crate::tools::create_tools(tool_context);
+            ) = crate::tools::create_tools(tool_context.clone());
 
             let builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
@@ -739,6 +755,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
@@ -751,7 +768,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
 
             stream_invoked_agent(
                 request.node_id,
-                &parent_context,
+                &tool_context,
                 agent,
                 history,
                 max_tool_rounds,
@@ -784,8 +801,9 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
-            ) = crate::tools::create_tools(tool_context);
+            ) = crate::tools::create_tools(tool_context.clone());
 
             let builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
@@ -803,6 +821,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
@@ -811,7 +830,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
 
             stream_invoked_agent(
                 request.node_id,
-                &parent_context,
+                &tool_context,
                 agent,
                 history,
                 max_tool_rounds,
@@ -845,8 +864,9 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
-            ) = crate::tools::create_tools(tool_context);
+            ) = crate::tools::create_tools(tool_context.clone());
 
             let mut claude_history = history;
             prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
@@ -867,6 +887,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
@@ -875,7 +896,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
 
             stream_invoked_agent(
                 request.node_id,
-                &parent_context,
+                &tool_context,
                 agent,
                 claude_history,
                 max_tool_rounds,
@@ -930,8 +951,9 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
-            ) = crate::tools::create_tools(tool_context);
+            ) = crate::tools::create_tools(tool_context.clone());
 
             let builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
@@ -949,6 +971,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
@@ -957,7 +980,7 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
 
             stream_invoked_agent(
                 request.node_id,
-                &parent_context,
+                &tool_context,
                 agent,
                 history,
                 max_tool_rounds,
@@ -968,8 +991,14 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
     };
 
     if let Some(tx) = &parent_context.agent_stream_tx {
+        // Send Complete with the final output (or error message)
+        let output = match &result {
+            Ok(text) => text.clone(),
+            Err(error) => format!("Error: {}", error),
+        };
         let _ = tx.send(AgentStreamEvent::Complete {
             node_id: request.node_id,
+            output,
         });
     }
 
@@ -995,7 +1024,7 @@ where
 
     let mut passes = 0usize;
     let mut history = history;
-    let mut collected_all = String::new();
+    let mut final_output = String::new(); // Only the LAST response, not accumulated
     let max_turns = max_tool_rounds.max(1) as usize;
 
     loop {
@@ -1047,6 +1076,10 @@ where
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall(tool_call),
                 )) => {
+                    // Reset collected content - we only want text/reasoning AFTER the last tool call
+                    collected_pass.clear();
+                    collected_reasoning.clear();
+                    collected_signature = None;
                     if let Some(tx) = &parent_context.agent_stream_tx {
                         let name = tool_call.function.name;
                         let args = tool_call.function.arguments.to_string();
@@ -1057,7 +1090,12 @@ where
                         });
                     }
                 }
-                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {}
+                Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {
+                    // Reset after tool result too, to capture only final response
+                    collected_pass.clear();
+                    collected_reasoning.clear();
+                    collected_signature = None;
+                }
                 Ok(_) => {}
                 Err(e) => {
                     let error_msg = format!("{} invoke error: {}", provider_label, e);
@@ -1073,7 +1111,8 @@ where
         }
 
         if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
-            collected_all.push_str(&collected_pass);
+            // Only keep the LAST response as output (like pydanticAI's result.output)
+            final_output = collected_pass.clone();
             let reasoning_opt = if collected_reasoning.is_empty() {
                 None
             } else {
@@ -1096,10 +1135,9 @@ where
         }
 
         if passes >= TODO_GUARD_MAX_PASSES {
-            // Return collected text with error note appended rather than discarding all output
             let error_note =
                 "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.";
-            return Ok(format!("{}{}", collected_all, error_note));
+            return Ok(format!("{}{}", final_output, error_note));
         }
 
         // Use first prompt on pass 1, retry prompt on subsequent passes
@@ -1111,7 +1149,19 @@ where
         history.push(RigMessage::user(guard_prompt));
     }
 
-    Ok(collected_all)
+    // Apply truncation limit to prevent context explosion
+    if final_output.len() > MAX_SUBAGENT_OUTPUT_CHARS {
+        let truncated = &final_output[..MAX_SUBAGENT_OUTPUT_CHARS];
+        // Find last newline to avoid cutting mid-line
+        let cut_point = truncated.rfind('\n').unwrap_or(MAX_SUBAGENT_OUTPUT_CHARS);
+        final_output = format!(
+            "{}\n\n[... output truncated at {} chars ...]",
+            &final_output[..cut_point],
+            MAX_SUBAGENT_OUTPUT_CHARS
+        );
+    }
+
+    Ok(final_output)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1161,25 +1211,91 @@ async fn run_agent_stream(
     let mut rig_messages: Vec<rig::message::Message> = history.clone();
     rig_messages.push(user_msg.clone());
 
+    // Estimate tool definitions tokens from specs
+    // This is an approximation since actual tools may vary per-provider
+    let estimated_tool_tokens = crate::tools::spec::estimate_all_tools_tokens();
+
     // Create comprehensive context estimate (includes system prompt, tools, messages)
-    // Note: We use empty tool definitions here since we don't have access to them yet
-    // The full estimate with tools will be done per-provider below
     let context_estimate = crate::compression::create_context_estimate(
         &system_prompt,
-        &[], // Tool definitions added per-provider
+        &[], // Tool definitions calculated separately below
         &rig_messages,
         &model_name,
         None, // No API-provided context window yet
     );
 
+    // Debug logging for token estimation
+    {
+        use rig::compression::estimate_message_tokens;
+        let mut total_reasoning_tokens = 0usize;
+        let mut total_reasoning_chars = 0usize;
+        let mut total_text_tokens = 0usize;
+        let mut total_text_chars = 0usize;
+        let mut messages_with_reasoning = 0usize;
+        for (i, msg) in rig_messages.iter().enumerate() {
+            let _msg_tokens = estimate_message_tokens(msg);
+            // Check if message has reasoning
+            if let rig::message::Message::Assistant { content, .. } = msg {
+                for c in content.iter() {
+                    if let rig::message::AssistantContent::Reasoning(r) = c {
+                        let chars: usize = r.reasoning.iter().map(|s| s.len()).sum();
+                        let reasoning_tokens = (chars as f32 / 3.4).ceil() as usize;
+                        total_reasoning_tokens += reasoning_tokens;
+                        total_reasoning_chars += chars;
+                        messages_with_reasoning += 1;
+                        tracing::debug!(
+                            "Message {} has {} reasoning chars ({} tokens)",
+                            i, chars, reasoning_tokens
+                        );
+                    }
+                    if let rig::message::AssistantContent::Text(t) = c {
+                        total_text_chars += t.text.len();
+                        total_text_tokens += (t.text.len() as f32 / 3.4).ceil() as usize;
+                    }
+                }
+            }
+            if let rig::message::Message::User { content } = msg {
+                for c in content.iter() {
+                    if let rig::message::UserContent::Text(t) = c {
+                        total_text_chars += t.text.len();
+                        total_text_tokens += (t.text.len() as f32 / 3.4).ceil() as usize;
+                    }
+                }
+            }
+        }
+        tracing::info!(
+            "Context estimate: system_prompt={} chars, {} messages ({} with reasoning)",
+            system_prompt.len(),
+            rig_messages.len(),
+            messages_with_reasoning
+        );
+        tracing::info!(
+            "Content breakdown: text={} chars ({} tokens), reasoning={} chars ({} tokens)",
+            total_text_chars, total_text_tokens,
+            total_reasoning_chars, total_reasoning_tokens
+        );
+        tracing::info!(
+            "Estimated totals: system={}, tools={} ({} tool specs), messages={}, grand_total={}",
+            context_estimate.system_prompt_tokens,
+            estimated_tool_tokens,
+            crate::tools::spec::all_specs().len(),
+            context_estimate.messages_tokens,
+            context_estimate.total_tokens + estimated_tool_tokens
+        );
+    }
+
+    // Add estimated tool tokens to the total
+    let total_with_tools = context_estimate.total_tokens + estimated_tool_tokens;
+
     // Emit context estimate for UI display
     let _ = event_tx.send(RunnerEvent::ContextEstimate {
         system_prompt_tokens: context_estimate.system_prompt_tokens,
-        tool_definitions_tokens: context_estimate.tool_definitions_tokens,
+        tool_definitions_tokens: estimated_tool_tokens,
         messages_tokens: context_estimate.messages_tokens,
-        total_tokens: context_estimate.total_tokens,
+        total_tokens: total_with_tools,
         context_window: context_estimate.context_window,
-        usage_percent: context_estimate.usage_percent,
+        usage_percent: ((total_with_tools as f64 / context_estimate.context_window as f64) * 100.0)
+            as u32,
     });
 
     // Check if compression is needed
@@ -1260,6 +1376,7 @@ async fn run_agent_stream(
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
@@ -1279,6 +1396,7 @@ async fn run_agent_stream(
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
@@ -1350,12 +1468,19 @@ async fn run_agent_stream(
                                     chunk_count,
                                     text.len()
                                 );
-                                let _ = event_tx.send(RunnerEvent::Reasoning(text));
+                                let _ = event_tx.send(RunnerEvent::Reasoning {
+                                    text,
+                                    signature: reasoning.signature.clone(),
+                                });
                             }
                         }
                         Ok(MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ToolCall(tool_call),
                         )) => {
+                            // Reset collected content - we only want text/reasoning AFTER the last tool call
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
                             let name = tool_call.function.name;
                             let args = tool_call.function.arguments.to_string();
                             let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
@@ -1378,12 +1503,26 @@ async fn run_agent_stream(
                         }
                         Ok(MultiTurnStreamItem::StreamUserItem(
                             StreamedUserContent::ToolResult(_),
-                        )) => {}
+                        )) => {
+                            // Reset after tool result too, to capture only final response
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
+                        }
                         // Skip FinalResponse - its aggregated_usage sums all turns which is wrong
                         // for input_tokens (each turn already includes full history)
                         Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
                         // Pre-request context estimate from rig
                         Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            tracing::info!(
+                                "Rig context estimate: system={}, tools={}, messages={}, total={}, window={}, usage={}%",
+                                estimate.system_prompt_tokens,
+                                estimate.tool_definitions_tokens,
+                                estimate.messages_tokens,
+                                estimate.total_tokens,
+                                estimate.context_window,
+                                estimate.usage_percent
+                            );
                             let _ = event_tx.send(RunnerEvent::ContextEstimate {
                                 system_prompt_tokens: estimate.system_prompt_tokens,
                                 tool_definitions_tokens: estimate.tool_definitions_tokens,
@@ -1474,6 +1613,7 @@ async fn run_agent_stream(
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
@@ -1493,6 +1633,7 @@ async fn run_agent_stream(
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
@@ -1560,12 +1701,19 @@ async fn run_agent_stream(
                                     chunk_count,
                                     text.len()
                                 );
-                                let _ = event_tx.send(RunnerEvent::Reasoning(text));
+                                let _ = event_tx.send(RunnerEvent::Reasoning {
+                                    text,
+                                    signature: reasoning.signature.clone(),
+                                });
                             }
                         }
                         Ok(MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ToolCall(tool_call),
                         )) => {
+                            // Reset collected content - we only want text/reasoning AFTER the last tool call
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
                             let name = tool_call.function.name;
                             let args = tool_call.function.arguments.to_string();
                             let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
@@ -1588,12 +1736,26 @@ async fn run_agent_stream(
                         }
                         Ok(MultiTurnStreamItem::StreamUserItem(
                             StreamedUserContent::ToolResult(_),
-                        )) => {}
+                        )) => {
+                            // Reset after tool result too, to capture only final response
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
+                        }
                         // Skip FinalResponse - its aggregated_usage sums all turns which is wrong
                         // for input_tokens (each turn already includes full history)
                         Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
                         // Pre-request context estimate from rig
                         Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            tracing::info!(
+                                "Rig context estimate: system={}, tools={}, messages={}, total={}, window={}, usage={}%",
+                                estimate.system_prompt_tokens,
+                                estimate.tool_definitions_tokens,
+                                estimate.messages_tokens,
+                                estimate.total_tokens,
+                                estimate.context_window,
+                                estimate.usage_percent
+                            );
                             let _ = event_tx.send(RunnerEvent::ContextEstimate {
                                 system_prompt_tokens: estimate.system_prompt_tokens,
                                 tool_definitions_tokens: estimate.tool_definitions_tokens,
@@ -1685,6 +1847,7 @@ async fn run_agent_stream(
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
@@ -1707,6 +1870,7 @@ async fn run_agent_stream(
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
@@ -1772,12 +1936,19 @@ async fn run_agent_stream(
                                     chunk_count,
                                     text.len()
                                 );
-                                let _ = event_tx.send(RunnerEvent::Reasoning(text));
+                                let _ = event_tx.send(RunnerEvent::Reasoning {
+                                    text,
+                                    signature: reasoning.signature.clone(),
+                                });
                             }
                         }
                         Ok(MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ToolCall(tool_call),
                         )) => {
+                            // Reset collected content - we only want text/reasoning AFTER the last tool call
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
                             let name = tool_call.function.name;
                             let args = tool_call.function.arguments.to_string();
                             let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
@@ -1806,6 +1977,10 @@ async fn run_agent_stream(
                         Ok(MultiTurnStreamItem::StreamUserItem(
                             StreamedUserContent::ToolResult(_),
                         )) => {
+                            // Reset after tool result too, to capture only final response
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
                             tracing::debug!("Claude ToolResult received");
                         }
                         Ok(MultiTurnStreamItem::FinalResponse(final_response)) => {
@@ -1819,6 +1994,15 @@ async fn run_agent_stream(
                         }
                         // Pre-request context estimate from rig
                         Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            tracing::info!(
+                                "Rig context estimate: system={}, tools={}, messages={}, total={}, window={}, usage={}%",
+                                estimate.system_prompt_tokens,
+                                estimate.tool_definitions_tokens,
+                                estimate.messages_tokens,
+                                estimate.total_tokens,
+                                estimate.context_window,
+                                estimate.usage_percent
+                            );
                             let _ = event_tx.send(RunnerEvent::ContextEstimate {
                                 system_prompt_tokens: estimate.system_prompt_tokens,
                                 tool_definitions_tokens: estimate.tool_definitions_tokens,
@@ -1930,6 +2114,7 @@ async fn run_agent_stream(
                 todo_read,
                 todo_write,
                 todo_list,
+                share_reasoning,
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
@@ -1949,6 +2134,7 @@ async fn run_agent_stream(
                 .tool(todo_read)
                 .tool(todo_write)
                 .tool(todo_list)
+                .tool(share_reasoning)
                 .tool(invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
@@ -2017,12 +2203,19 @@ async fn run_agent_stream(
                                     chunk_count,
                                     text.len()
                                 );
-                                let _ = event_tx.send(RunnerEvent::Reasoning(text));
+                                let _ = event_tx.send(RunnerEvent::Reasoning {
+                                    text,
+                                    signature: reasoning.signature.clone(),
+                                });
                             }
                         }
                         Ok(MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ToolCall(tool_call),
                         )) => {
+                            // Reset collected content - we only want text/reasoning AFTER the last tool call
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
                             let name = tool_call.function.name;
                             let args = tool_call.function.arguments.to_string();
                             let _ = event_tx.send(RunnerEvent::ToolCall { name, args });
@@ -2045,9 +2238,23 @@ async fn run_agent_stream(
                         }
                         Ok(MultiTurnStreamItem::StreamUserItem(
                             StreamedUserContent::ToolResult(_),
-                        )) => {}
+                        )) => {
+                            // Reset after tool result too, to capture only final response
+                            collected_pass.clear();
+                            collected_reasoning.clear();
+                            collected_signature = None;
+                        }
                         Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
                         Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
+                            tracing::info!(
+                                "Rig context estimate: system={}, tools={}, messages={}, total={}, window={}, usage={}%",
+                                estimate.system_prompt_tokens,
+                                estimate.tool_definitions_tokens,
+                                estimate.messages_tokens,
+                                estimate.total_tokens,
+                                estimate.context_window,
+                                estimate.usage_percent
+                            );
                             let _ = event_tx.send(RunnerEvent::ContextEstimate {
                                 system_prompt_tokens: estimate.system_prompt_tokens,
                                 tool_definitions_tokens: estimate.tool_definitions_tokens,
@@ -2187,6 +2394,7 @@ mod tests {
             todo_read,
             todo_write,
             todo_list,
+            share_reasoning,
             invoke_agent_tool,
         ) = crate::tools::create_tools(tool_context.clone());
 
@@ -2211,6 +2419,7 @@ mod tests {
             .tool(todo_read)
             .tool(todo_write)
             .tool(todo_list)
+            .tool(share_reasoning)
             .tool(invoke_agent_tool)
             .temperature(0.1)
             .max_tokens(64)
@@ -2265,6 +2474,7 @@ mod tests {
             todo_read,
             todo_write,
             todo_list,
+            share_reasoning,
             invoke_agent_tool,
         ) = crate::tools::create_tools(tool_context);
 
@@ -2284,6 +2494,7 @@ mod tests {
             .tool(todo_read)
             .tool(todo_write)
             .tool(todo_list)
+            .tool(share_reasoning)
             .tool(invoke_agent_tool)
             .temperature(0.1)
             .max_tokens(64)

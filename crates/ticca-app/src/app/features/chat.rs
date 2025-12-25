@@ -519,16 +519,20 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.push_scroll_if_needed(&mut effects);
         }
 
-        chat::Msg::Reasoning(reasoning) => {
+        chat::Msg::Reasoning { text, signature } => {
             app.chat.last_bytes_time = Some(std::time::Instant::now());
 
             if let Some(last) = app.chat.messages.last_mut()
                 && last.is_streaming
             {
                 if let Some(ref mut existing) = last.reasoning {
-                    existing.push_str(&reasoning);
+                    existing.push_str(&text);
                 } else {
-                    last.reasoning = Some(reasoning);
+                    last.reasoning = Some(text);
+                }
+                // Store signature (only set once, first one wins)
+                if last.reasoning_signature.is_none() && signature.is_some() {
+                    last.reasoning_signature = signature;
                 }
             }
             app.chat.push_scroll_if_needed(&mut effects);
@@ -1014,10 +1018,12 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                     }
                     app.chat.push_scroll_if_needed(&mut effects);
                 }
-                AgentStreamEvent::Complete { node_id } => {
+                AgentStreamEvent::Complete { node_id, output } => {
                     if let Some(index) = app.chat.subagent_message_indices.remove(&node_id)
                         && let Some(msg) = app.chat.messages.get_mut(index)
                     {
+                        // Replace streamed content with the final pure output
+                        msg.content = output;
                         msg.is_streaming = false;
                         msg.update_parsed_items();
                     }

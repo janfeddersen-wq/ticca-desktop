@@ -35,8 +35,8 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
                 content: m.content.clone(),
                 is_streaming: false,
                 author_label: None,
-                reasoning: None,
-                reasoning_signature: None,
+                reasoning: m.reasoning.clone(),
+                reasoning_signature: m.reasoning_signature.clone(),
                 parsed_items,
                 last_was_tool_call: false,
             }
@@ -81,6 +81,8 @@ pub fn save_session(
         .map(|m| SessionMessageInput {
             role: m.role,
             content: m.content.clone(),
+            reasoning: m.reasoning.clone(),
+            reasoning_signature: m.reasoning_signature.clone(),
         })
         .collect();
 
