@@ -49,6 +49,8 @@ pub enum Msg {
         output_tokens: u64,
     },
     /// Pre-request context estimate (calculated before sending to LLM)
+    /// Note: context_window and usage_percent from rig are ignored; we use our own lookup
+    #[allow(dead_code)]
     ContextEstimate {
         system_prompt_tokens: usize,
         tool_definitions_tokens: usize,

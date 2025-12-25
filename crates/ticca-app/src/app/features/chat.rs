@@ -584,7 +584,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             // Update pre-request context estimate for UI display
             // Use our own context window lookup instead of rig's default (200k)
             let our_context_window = app.chat.selected_model_name()
-                .map(|m| ticca_core::llm::ModelService::get_context_length(&m) as u64)
+                .map(|m| ticca_core::llm::ModelService::get_context_length(m) as u64)
                 .unwrap_or(app.chat.context_window);
             let our_usage_percent = if our_context_window > 0 {
                 (total_tokens as f64 / our_context_window as f64) * 100.0

@@ -278,10 +278,8 @@ impl RegistryService {
 
         // Check if there's a global override for just the model ID
         let model_only = Self::strip_provider_prefix(model_id);
-        if model_only != model_id {
-            if let Some(&ctx) = CONTEXT_OVERRIDES.get(model_only) {
-                return ctx;
-            }
+        if model_only != model_id && let Some(&ctx) = CONTEXT_OVERRIDES.get(model_only) {
+            return ctx;
         }
 
         // Then try to find the model in the registry
