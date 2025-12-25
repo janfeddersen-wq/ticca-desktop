@@ -657,7 +657,9 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
                 .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
 
-            let model = client.completion_model(&model_name);
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            let model = client.completion_model(actual_model_id);
             let (
                 execute_shell,
                 list_processes,
@@ -719,7 +721,9 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
 
             let client = GeminiCodeAssistRigClient::new(token.access_token);
 
-            let model = client.completion_model(&model_name);
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            let model = client.completion_model(actual_model_id);
             let (
                 execute_shell,
                 list_processes,
@@ -778,7 +782,9 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             let client = ClaudeOAuthClient::new(token.access_token)
                 .map_err(|e| format!("Failed to create Claude client: {}", e))?;
 
-            let model = client.completion_model(&model_name);
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            let model = client.completion_model(actual_model_id);
             let (
                 execute_shell,
                 list_processes,
@@ -1168,7 +1174,9 @@ async fn run_agent_stream(
             let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
                 .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
 
-            let model = client.completion_model(&model_name);
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            let model = client.completion_model(actual_model_id);
             let (
                 execute_shell,
                 list_processes,
@@ -1365,7 +1373,9 @@ async fn run_agent_stream(
 
             let client = GeminiCodeAssistRigClient::new(token.access_token);
 
-            let model = client.completion_model(&model_name);
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            let model = client.completion_model(actual_model_id);
             let (
                 execute_shell,
                 list_processes,
@@ -1559,7 +1569,9 @@ async fn run_agent_stream(
             let client = ClaudeOAuthClient::new(token.access_token)
                 .map_err(|e| format!("Failed to create Claude client: {}", e))?;
 
-            let model = client.completion_model(&model_name);
+            // Extract the actual model ID without the provider suffix
+            let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
+            let model = client.completion_model(actual_model_id);
             let (
                 execute_shell,
                 list_processes,
