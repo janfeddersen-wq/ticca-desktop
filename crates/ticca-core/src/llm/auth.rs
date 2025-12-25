@@ -100,6 +100,42 @@ pub fn has_any_valid_account() -> bool {
     has_valid_account(provider_names::CLAUDE)
         || has_valid_account(provider_names::GEMINI)
         || has_valid_account(provider_names::CHATGPT)
+        || has_any_valid_api_key()
+}
+
+/// Check if any API key provider has a valid key configured
+pub fn has_any_valid_api_key() -> bool {
+    use crate::registry::RegistryService;
+    RegistryService::api_key_providers()
+        .iter()
+        .any(|p| has_valid_api_key(&p.id))
+}
+
+/// Get a list of provider IDs that have valid authentication
+pub fn available_provider_ids() -> Vec<String> {
+    use crate::registry::RegistryService;
+
+    let mut ids = Vec::new();
+
+    // Check OAuth providers
+    if has_valid_account(provider_names::CLAUDE) {
+        ids.push(provider_names::CLAUDE.to_string());
+    }
+    if has_valid_account(provider_names::GEMINI) {
+        ids.push(provider_names::GEMINI.to_string());
+    }
+    if has_valid_account(provider_names::CHATGPT) {
+        ids.push(provider_names::CHATGPT.to_string());
+    }
+
+    // Check API key providers (using registry)
+    for provider in RegistryService::api_key_providers() {
+        if has_valid_api_key(&provider.id) {
+            ids.push(provider.id.clone());
+        }
+    }
+
+    ids
 }
 
 pub fn mark_cooldown(account_id: &str, reason: &str, cooldown_secs: i64) -> bool {

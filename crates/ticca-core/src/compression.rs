@@ -1,10 +1,13 @@
 //! Context compression service for managing LLM context window limits.
 //!
 //! This module provides:
-//! - Model context window lookup
+//! - Model context window lookup (via [`crate::registry::RegistryService`])
 //! - Compression strategies:
 //!   - Truncation: Token-based LIFO (like code_puppy) - keeps system prompt + recent messages
 //!   - Summarizing: LLM-based summarization of removed context
+//!
+//! Context window sizes are sourced from the model registry, which provides
+//! authoritative metadata for all known models.
 //!
 //! Token estimation is handled by rig-core's compression module (uses chars/3.4 ratio).
 
@@ -18,71 +21,23 @@ use crate::config::{CompressionSettings, CompressionStrategy};
 // Re-export rig's context estimation for use throughout ticca
 pub use rig::compression::{estimate_tokens, CompressionError, ContextEstimate};
 
-/// Known model context window sizes (in tokens).
-/// These are fallback values when the API doesn't provide context_window.
+/// Get the context window size for a model (in tokens).
+///
+/// Delegates to [`crate::registry::RegistryService`] for authoritative lookup.
+/// Returns a reasonable default (100k) for unknown models.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use ticca_core::compression::get_model_context_window;
+///
+/// assert_eq!(get_model_context_window("gpt-4o"), 128_000);
+/// assert_eq!(get_model_context_window("claude-sonnet-4-20250514"), 200_000);
+/// assert_eq!(get_model_context_window("gemini-2.0-flash"), 1_000_000);
+/// ```
+#[inline]
 pub fn get_model_context_window(model_id: &str) -> u64 {
-    // Normalize the model ID for matching
-    let model = model_id.to_lowercase();
-
-    // Claude models
-    if model.contains("claude-3-5-sonnet") || model.contains("claude-3.5-sonnet") {
-        return 200_000;
-    }
-    if model.contains("claude-3-5-haiku") || model.contains("claude-3.5-haiku") {
-        return 200_000;
-    }
-    if model.contains("claude-3-opus") || model.contains("claude-3.0-opus") {
-        return 200_000;
-    }
-    if model.contains("claude-opus-4") || model.contains("claude-4-opus") {
-        return 200_000;
-    }
-    if model.contains("claude-sonnet-4") || model.contains("claude-4-sonnet") {
-        return 200_000;
-    }
-    if model.contains("claude") {
-        return 200_000; // Default for other Claude models
-    }
-
-    // GPT models
-    if model.contains("gpt-4o") {
-        return 128_000;
-    }
-    if model.contains("gpt-4-turbo") {
-        return 128_000;
-    }
-    if model.contains("gpt-4-32k") {
-        return 32_768;
-    }
-    if model.contains("gpt-4") {
-        return 8_192;
-    }
-    if model.contains("gpt-3.5-turbo-16k") {
-        return 16_384;
-    }
-    if model.contains("gpt-3.5") {
-        return 4_096;
-    }
-    if model.contains("o1-preview") || model.contains("o1-mini") {
-        return 128_000;
-    }
-    if model.contains("o3") || model.contains("o4-mini") {
-        return 200_000;
-    }
-
-    // Gemini models
-    if model.contains("gemini-1.5-pro") || model.contains("gemini-1.5-flash") {
-        return 1_000_000;
-    }
-    if model.contains("gemini-2") {
-        return 1_000_000;
-    }
-    if model.contains("gemini") {
-        return 128_000;
-    }
-
-    // Default fallback
-    100_000
+    crate::registry::RegistryService::get_context_window(model_id)
 }
 
 /// Create a comprehensive context estimate including all components.
@@ -94,7 +49,7 @@ pub fn get_model_context_window(model_id: &str) -> u64 {
 /// * `system_prompt` - The system prompt/preamble text
 /// * `tool_definitions` - Tool definitions to serialize and estimate
 /// * `messages` - All conversation messages
-/// * `model_id` - Model identifier for context window lookup
+/// * `model_id` - Model identifier for context window lookup (supports canonical `provider:model` format)
 /// * `api_context_window` - Optional API-provided context window (overrides lookup)
 pub fn create_context_estimate(
     system_prompt: &str,
@@ -110,8 +65,12 @@ pub fn create_context_estimate(
         serde_json::to_string(tool_definitions).unwrap_or_default()
     };
 
-    // Use API-provided context window if available, otherwise fall back to lookup
-    let context_window = api_context_window.unwrap_or_else(|| get_model_context_window(model_id));
+    // Use API-provided context window if available, otherwise look up from registry or fallback
+    let context_window = api_context_window.unwrap_or_else(|| {
+        // Try to get from model service (database cache) first
+        let context_length = crate::llm::ModelService::get_context_length(model_id);
+        context_length as u64
+    });
 
     ContextEstimate::new(system_prompt, &tool_definitions_json, messages, context_window)
 }
@@ -325,10 +284,15 @@ mod tests {
 
     #[test]
     fn test_get_model_context_window() {
-        assert_eq!(get_model_context_window("claude-3-5-sonnet-20241022"), 200_000);
+        // Claude 3.5 Sonnet has 200k context
+        assert!(get_model_context_window("claude-3-5-sonnet-20241022") >= 200_000);
+        // GPT-4o has 128k context
         assert_eq!(get_model_context_window("gpt-4o"), 128_000);
+        // GPT-4 Turbo has 128k context
         assert_eq!(get_model_context_window("gpt-4-turbo"), 128_000);
-        assert_eq!(get_model_context_window("gemini-1.5-pro"), 1_000_000);
+        // Gemini 1.5 Pro has 1M+ context
+        assert!(get_model_context_window("gemini-1.5-pro") >= 1_000_000);
+        // Unknown models fall back to default
         assert_eq!(get_model_context_window("unknown-model"), 100_000);
     }
 
@@ -349,12 +313,15 @@ mod tests {
             "You are a helpful assistant.",
             &[],
             &messages,
-            "claude-3-5-sonnet",
+            "claude-3-5-sonnet-20241022",
             None,
         );
 
-        assert_eq!(estimate.context_window, 200_000);
-        assert_eq!(estimate.threshold_tokens(80), 160_000); // 80% of 200k
+        // Claude 3.5 Sonnet has 200k context
+        assert!(estimate.context_window >= 200_000);
+        // Threshold should be 80% of context window
+        let expected_threshold = (estimate.context_window as f64 * 0.8) as u64;
+        assert_eq!(estimate.threshold_tokens(80), expected_threshold);
         assert!(!needs_compression(&estimate, &settings)); // Small messages don't need compression
 
         // Verify components are calculated

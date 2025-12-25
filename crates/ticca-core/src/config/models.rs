@@ -1,5 +1,6 @@
 //! Configuration data models
 
+use crate::registry::RegistryService;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -325,6 +326,75 @@ impl McpServer {
     }
 }
 
+/// Discovered model from a provider (cached in config.db)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredModel {
+    /// Canonical ID in format "provider:model_id" (e.g., "claude:claude-sonnet-4-20250514")
+    pub canonical_id: String,
+    /// Provider ID (e.g., "claude", "openai", "groq")
+    pub provider: String,
+    /// Model ID within the provider (e.g., "claude-sonnet-4-20250514", "gpt-4o")
+    pub model_id: String,
+    /// Human-readable display name (e.g., "Claude Sonnet 4")
+    pub display_name: Option<String>,
+    /// Context window size in tokens
+    pub context_length: i64,
+    /// When the model was discovered/fetched
+    pub discovered_at: Option<String>,
+}
+
+impl DiscoveredModel {
+    /// Create a new DiscoveredModel with the canonical ID format
+    pub fn new(
+        provider: impl Into<String>,
+        model_id: impl Into<String>,
+    ) -> Self {
+        let provider = provider.into();
+        let model_id = model_id.into();
+        let canonical_id = format!("{}:{}", provider, model_id);
+
+        Self {
+            canonical_id,
+            provider,
+            model_id,
+            display_name: None,
+            context_length: 128_000, // Default context length
+            discovered_at: None,
+        }
+    }
+
+    /// Set the display name
+    pub fn with_display_name(mut self, name: impl Into<String>) -> Self {
+        self.display_name = Some(name.into());
+        self
+    }
+
+    /// Set the context length
+    pub fn with_context_length(mut self, length: i64) -> Self {
+        self.context_length = length;
+        self
+    }
+
+    /// Get a human-readable provider name.
+    ///
+    /// Note: This is a helper intended for the UI layer to use when
+    /// formatting model displays. Domain code should not use this.
+    pub fn provider_display_name(&self) -> String {
+        match self.provider.as_str() {
+            providers::CLAUDE => "Claude".to_string(),
+            providers::GEMINI => "Gemini".to_string(),
+            providers::CHATGPT => "ChatGPT".to_string(),
+            _ => {
+                if let Some(provider_def) = RegistryService::find_provider(&self.provider) {
+                    provider_def.name.clone()
+                } else {
+                    self.provider.clone()
+                }
+            }
+        }
+    }
+}
+
 /// Well-known setting keys
 pub mod setting_keys {
     pub const THEME: &str = "theme";
@@ -344,6 +414,14 @@ pub mod providers {
 // ============================================================================
 
 /// API key provider identifiers
+///
+/// **Deprecated**: This enum has been replaced by the registry system.
+/// Use `RegistryService::api_key_providers()` and `RegistryService::find_provider(id)`
+/// instead to get provider information dynamically from the registry.
+#[deprecated(
+    since = "0.23.0",
+    note = "Use RegistryService::api_key_providers() and RegistryService::find_provider() instead"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiKeyProvider {
@@ -375,6 +453,7 @@ pub enum ApiKeyProvider {
     Synthetic,
 }
 
+#[allow(deprecated)]
 impl ApiKeyProvider {
     /// All available API key providers
     pub const ALL: &'static [ApiKeyProvider] = &[
@@ -556,6 +635,7 @@ impl ApiKeyProvider {
     }
 }
 
+#[allow(deprecated)]
 impl std::fmt::Display for ApiKeyProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.display_name())

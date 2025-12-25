@@ -1,5 +1,5 @@
 use ticca_core::agents::AgentType;
-use ticca_core::config::{ApiKeyProvider, McpTransport};
+use ticca_core::config::McpTransport;
 use ticca_core::external_tools::ExternalToolId;
 
 use crate::theme::AppTheme;
@@ -35,7 +35,7 @@ pub enum Msg {
     },
 
     // API key accounts
-    StartAddApiKey(ApiKeyProvider),
+    StartAddApiKeyById(String), // Start add form using provider ID from registry
     CancelAddApiKey,
     ApiKeyFormChanged(String),
     ApiKeyLabelFormChanged(String),
@@ -50,6 +50,9 @@ pub enum Msg {
         account_id: String,
         delta: i64,
     },
+    // Provider search (for adding new providers)
+    AddProviderSearchChanged(String),
+    SelectProviderToAdd(String), // Provider ID
 
     // Model selection
     RefreshModels,

@@ -25,22 +25,6 @@ use ticca_core::tools::{SystemExecRequest, SystemExecResponse, SystemExecStore};
 
 use super::super::{TiccaApp, Toast, View, effects::Effect};
 
-/// Context window limits by provider (in tokens)
-const CLAUDE_CONTEXT_LIMIT: i64 = 200_000;
-const CHATGPT_CONTEXT_LIMIT: i64 = 270_000;
-const GEMINI_CONTEXT_LIMIT: i64 = 1_000_000;
-
-/// Get context limit for a provider
-fn context_limit_for_provider(provider: ProviderId) -> i64 {
-    match provider {
-        ProviderId::Claude => CLAUDE_CONTEXT_LIMIT,
-        ProviderId::ChatGpt => CHATGPT_CONTEXT_LIMIT,
-        ProviderId::Gemini => GEMINI_CONTEXT_LIMIT,
-        // For API key providers, use a reasonable default (128K)
-        ProviderId::ApiKey(_) => 128_000,
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatPane {
     Chat,
@@ -178,7 +162,7 @@ impl ChatState {
             input_tokens: 0,
             output_tokens: 0,
             estimated_tokens: 0,
-            context_window: 200_000, // Default to Claude's context window
+            context_window: 0, // Will be looked up from registry based on selected model
             call_graph: AgentCallGraph::new(AgentType::Coding),
             subagent_message_indices: HashMap::new(),
             panes,
@@ -227,25 +211,54 @@ impl ChatState {
         }
     }
 
-    /// Get the current provider based on selected/default model
-    fn current_provider(&self) -> ProviderId {
-        let model_name = self
-            .agent_pinned_models
+    /// Get the currently selected model name (pinned or default)
+    fn selected_model_name(&self) -> Option<&str> {
+        self.agent_pinned_models
             .get(&self.current_agent)
-            .or(self.default_model.as_ref());
-
-        model_name
-            .map(|name| ProviderRegistry::resolve_provider(name))
-            .unwrap_or(ProviderId::Claude)
+            .or(self.default_model.as_ref())
+            .map(String::as_str)
     }
 
-    /// Get context limit for the current provider (or from estimate if available)
+    /// Get context limit for the current model.
+    ///
+    /// Uses the API-provided context window if available (from streaming response),
+    /// otherwise falls back to looking up the selected model in the registry.
     pub(in crate::app) fn context_limit(&self) -> i64 {
         if self.context_window > 0 {
             self.context_window as i64
         } else {
-            context_limit_for_provider(self.current_provider())
+            // Fall back to registry lookup for the selected model
+            self.selected_model_name()
+                .map(|name| ticca_core::RegistryService::get_context_window(name) as i64)
+                .unwrap_or(ticca_core::registry::DEFAULT_CONTEXT_WINDOW as i64)
         }
+    }
+
+    /// Check if the current model supports vision (image input)
+    ///
+    /// OAuth providers (Claude, Gemini, ChatGPT) all support vision.
+    /// For API key providers, we check the model registry.
+    pub(in crate::app) fn supports_vision(&self) -> bool {
+        // OAuth providers all support vision
+        let model_name = match self.selected_model_name() {
+            Some(name) => name,
+            None => return true, // Default to enabled if no model selected
+        };
+
+        // Check if this is an OAuth provider model (always support vision)
+        if model_name.starts_with("claude")
+            || model_name.starts_with("gemini")
+            || model_name.starts_with("gpt-")
+            || model_name.starts_with("o1")
+            || model_name.starts_with("o3")
+        {
+            return true;
+        }
+
+        // For other models, check the registry
+        ticca_core::RegistryService::find_model(model_name)
+            .map(|m| m.capabilities.vision)
+            .unwrap_or(false)
     }
 
     /// Get estimated tokens used (pre-request estimate, more accurate than API response)
@@ -364,7 +377,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.user_at_bottom = true;
             app.chat.call_graph.reset(app.chat.current_agent);
             app.chat.subagent_message_indices.clear();
-            app.chat.todo_lists.retain(|node_id, _| *node_id == 0);
+            // Clear todo lists for fresh start - don't carry over completed state from previous request
+            app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
 
             let profile = AgentProfile::for_type(app.chat.current_agent, app.chat.max_tool_rounds);
@@ -393,8 +407,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 ProviderId::ChatGpt => {
                     auth::has_valid_account(ticca_core::config::models::providers::CHATGPT)
                 }
-                ProviderId::ApiKey(api_provider) => {
-                    auth::has_valid_api_key(api_provider.id())
+                ProviderId::ApiKey(ref provider_id) => {
+                    auth::has_valid_api_key(provider_id)
                 }
             };
 
@@ -442,7 +456,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 })
                 .collect();
 
-            let initial_todo_state = app.chat.todo_lists.get(&0).cloned();
+            // Start with fresh todo state - each request begins with empty todo list
+            let initial_todo_state = None;
 
             effects.push(Effect::RunStream {
                 system_prompt,
@@ -647,6 +662,9 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.subagent_message_indices.clear();
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
+            // Reset context window so it gets looked up fresh for new agent's model
+            app.chat.context_window = 0;
+            app.chat.estimated_tokens = 0;
             // Don't auto-switch sidebar tab - let user control it
         }
 
@@ -1200,6 +1218,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
                 app.chat.flow_pane.is_some(),
                 app.chat.tokens_used(),
                 app.chat.context_limit(),
+                app.chat.supports_vision(),
             ),
             ChatPane::Flow => crate::views::right_sidebar::view(
                 &app.chat.call_graph,

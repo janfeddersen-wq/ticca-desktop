@@ -15,6 +15,7 @@ use crate::llm::providers::GeminiCodeAssistRigClient;
 use crate::llm::providers::chatgpt::ChatGptOAuthClient;
 use crate::llm::providers::OpenAICompatibleApiClient;
 use crate::llm::{ClaudeOAuthClient, ProviderId, ProviderRegistry};
+use crate::registry::RegistryService;
 use crate::session::MessageRole;
 use crate::tools::{
     AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TodoListEvent,
@@ -838,25 +839,29 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             )
             .await
         }
-        ProviderId::ApiKey(api_provider) => {
-            let provider_name = api_provider.display_name();
+        ProviderId::ApiKey(provider_id) => {
+            // Look up provider info from registry
+            let provider_def = RegistryService::find_provider(&provider_id)
+                .ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
+
+            let provider_name = &provider_def.name;
             tracing::info!("Using {} backend for model: {}", provider_name, model_name);
 
-            if !api_provider.is_openai_compatible() {
+            if !provider_def.is_openai_compatible {
                 return Err(format!(
                     "{} API key provider requires special handling not yet implemented",
                     provider_name
                 ));
             }
 
-            let api_key_token = auth::select_api_key(api_provider.id()).ok_or_else(|| {
+            let api_key_token = auth::select_api_key(&provider_id).ok_or_else(|| {
                 format!(
                     "{} API key required. Please add an API key in Settings.",
                     provider_name
                 )
             })?;
 
-            let client = OpenAICompatibleApiClient::new(api_provider, &api_key_token.api_key)?;
+            let client = OpenAICompatibleApiClient::new(&provider_id, &api_key_token.api_key)?;
 
             // Extract the actual model ID without the provider suffix
             let actual_model_id = ProviderRegistry::extract_model_id(&model_name);
@@ -1769,25 +1774,29 @@ async fn run_agent_stream(
                 history.push(RigMessage::user(guard_prompt));
             }
         }
-        ProviderId::ApiKey(api_provider) => {
-            let provider_name = api_provider.display_name();
+        ProviderId::ApiKey(provider_id) => {
+            // Look up provider info from registry
+            let provider_def = RegistryService::find_provider(&provider_id)
+                .ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
+
+            let provider_name = &provider_def.name;
             tracing::info!("Using {} backend for model: {}", provider_name, model_name);
 
-            if !api_provider.is_openai_compatible() {
+            if !provider_def.is_openai_compatible {
                 return Err(format!(
                     "{} API key provider requires special handling not yet implemented",
                     provider_name
                 ));
             }
 
-            let api_key_token = auth::select_api_key(api_provider.id()).ok_or_else(|| {
+            let api_key_token = auth::select_api_key(&provider_id).ok_or_else(|| {
                 format!(
                     "{} API key required. Please add an API key in Settings.",
                     provider_name
                 )
             })?;
 
-            let client = OpenAICompatibleApiClient::new(api_provider, &api_key_token.api_key)
+            let client = OpenAICompatibleApiClient::new(&provider_id, &api_key_token.api_key)
                 .map_err(|e| format!("Failed to create {} client: {}", provider_name, e))?;
 
             // Extract the actual model ID without the provider suffix

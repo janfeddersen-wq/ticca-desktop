@@ -22,18 +22,13 @@ const CODEX_CLIENT_VERSION: &str = "0.72.0";
 
 /// Hardcoded Codex models for fallback when API fetch fails
 /// Note: /models endpoint is behind Cloudflare bot protection, so we use fallback
-/// Models based on llxprt-code and codex-rs
+/// Models based on llxprt-code and codex-rs - curated to GPT-5.x Codex models only
 const CODEX_MODELS: &[&str] = &[
     "gpt-5.1-codex-max",
     "gpt-5.1-codex",
     "gpt-5.1-codex-mini",
+    "gpt-5.2-codex",
     "gpt-5.2",
-    "gpt-5.1",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "o1-preview",
-    "o1-mini",
-    "o3-mini",
 ];
 
 // ChatGPT OAuth client ID (public, used by ChatGPT desktop apps)

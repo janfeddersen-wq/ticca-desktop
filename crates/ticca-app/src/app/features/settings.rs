@@ -8,7 +8,8 @@ use crate::messages::{Message, settings};
 use crate::views::config;
 use crate::views::config::{McpServerFormState, ProviderAuthStatus};
 use ticca_core::AgentType;
-use ticca_core::config::{ApiKeyAccount, ApiKeyProvider, OAuthAccount};
+use ticca_core::RegistryService;
+use ticca_core::config::{ApiKeyAccount, OAuthAccount};
 use ticca_core::config::models::providers;
 use ticca_core::config::{
     CompressionSettings, CompressionStrategy, ConfigService, McpServer, setting_keys,
@@ -26,10 +27,13 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) accounts_claude: Vec<OAuthAccount>,
     pub(in crate::app) accounts_gemini: Vec<OAuthAccount>,
     pub(in crate::app) accounts_chatgpt: Vec<OAuthAccount>,
-    pub(in crate::app) api_key_accounts: HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
-    pub(in crate::app) api_key_form_provider: Option<ApiKeyProvider>,
+    pub(in crate::app) api_key_accounts: HashMap<String, Vec<ApiKeyAccount>>, // keyed by provider ID
+    pub(in crate::app) api_key_form_provider: Option<String>, // provider ID
     pub(in crate::app) api_key_form_value: String,
     pub(in crate::app) api_key_form_label: String,
+    // Provider search state
+    pub(in crate::app) add_provider_search: String,
+    pub(in crate::app) add_provider_expanded: bool,
     pub(in crate::app) recent_sessions: Vec<Session>,
     pub(in crate::app) mcp_servers: Vec<McpServer>,
     pub(in crate::app) agent_mcp_server_ids: HashMap<AgentType, Vec<String>>,
@@ -51,6 +55,8 @@ impl SettingsState {
             api_key_form_provider: None,
             api_key_form_value: String::new(),
             api_key_form_label: String::new(),
+            add_provider_search: String::new(),
+            add_provider_expanded: false,
             recent_sessions: Vec::new(),
             mcp_servers: Vec::new(),
             agent_mcp_server_ids: HashMap::new(),
@@ -73,11 +79,11 @@ impl SettingsState {
 
     fn refresh_api_key_accounts(&mut self) {
         self.api_key_accounts.clear();
-        for provider in ApiKeyProvider::ALL {
+        for provider in RegistryService::api_key_providers() {
             let accounts =
-                ConfigService::list_api_key_accounts(Some(provider.id())).unwrap_or_default();
+                ConfigService::list_api_key_accounts(Some(&provider.id)).unwrap_or_default();
             if !accounts.is_empty() {
-                self.api_key_accounts.insert(*provider, accounts);
+                self.api_key_accounts.insert(provider.id.clone(), accounts);
             }
         }
     }
@@ -221,15 +227,30 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
         }
 
         // API key accounts
-        settings::Msg::StartAddApiKey(provider) => {
-            app.settings.api_key_form_provider = Some(provider);
+        settings::Msg::StartAddApiKeyById(provider_id) => {
+            app.settings.api_key_form_provider = Some(provider_id);
             app.settings.api_key_form_value = String::new();
             app.settings.api_key_form_label = String::new();
+            app.settings.add_provider_search = String::new();
+            app.settings.add_provider_expanded = false;
         }
         settings::Msg::CancelAddApiKey => {
             app.settings.api_key_form_provider = None;
             app.settings.api_key_form_value = String::new();
             app.settings.api_key_form_label = String::new();
+            app.settings.add_provider_search = String::new();
+            app.settings.add_provider_expanded = false;
+        }
+        settings::Msg::AddProviderSearchChanged(search) => {
+            app.settings.add_provider_search = search;
+            app.settings.add_provider_expanded = true;
+        }
+        settings::Msg::SelectProviderToAdd(provider_id) => {
+            app.settings.api_key_form_provider = Some(provider_id);
+            app.settings.api_key_form_value = String::new();
+            app.settings.api_key_form_label = String::new();
+            app.settings.add_provider_search = String::new();
+            app.settings.add_provider_expanded = false;
         }
         settings::Msg::ApiKeyFormChanged(value) => {
             app.settings.api_key_form_value = value;
@@ -238,7 +259,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             app.settings.api_key_form_label = value;
         }
         settings::Msg::SaveApiKey => {
-            let Some(provider) = app.settings.api_key_form_provider else {
+            let Some(ref provider_id) = app.settings.api_key_form_provider else {
                 return effects;
             };
 
@@ -255,7 +276,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 Some(label.to_string())
             };
 
-            let account = ApiKeyAccount::new(uuid::Uuid::new_v4().to_string(), provider.id(), api_key);
+            let account = ApiKeyAccount::new(uuid::Uuid::new_v4().to_string(), provider_id, api_key);
             let account = if let Some(l) = label {
                 account.with_label(l)
             } else {
@@ -268,6 +289,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                     app.settings.api_key_form_provider = None;
                     app.settings.api_key_form_value = String::new();
                     app.settings.api_key_form_label = String::new();
+                    app.settings.add_provider_search = String::new();
+                    app.settings.add_provider_expanded = false;
                     app.settings.refresh_api_key_accounts();
                 }
                 Err(e) => {
@@ -862,9 +885,11 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
         &app.settings.accounts_gemini,
         &app.settings.accounts_chatgpt,
         &app.settings.api_key_accounts,
-        app.settings.api_key_form_provider,
+        app.settings.api_key_form_provider.as_deref(),
         &app.settings.api_key_form_value,
         &app.settings.api_key_form_label,
+        &app.settings.add_provider_search,
+        app.settings.add_provider_expanded,
         app.chat.yolo_mode_enabled,
         app.expert_mode_enabled,
         &app.settings.recent_sessions,

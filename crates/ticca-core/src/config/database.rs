@@ -204,6 +204,131 @@ impl ConfigDatabase {
         Ok(changes > 0)
     }
 
+    // Discovered models CRUD (model registry cache)
+
+    /// Get a discovered model by its canonical ID
+    pub fn get_discovered_model(&self, canonical_id: &str) -> Result<Option<crate::config::models::DiscoveredModel>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT canonical_id, provider, model_id, display_name, context_length, discovered_at
+             FROM discovered_models WHERE canonical_id = ?"
+        )?;
+
+        let result = stmt.query_row(params![canonical_id], |row| {
+            Ok(crate::config::models::DiscoveredModel {
+                canonical_id: row.get(0)?,
+                provider: row.get(1)?,
+                model_id: row.get(2)?,
+                display_name: row.get(3)?,
+                context_length: row.get(4)?,
+                discovered_at: row.get(5)?,
+            })
+        });
+
+        match result {
+            Ok(model) => Ok(Some(model)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// List all discovered models, optionally filtered by provider
+    pub fn list_discovered_models(&self, provider: Option<&str>) -> Result<Vec<crate::config::models::DiscoveredModel>> {
+        fn map_model(row: &rusqlite::Row<'_>) -> rusqlite::Result<crate::config::models::DiscoveredModel> {
+            Ok(crate::config::models::DiscoveredModel {
+                canonical_id: row.get(0)?,
+                provider: row.get(1)?,
+                model_id: row.get(2)?,
+                display_name: row.get(3)?,
+                context_length: row.get(4)?,
+                discovered_at: row.get(5)?,
+            })
+        }
+
+        let mut stmt = if provider.is_some() {
+            self.conn.prepare(
+                "SELECT canonical_id, provider, model_id, display_name, context_length, discovered_at
+                 FROM discovered_models WHERE provider = ? ORDER BY model_id"
+            )?
+        } else {
+            self.conn.prepare(
+                "SELECT canonical_id, provider, model_id, display_name, context_length, discovered_at
+                 FROM discovered_models ORDER BY provider, model_id"
+            )?
+        };
+
+        let rows = if let Some(p) = provider {
+            stmt.query_map(params![p], map_model)?
+        } else {
+            stmt.query_map([], map_model)?
+        };
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Upsert a discovered model (insert or update)
+    pub fn upsert_discovered_model(&self, model: &crate::config::models::DiscoveredModel) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO discovered_models (canonical_id, provider, model_id, display_name, context_length, discovered_at)
+             VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
+             ON CONFLICT(canonical_id) DO UPDATE SET
+                provider = excluded.provider,
+                model_id = excluded.model_id,
+                display_name = excluded.display_name,
+                context_length = excluded.context_length,
+                discovered_at = excluded.discovered_at",
+            params![
+                model.canonical_id,
+                model.provider,
+                model.model_id,
+                model.display_name,
+                model.context_length,
+                model.discovered_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Batch upsert discovered models for a provider
+    pub fn upsert_discovered_models_batch(&self, models: &[crate::config::models::DiscoveredModel]) -> Result<()> {
+        for model in models {
+            self.upsert_discovered_model(model)?;
+        }
+        Ok(())
+    }
+
+    /// Delete all discovered models for a provider
+    pub fn delete_discovered_models_for_provider(&self, provider: &str) -> Result<usize> {
+        let changes = self.conn.execute(
+            "DELETE FROM discovered_models WHERE provider = ?",
+            params![provider],
+        )?;
+        Ok(changes)
+    }
+
+    /// Delete a specific discovered model by canonical ID
+    pub fn delete_discovered_model(&self, canonical_id: &str) -> Result<bool> {
+        let changes = self.conn.execute(
+            "DELETE FROM discovered_models WHERE canonical_id = ?",
+            params![canonical_id],
+        )?;
+        Ok(changes > 0)
+    }
+
+    /// Get the context length for a model by its canonical ID
+    pub fn get_model_context_length(&self, canonical_id: &str) -> Result<Option<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT context_length FROM discovered_models WHERE canonical_id = ?"
+        )?;
+
+        let result = stmt.query_row(params![canonical_id], |row| row.get(0));
+
+        match result {
+            Ok(length) => Ok(Some(length)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     // OAuth tokens CRUD
     pub fn get_oauth_token(&self, provider: &str) -> Result<Option<OAuthToken>> {
         let mut stmt = self.conn.prepare(
@@ -540,7 +665,7 @@ impl ConfigDatabase {
             self.conn.prepare(
                 "SELECT id, provider, api_key, label, is_active, priority, cooldown_until,
                         last_error, last_429_at, last_used_at, created_at, updated_at
-                 FROM api_key_accounts WHERE provider = ? ORDER BY priority DESC, updated_at DESC",
+                 FROM api_key_accounts WHERE LOWER(provider) = LOWER(?) ORDER BY priority DESC, updated_at DESC",
             )?
         } else {
             self.conn.prepare(
@@ -1047,5 +1172,90 @@ mod tests {
         db.upsert_api_key_account(&account3).unwrap();
         let all = db.list_api_key_accounts(None).unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_discovered_models_crud() {
+        use crate::config::models::DiscoveredModel;
+
+        let test = test_db();
+        let db = &test.db;
+
+        // Create models
+        let model1 = DiscoveredModel::new("claude", "claude-sonnet-4-20250514")
+            .with_context_length(200_000)
+            .with_display_name("Claude Sonnet 4");
+        let model2 = DiscoveredModel::new("openai", "gpt-4o")
+            .with_context_length(128_000);
+        let model3 = DiscoveredModel::new("claude", "claude-3-5-haiku-20241022")
+            .with_context_length(200_000);
+
+        // Upsert models
+        db.upsert_discovered_model(&model1).unwrap();
+        db.upsert_discovered_model(&model2).unwrap();
+        db.upsert_discovered_model(&model3).unwrap();
+
+        // Read by canonical ID
+        let retrieved = db.get_discovered_model("claude:claude-sonnet-4-20250514").unwrap().unwrap();
+        assert_eq!(retrieved.canonical_id, "claude:claude-sonnet-4-20250514");
+        assert_eq!(retrieved.provider, "claude");
+        assert_eq!(retrieved.model_id, "claude-sonnet-4-20250514");
+        assert_eq!(retrieved.context_length, 200_000);
+        assert_eq!(retrieved.display_name, Some("Claude Sonnet 4".to_string()));
+
+        // List all models
+        let all = db.list_discovered_models(None).unwrap();
+        assert_eq!(all.len(), 3);
+
+        // List by provider
+        let claude_models = db.list_discovered_models(Some("claude")).unwrap();
+        assert_eq!(claude_models.len(), 2);
+
+        let openai_models = db.list_discovered_models(Some("openai")).unwrap();
+        assert_eq!(openai_models.len(), 1);
+        assert_eq!(openai_models[0].model_id, "gpt-4o");
+
+        // Get context length
+        let ctx = db.get_model_context_length("claude:claude-sonnet-4-20250514").unwrap();
+        assert_eq!(ctx, Some(200_000));
+
+        let ctx = db.get_model_context_length("nonexistent:model").unwrap();
+        assert_eq!(ctx, None);
+
+        // Update existing model
+        let model1_updated = DiscoveredModel::new("claude", "claude-sonnet-4-20250514")
+            .with_context_length(250_000);
+        db.upsert_discovered_model(&model1_updated).unwrap();
+        let retrieved = db.get_discovered_model("claude:claude-sonnet-4-20250514").unwrap().unwrap();
+        assert_eq!(retrieved.context_length, 250_000);
+
+        // Delete specific model
+        assert!(db.delete_discovered_model("openai:gpt-4o").unwrap());
+        assert!(db.get_discovered_model("openai:gpt-4o").unwrap().is_none());
+
+        // Delete by provider
+        let deleted = db.delete_discovered_models_for_provider("claude").unwrap();
+        assert_eq!(deleted, 2);
+        let all = db.list_discovered_models(None).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn test_discovered_models_batch_upsert() {
+        use crate::config::models::DiscoveredModel;
+
+        let test = test_db();
+        let db = &test.db;
+
+        let models = vec![
+            DiscoveredModel::new("groq", "llama-3.1-70b").with_context_length(128_000),
+            DiscoveredModel::new("groq", "llama-3.1-8b").with_context_length(128_000),
+            DiscoveredModel::new("groq", "mixtral-8x7b").with_context_length(32_000),
+        ];
+
+        db.upsert_discovered_models_batch(&models).unwrap();
+
+        let groq_models = db.list_discovered_models(Some("groq")).unwrap();
+        assert_eq!(groq_models.len(), 3);
     }
 }

@@ -10,8 +10,10 @@ pub mod service;
 pub mod settings;
 
 pub use database::ConfigDatabase;
+#[allow(deprecated)]
+pub use models::ApiKeyProvider;
 pub use models::{
-    ApiKeyAccount, ApiKeyProvider, McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken,
+    ApiKeyAccount, DiscoveredModel, McpServer, McpTransport, ModelConfig, OAuthAccount, OAuthToken,
     Setting,
 };
 pub use paths::{

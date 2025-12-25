@@ -45,9 +45,11 @@ use crate::llm::auth as account_auth;
 // Re-export legacy Claude client for model fetching
 pub use claude::ClaudeClient;
 
-// Re-export OAuth providers for convenience
+// Re-export model service and registry types
 pub use model_service::ModelService;
-pub use provider_registry::{ProviderCapabilities, ProviderId, ProviderInfo, ProviderRegistry};
+pub use provider_registry::{
+    ModelId, ProviderCapabilities, ProviderId, ProviderInfo, ProviderRegistry,
+};
 pub use providers::{ChatGptOAuthClient, ClaudeOAuthClient, GeminiOAuthClient, OAuthProviderError};
 
 /// Get a Claude client if we have valid credentials

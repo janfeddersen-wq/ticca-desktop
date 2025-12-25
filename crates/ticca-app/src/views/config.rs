@@ -17,8 +17,9 @@ use ticca_core::external_tools::{
 };
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{ApiKeyAccount, ApiKeyProvider, CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount};
+use ticca_core::config::{ApiKeyAccount, CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount};
 use ticca_core::session::Session;
+use ticca_core::RegistryService;
 
 /// Create horizontal space that fills available width (iced 0.14 helper)
 fn horizontal_space() -> Space {
@@ -60,6 +61,21 @@ impl Default for McpServerFormState {
     }
 }
 
+/// Parameters for building the accounts section
+pub struct AccountsSectionParams<'a> {
+    pub auth_status: &'a ProviderAuthStatus,
+    pub claude_accounts: &'a [OAuthAccount],
+    pub gemini_accounts: &'a [OAuthAccount],
+    pub chatgpt_accounts: &'a [OAuthAccount],
+    pub api_key_accounts: &'a HashMap<String, Vec<ApiKeyAccount>>,
+    pub api_key_form_provider: Option<&'a str>,
+    pub api_key_form_value: &'a str,
+    pub api_key_form_label: &'a str,
+    pub add_provider_search: &'a str,
+    pub add_provider_expanded: bool,
+    pub expert_mode_enabled: bool,
+}
+
 /// Render the settings view
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
@@ -68,14 +84,16 @@ pub fn view<'a>(
     default_model: Option<&'a str>,
     agent_pinned_models: &'a HashMap<AgentType, String>,
     is_loading_models: bool,
-    auth_status: &ProviderAuthStatus,
+    auth_status: &'a ProviderAuthStatus,
     claude_accounts: &'a [OAuthAccount],
     gemini_accounts: &'a [OAuthAccount],
     chatgpt_accounts: &'a [OAuthAccount],
-    api_key_accounts: &'a HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
-    api_key_form_provider: Option<ApiKeyProvider>,
+    api_key_accounts: &'a HashMap<String, Vec<ApiKeyAccount>>,
+    api_key_form_provider: Option<&'a str>,
     api_key_form_value: &'a str,
     api_key_form_label: &'a str,
+    add_provider_search: &'a str,
+    add_provider_expanded: bool,
     yolo_mode_enabled: bool,
     expert_mode_enabled: bool,
     recent_sessions: &'a [Session],
@@ -166,7 +184,7 @@ pub fn view<'a>(
     );
     let tools_section = build_tools_section(yolo_mode_enabled, external_tools, compression);
     let sessions_section = build_sessions_section(recent_sessions);
-    let accounts_section = build_accounts_section(
+    let accounts_section = build_accounts_section(AccountsSectionParams {
         auth_status,
         claude_accounts,
         gemini_accounts,
@@ -175,8 +193,10 @@ pub fn view<'a>(
         api_key_form_provider,
         api_key_form_value,
         api_key_form_label,
+        add_provider_search,
+        add_provider_expanded,
         expert_mode_enabled,
-    );
+    });
     let mcp_servers_section =
         build_mcp_servers_section(mcp_servers, mcp_form, mcp_import_json, theme);
     let agents_section = build_agent_mcp_section(mcp_servers, agent_mcp_server_ids);
@@ -201,8 +221,11 @@ fn build_model_settings_section<'a>(
     agent_pinned_models: &'a HashMap<AgentType, String>,
     is_loading_models: bool,
 ) -> Element<'a, Message> {
-    // Create options for pick_list with "Use Default" option for agent pinning
-    let model_options: Vec<String> = available_models.to_vec();
+    // Create options for pick_list with DisplayModel wrapper for nice formatting
+    let model_options: Vec<DisplayModel> = available_models
+        .iter()
+        .map(|m| DisplayModel(m.clone()))
+        .collect();
 
     // Header with refresh button
     let header_row = row![
@@ -240,16 +263,16 @@ fn build_model_settings_section<'a>(
     let default_model_row = if available_models.is_empty() {
         row![
             text("Default Model:").size(14).width(Length::Fixed(140.0)),
-            text("No models available - authenticate with Claude first").size(14),
+            text("No models available - authenticate with a provider first").size(14),
         ]
         .spacing(10)
         .align_y(iced::Alignment::Center)
     } else {
-        let selected_default = default_model.map(|s| s.to_string());
+        let selected_default = default_model.map(|s| DisplayModel(s.to_string()));
         row![
             text("Default Model:").size(14).width(Length::Fixed(140.0)),
             pick_list(model_options.clone(), selected_default, |model| {
-                Message::Settings(settings::Msg::SetDefaultModel(model))
+                Message::Settings(settings::Msg::SetDefaultModel(model.canonical_id().to_string()))
             })
             .placeholder("Select default model...")
             .width(Length::Fixed(300.0)),
@@ -272,7 +295,7 @@ fn build_model_settings_section<'a>(
         .chain(
             available_models
                 .iter()
-                .map(|m| ModelOption::Model(m.clone())),
+                .map(|m| ModelOption::Model(DisplayModel(m.clone()))),
         )
         .collect();
 
@@ -286,7 +309,7 @@ fn build_model_settings_section<'a>(
         .align_y(iced::Alignment::Center)
     } else {
         let selected = coding_pinned
-            .map(ModelOption::Model)
+            .map(|m| ModelOption::Model(DisplayModel(m)))
             .unwrap_or(ModelOption::UseDefault);
         row![
             icon(icons::CODE).size(16),
@@ -297,7 +320,7 @@ fn build_model_settings_section<'a>(
                         Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, None))
                     }
                     ModelOption::Model(m) => {
-                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, Some(m)))
+                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, Some(m.canonical_id().to_string())))
                     }
                 }
             })
@@ -317,7 +340,7 @@ fn build_model_settings_section<'a>(
         .align_y(iced::Alignment::Center)
     } else {
         let selected = planning_pinned
-            .map(ModelOption::Model)
+            .map(|m| ModelOption::Model(DisplayModel(m)))
             .unwrap_or(ModelOption::UseDefault);
         row![
             icon(icons::CHECKLIST).size(16),
@@ -329,7 +352,7 @@ fn build_model_settings_section<'a>(
                     }
                     ModelOption::Model(m) => Message::Settings(settings::Msg::SetAgentModel(
                         AgentType::Planning,
-                        Some(m),
+                        Some(m.canonical_id().to_string()),
                     )),
                 }
             })
@@ -789,17 +812,20 @@ fn build_agent_mcp_section<'a>(
     column![help, table_card].spacing(12).into()
 }
 
-fn build_accounts_section<'a>(
-    auth_status: &ProviderAuthStatus,
-    claude_accounts: &[OAuthAccount],
-    gemini_accounts: &[OAuthAccount],
-    chatgpt_accounts: &[OAuthAccount],
-    api_key_accounts: &'a HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
-    api_key_form_provider: Option<ApiKeyProvider>,
-    api_key_form_value: &'a str,
-    api_key_form_label: &'a str,
-    expert_mode_enabled: bool,
-) -> Element<'a, Message> {
+fn build_accounts_section<'a>(params: AccountsSectionParams<'a>) -> Element<'a, Message> {
+    let AccountsSectionParams {
+        auth_status,
+        claude_accounts,
+        gemini_accounts,
+        chatgpt_accounts,
+        api_key_accounts,
+        api_key_form_provider,
+        api_key_form_value,
+        api_key_form_label,
+        add_provider_search,
+        add_provider_expanded,
+        expert_mode_enabled,
+    } = params;
     let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
         let auth_icon = if is_authenticated {
             icons::CHECK_CIRCLE
@@ -986,6 +1012,8 @@ fn build_accounts_section<'a>(
         api_key_form_provider,
         api_key_form_value,
         api_key_form_label,
+        add_provider_search,
+        add_provider_expanded,
     );
 
     column![oauth_card, api_key_section].spacing(16).into()
@@ -993,18 +1021,160 @@ fn build_accounts_section<'a>(
 
 /// Build the API key providers section
 fn build_api_key_providers_section<'a>(
-    api_key_accounts: &'a HashMap<ApiKeyProvider, Vec<ApiKeyAccount>>,
-    form_provider: Option<ApiKeyProvider>,
+    api_key_accounts: &'a HashMap<String, Vec<ApiKeyAccount>>,
+    form_provider: Option<&'a str>,
     form_value: &'a str,
     form_label: &'a str,
+    search_text: &'a str,
+    search_expanded: bool,
 ) -> Element<'a, Message> {
-    // Build provider cards
+    // Get all API key providers from registry
+    let all_providers = RegistryService::api_key_providers();
+
+    // Providers with configured accounts (sorted by name)
+    let mut configured_providers: Vec<_> = all_providers
+        .iter()
+        .filter(|p| api_key_accounts.contains_key(&p.id))
+        .collect();
+    configured_providers.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Providers without configured accounts (for the search dropdown)
+    let unconfigured_providers: Vec<_> = all_providers
+        .iter()
+        .filter(|p| !api_key_accounts.contains_key(&p.id))
+        .collect();
+
+    // Build the "Add Provider" search section
+    let add_provider_section = {
+        let search_input = text_input("Search providers to add...", search_text)
+            .on_input(|v| Message::Settings(settings::Msg::AddProviderSearchChanged(v)))
+            .width(Length::Fill);
+
+        // Filter unconfigured providers by search text
+        let search_lower = search_text.to_lowercase();
+        let filtered_providers: Vec<_> = unconfigured_providers
+            .iter()
+            .filter(|p| {
+                search_text.is_empty()
+                    || p.name.to_lowercase().contains(&search_lower)
+                    || p.id.to_lowercase().contains(&search_lower)
+            })
+            .take(8) // Limit suggestions
+            .collect();
+
+        // Build suggestion list if expanded and has results
+        let suggestions: Element<'a, Message> = if search_expanded && !search_text.is_empty() && !filtered_providers.is_empty() {
+            let suggestion_buttons: Vec<Element<'a, Message>> = filtered_providers
+                .into_iter()
+                .map(|provider| {
+                    let provider_id = provider.id.clone();
+                    button(
+                        row![
+                            text(&provider.name).size(13),
+                            horizontal_space(),
+                            text(&provider.id).size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(Color::from_rgb8(120, 120, 120)),
+                            }),
+                        ]
+                        .width(Length::Fill)
+                    )
+                    .on_press(Message::Settings(settings::Msg::SelectProviderToAdd(provider_id)))
+                    .style(styles::secondary_button)
+                    .padding([8, 12])
+                    .width(Length::Fill)
+                    .into()
+                })
+                .collect();
+
+            container(
+                Column::with_children(suggestion_buttons).spacing(2)
+            )
+            .padding(8)
+            .style(|theme: &iced::Theme| container::Style {
+                background: Some(theme.extended_palette().background.weak.color.into()),
+                border: Border {
+                    color: Color::from_rgb8(60, 60, 60),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
+        } else if search_expanded && !search_text.is_empty() && filtered_providers.is_empty() {
+            text("No matching providers found").size(12).style(|_theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb8(120, 120, 120)),
+            }).into()
+        } else {
+            column![].into()
+        };
+
+        column![
+            row![
+                icon(icons::ADD).size(16),
+                text(" Add Provider").size(14),
+            ].spacing(4),
+            search_input,
+            suggestions,
+        ]
+        .spacing(8)
+    };
+
+    // Build form section if a provider is selected for adding
+    let form_section: Option<Element<'a, Message>> = form_provider.and_then(|provider_id| {
+        let provider = RegistryService::find_provider(provider_id)?;
+        Some(
+            container(
+                column![
+                    row![
+                        text(format!("Add API Key for {}", provider.name)).size(14),
+                        horizontal_space(),
+                        button(row![icon(icons::CLOSE).size(14), text(" Cancel").size(12),].spacing(4))
+                            .on_press(Message::Settings(settings::Msg::CancelAddApiKey))
+                            .style(styles::secondary_button)
+                            .padding([6, 10]),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("API Key:").size(13).width(Length::Fixed(80.0)),
+                        text_input("Enter API key...", form_value)
+                            .on_input(|v| Message::Settings(settings::Msg::ApiKeyFormChanged(v)))
+                            .width(Length::Fill)
+                            .secure(true),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Label:").size(13).width(Length::Fixed(80.0)),
+                        text_input("Optional label...", form_label)
+                            .on_input(|v| Message::Settings(settings::Msg::ApiKeyLabelFormChanged(v)))
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        horizontal_space(),
+                        button(row![icon(icons::SAVE).size(14), text(" Save").size(12),].spacing(4))
+                            .on_press(Message::Settings(settings::Msg::SaveApiKey))
+                            .style(styles::primary_button)
+                            .padding([6, 10]),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(10),
+            )
+            .padding(12)
+            .style(styles::card_container)
+            .into()
+        )
+    });
+
+    // Build provider cards for configured providers
     let mut provider_cards: Vec<Element<'a, Message>> = Vec::new();
 
-    for provider in ApiKeyProvider::ALL {
-        let accounts = api_key_accounts.get(provider).cloned().unwrap_or_default();
-        let has_accounts = !accounts.is_empty();
-        let is_form_open = form_provider == Some(*provider);
+    for provider in configured_providers {
+        let accounts = api_key_accounts.get(&provider.id).cloned().unwrap_or_default();
+        let is_form_open = form_provider == Some(provider.id.as_str());
 
         // Provider header with Add button
         let add_button = if is_form_open {
@@ -1013,18 +1183,15 @@ fn build_api_key_providers_section<'a>(
                 .style(styles::secondary_button)
                 .padding([6, 10])
         } else {
+            let provider_id = provider.id.clone();
             button(row![icon(icons::ADD).size(14), text(" Add").size(12),].spacing(4))
-                .on_press(Message::Settings(settings::Msg::StartAddApiKey(*provider)))
-                .style(if has_accounts {
-                    styles::success_button
-                } else {
-                    styles::secondary_button
-                })
+                .on_press(Message::Settings(settings::Msg::StartAddApiKeyById(provider_id)))
+                .style(styles::success_button)
                 .padding([6, 10])
         };
 
         let header = row![
-            text(provider.display_name()).size(16),
+            text(&provider.name).size(16),
             horizontal_space(),
             add_button,
         ]
@@ -1161,11 +1328,7 @@ fn build_api_key_providers_section<'a>(
             })
             .collect();
 
-        let accounts_list: Element<'a, Message> = if account_rows.is_empty() {
-            text("No API keys configured.").size(12).into()
-        } else {
-            Column::with_children(account_rows).spacing(4).into()
-        };
+        let accounts_list: Element<'a, Message> = Column::with_children(account_rows).spacing(4).into();
 
         // Combine header, form, and accounts list
         let mut card_children: Vec<Element<'a, Message>> = vec![header.into()];
@@ -1184,35 +1347,81 @@ fn build_api_key_providers_section<'a>(
         provider_cards.push(provider_card);
     }
 
-    container(
-        column![
-            text("API Key Providers").size(18),
-            text("Configure API keys for direct API access. Multiple keys per provider enable automatic failover on rate limits.")
-                .size(12)
-                .style(|_theme: &iced::Theme| iced::widget::text::Style {
-                    color: Some(Color::from_rgb8(120, 120, 120)),
+    // Build the main content
+    let mut content_children: Vec<Element<'a, Message>> = vec![
+        text("API Key Providers").size(18).into(),
+        text("Configure API keys for direct API access. Multiple keys per provider enable automatic failover on rate limits.")
+            .size(12)
+            .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb8(120, 120, 120)),
+            })
+            .into(),
+        add_provider_section.into(),
+    ];
+
+    // Add form section if adding a new provider (not already configured)
+    if let Some(form) = form_section {
+        // Only show this form if the provider is not already in configured list
+        if let Some(provider_id) = form_provider && !api_key_accounts.contains_key(provider_id) {
+            content_children.push(form);
+        }
+    }
+
+    // Add configured provider cards
+    if !provider_cards.is_empty() {
+        content_children.push(
+            column![
+                text("Configured Providers").size(14).style(|_theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb8(150, 150, 150)),
                 }),
-            Column::with_children(provider_cards).spacing(10),
-        ]
-        .spacing(12),
+            ].into()
+        );
+        content_children.push(Column::with_children(provider_cards).spacing(10).into());
+    }
+
+    container(
+        Column::with_children(content_children).spacing(12),
     )
     .padding(20)
     .style(styles::card_container)
     .into()
 }
 
+/// Wrapper for model ID with nice display formatting
+/// Stores the canonical ID internally but displays as "model_name (Provider)"
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DisplayModel(String);
+
+impl DisplayModel {
+    /// Get the canonical ID (for sending in messages)
+    fn canonical_id(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for DisplayModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Parse canonical format and display nicely
+        if let Some(model_id) = ticca_core::llm::ModelId::parse(&self.0) {
+            write!(f, "{}", model_id.display_name())
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
+
 /// Option type for agent model picker
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ModelOption {
     UseDefault,
-    Model(String),
+    Model(DisplayModel),
 }
 
 impl std::fmt::Display for ModelOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModelOption::UseDefault => write!(f, "Use Default"),
-            ModelOption::Model(name) => write!(f, "{}", name),
+            ModelOption::Model(m) => write!(f, "{}", m),
         }
     }
 }

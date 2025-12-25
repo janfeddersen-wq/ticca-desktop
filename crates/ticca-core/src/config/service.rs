@@ -201,4 +201,20 @@ impl ConfigService {
         let new_priority = account.priority.saturating_add(delta);
         db.set_api_key_account_priority(account_id, new_priority)
     }
+
+    // Discovered models
+
+    /// List cached discovered models, optionally filtered by provider
+    pub fn list_discovered_models(
+        provider: Option<&str>,
+    ) -> Result<Vec<crate::config::models::DiscoveredModel>> {
+        let db = ConfigDatabase::open()?;
+        db.list_discovered_models(provider)
+    }
+
+    /// Get context length for a model from the cache
+    pub fn get_model_context_length(canonical_id: &str) -> Result<Option<i64>> {
+        let db = ConfigDatabase::open()?;
+        db.get_model_context_length(canonical_id)
+    }
 }

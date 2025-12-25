@@ -1,0 +1,13 @@
+{
+  "_comment": "Context window overrides. These take precedence over models.dev API data.",
+  "_format": "Use 'model_id' for all providers, or 'provider:model_id' for specific provider",
+
+  "overrides": {
+    "_comment_chatgpt": "ChatGPT OAuth Codex models limited to 270k (Plus subscription)",
+    "chatgpt:gpt-5.1-codex-max": 270000,
+    "chatgpt:gpt-5.1-codex": 270000,
+    "chatgpt:gpt-5.1-codex-mini": 270000,
+    "chatgpt:gpt-5.2-codex": 270000,
+    "chatgpt:gpt-5.2": 270000
+  }
+}

@@ -10,7 +10,7 @@
 use rig::client::{BearerAuth, CompletionClient};
 use rig::providers::openai;
 
-use crate::config::ApiKeyProvider;
+use crate::registry::RegistryService;
 
 /// Type alias for OpenAI-compatible client (using Chat Completions API)
 pub type OpenAICompatibleClient = openai::CompletionsClient;
@@ -27,7 +27,7 @@ pub type OpenAICompatibleClient = openai::CompletionsClient;
 /// use rig::agent::AgentBuilder;
 /// use rig::client::CompletionClient;
 ///
-/// let client = OpenAICompatibleApiClient::new(ApiKeyProvider::Cerebras, "sk-...")?;
+/// let client = OpenAICompatibleApiClient::new("cerebras", "sk-...")?;
 /// let model = client.completion_model("llama3-70b");
 /// let agent = AgentBuilder::new(model)
 ///     .preamble("You are a helpful assistant")
@@ -37,19 +37,26 @@ pub struct OpenAICompatibleApiClient {
     /// The underlying rig OpenAI client (Chat Completions API)
     inner: OpenAICompatibleClient,
 
-    /// The provider being used
-    provider: ApiKeyProvider,
+    /// The provider ID being used
+    provider_id: String,
+
+    /// The provider display name
+    provider_name: String,
 }
 
 impl OpenAICompatibleApiClient {
     /// Create a new OpenAI-compatible API client
-    pub fn new(provider: ApiKeyProvider, api_key: &str) -> Result<Self, String> {
-        let base_url = provider.base_url();
+    pub fn new(provider_id: &str, api_key: &str) -> Result<Self, String> {
+        // Look up provider info from registry
+        let provider_def = RegistryService::find_provider(provider_id)
+            .ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
+
+        let base_url = &provider_def.api_base_url;
         let auth: BearerAuth = api_key.into();
 
         tracing::info!(
             "Creating {} client with base_url: {} (using Chat Completions API)",
-            provider.display_name(),
+            provider_def.name,
             base_url
         );
 
@@ -59,10 +66,14 @@ impl OpenAICompatibleApiClient {
             .api_key(auth)
             .base_url(base_url)
             .build()
-            .map_err(|e| format!("Failed to create {} client: {}", provider.display_name(), e))?
+            .map_err(|e| format!("Failed to create {} client: {}", provider_def.name, e))?
             .completions_api();
 
-        Ok(Self { inner, provider })
+        Ok(Self {
+            inner,
+            provider_id: provider_id.to_string(),
+            provider_name: provider_def.name.clone(),
+        })
     }
 
     /// Get the underlying rig OpenAI client
@@ -80,14 +91,14 @@ impl OpenAICompatibleApiClient {
         self.inner.completion_model(model)
     }
 
-    /// Get the provider
-    pub fn provider(&self) -> ApiKeyProvider {
-        self.provider
+    /// Get the provider ID
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
     }
 
     /// Get the provider display name
-    pub fn provider_name(&self) -> &'static str {
-        self.provider.display_name()
+    pub fn provider_name(&self) -> &str {
+        &self.provider_name
     }
 }
 
@@ -98,11 +109,11 @@ mod tests {
     #[test]
     fn test_client_creation() {
         // Test that client can be created (will fail network calls but struct should build)
-        let result = OpenAICompatibleApiClient::new(ApiKeyProvider::Cerebras, "test-key");
+        let result = OpenAICompatibleApiClient::new("cerebras", "test-key");
         assert!(result.is_ok());
 
         let client = result.unwrap();
-        assert_eq!(client.provider(), ApiKeyProvider::Cerebras);
+        assert_eq!(client.provider_id(), "cerebras");
         assert_eq!(client.provider_name(), "Cerebras");
     }
 }

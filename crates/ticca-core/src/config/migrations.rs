@@ -98,6 +98,24 @@ pub fn run_config_migrations(conn: &Connection) -> Result<()> {
         [],
     )?;
 
+    // Create discovered_models table for caching fetched models
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS discovered_models (
+            canonical_id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            display_name TEXT,
+            context_length INTEGER DEFAULT 128000,
+            discovered_at TEXT DEFAULT (datetime('now'))
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_discovered_models_provider ON discovered_models(provider)",
+        [],
+    )?;
+
     // Create MCP server tables
     conn.execute(
         "CREATE TABLE IF NOT EXISTS mcp_servers (

@@ -92,6 +92,7 @@ pub fn view<'a>(
     flow_panel_visible: bool,
     tokens_used: i64,
     context_limit: i64,
+    supports_vision: bool,
 ) -> Element<'a, Message> {
     let agent_selector: Element<Message> = if expert_mode_enabled {
         let buttons: Vec<Element<Message>> = AgentType::all()
@@ -337,14 +338,24 @@ pub fn view<'a>(
     };
 
     // Input area
+    let image_button_tooltip = if supports_vision {
+        "Attach image"
+    } else {
+        "Current model doesn't support images"
+    };
     let mut input_row = row![
         // Add image button (works on Wayland via xdg-portal)
+        // Disabled when current model doesn't support vision
         styled_tooltip(
             button(icon(icons::ATTACH_FILE).size(20))
-                .on_press(Message::Chat(chat::Msg::SelectImageFile))
+                .on_press_maybe(if supports_vision {
+                    Some(Message::Chat(chat::Msg::SelectImageFile))
+                } else {
+                    None
+                })
                 .style(styles::icon_button)
                 .padding([8, 8]),
-            "Attach image",
+            image_button_tooltip,
             tooltip::Position::Top,
         ),
     ]

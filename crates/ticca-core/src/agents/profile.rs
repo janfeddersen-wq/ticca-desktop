@@ -53,12 +53,12 @@ impl AccountSelectionPolicy {
 
     pub fn pick_provider<F>(&self, mut is_available: F) -> Option<ProviderId>
     where
-        F: FnMut(ProviderId) -> bool,
+        F: FnMut(&ProviderId) -> bool,
     {
         self.provider_order
             .iter()
-            .copied()
-            .find(|provider| is_available(*provider))
+            .find(|provider| is_available(provider))
+            .cloned()
     }
 }
 
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn account_policy_prefers_first_available() {
         let policy = AccountSelectionPolicy::for_agent(AgentType::Coding);
-        let picked = policy.pick_provider(|provider| provider == ProviderId::ChatGpt);
+        let picked = policy.pick_provider(|provider| *provider == ProviderId::ChatGpt);
         assert_eq!(picked, Some(ProviderId::ChatGpt));
     }
 }

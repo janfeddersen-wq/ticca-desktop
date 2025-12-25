@@ -1,9 +1,17 @@
-//! Model discovery and aggregation across providers
+//! Model discovery, aggregation, and persistence across providers
+//!
+//! This module provides:
+//! - Model discovery from all configured providers (OAuth and API key)
+//! - Persistence of discovered models to config.db
+//! - Filtering of models based on available providers
+//! - Context length tracking for each model
 
-use crate::config::ApiKeyProvider;
+use crate::config::models::DiscoveredModel;
+use crate::config::ConfigDatabase;
 use crate::llm::ClaudeClient;
 use crate::llm::auth;
-use crate::llm::provider_registry::ProviderId;
+use crate::llm::provider_registry::{ModelId, ProviderId};
+use crate::registry::RegistryService;
 use serde::Deserialize;
 use ticca_oauth::{ChatGptOAuth, GeminiOAuth};
 
@@ -12,12 +20,14 @@ pub struct ModelService;
 /// Response from OpenAI-compatible /models endpoint
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
-    data: Vec<ModelInfo>,
+    data: Vec<OpenAIModelInfo>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ModelInfo {
+struct OpenAIModelInfo {
     id: String,
+    #[serde(default)]
+    context_window: Option<i64>,
 }
 
 impl ModelService {
@@ -25,8 +35,8 @@ impl ModelService {
     async fn fetch_openai_compatible_models(
         base_url: &str,
         api_key: &str,
-        provider_name: &str,
-    ) -> Result<Vec<String>, String> {
+        provider_id: &str,
+    ) -> Result<Vec<DiscoveredModel>, String> {
         let client = reqwest::Client::new();
         let url = format!("{}/models", base_url.trim_end_matches('/'));
 
@@ -35,23 +45,19 @@ impl ModelService {
             .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch {} models: {}", provider_name, e))?;
+            .map_err(|e| format!("Failed to fetch models: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(format!(
-                "Failed to fetch {} models: HTTP {}",
-                provider_name,
-                response.status()
-            ));
+            return Err(format!("Failed to fetch models: HTTP {}", response.status()));
         }
 
         let models_response: ModelsResponse = response
             .json()
             .await
-            .map_err(|e| format!("Failed to parse {} models response: {}", provider_name, e))?;
+            .map_err(|e| format!("Failed to parse models response: {}", e))?;
 
         // Filter to only include text/chat models (exclude embedding, audio, etc.)
-        let models: Vec<String> = models_response
+        let models: Vec<DiscoveredModel> = models_response
             .data
             .into_iter()
             .filter(|m| {
@@ -63,21 +69,39 @@ impl ModelService {
                     && !id.contains("dall-e")
                     && !id.contains("moderation")
             })
-            .map(|m| format!("{} - {}", m.id, provider_name))
+            .map(|m| {
+                let context_length = m.context_window
+                    .unwrap_or_else(|| crate::compression::get_model_context_window(&m.id) as i64);
+                DiscoveredModel::new(provider_id, &m.id)
+                    .with_context_length(context_length)
+            })
             .collect();
 
         Ok(models)
     }
 
+    /// Fetch all models from all available providers and persist to database
     pub async fn fetch_all() -> Result<Vec<String>, String> {
-        let mut all_models: Vec<String> = Vec::new();
+        let models = Self::fetch_all_discovered().await?;
+        Ok(models.into_iter().map(|m| m.canonical_id).collect())
+    }
+
+    /// Fetch all models from all available providers as DiscoveredModel
+    pub async fn fetch_all_discovered() -> Result<Vec<DiscoveredModel>, String> {
+        let mut all_models: Vec<DiscoveredModel> = Vec::new();
 
         // Fetch from OAuth providers
         if let Some(token) = auth::select_token(crate::config::models::providers::CLAUDE) {
             let client = ClaudeClient::new(token.access_token);
             if let Ok(models) = client.fetch_latest_models().await {
-                // Add provider suffix for OAuth Claude models
-                all_models.extend(models.into_iter().map(|m| format!("{} - Claude (OAuth)", m)));
+                let discovered: Vec<DiscoveredModel> = models
+                    .into_iter()
+                    .map(|m| {
+                        let context_length = crate::compression::get_model_context_window(&m) as i64;
+                        DiscoveredModel::new("claude", &m).with_context_length(context_length)
+                    })
+                    .collect();
+                all_models.extend(discovered);
             }
         }
 
@@ -85,19 +109,22 @@ impl ModelService {
             let oauth = GeminiOAuth::new();
             match oauth.fetch_models(&token.access_token, None).await {
                 Ok(models) => {
-                    all_models.extend(
-                        models
-                            .into_iter()
-                            .map(|m| format!("{} - Gemini (OAuth)", m.name)),
-                    );
+                    let discovered: Vec<DiscoveredModel> = models
+                        .into_iter()
+                        .map(|m| {
+                            let context_length = m.input_token_limit.unwrap_or(
+                                crate::compression::get_model_context_window(&m.name)
+                            ) as i64;
+                            DiscoveredModel::new("gemini", &m.name)
+                                .with_context_length(context_length)
+                        })
+                        .collect();
+                    all_models.extend(discovered);
                 }
                 Err(e) => {
                     tracing::warn!("Could not fetch Gemini models: {}", e);
-                    all_models.extend(vec![
-                        "gemini-2.0-flash-exp - Gemini (OAuth)".to_string(),
-                        "gemini-1.5-pro - Gemini (OAuth)".to_string(),
-                        "gemini-1.5-flash - Gemini (OAuth)".to_string(),
-                    ]);
+                    // Use default fallback models
+                    all_models.extend(Self::default_gemini_models());
                 }
             }
         }
@@ -109,47 +136,45 @@ impl ModelService {
                 .await
             {
                 Ok(models) => {
-                    all_models.extend(
-                        models
-                            .into_iter()
-                            .map(|m| format!("{} - ChatGPT (OAuth)", m.id)),
-                    );
+                    let discovered: Vec<DiscoveredModel> = models
+                        .into_iter()
+                        .map(|m| {
+                            let context_length = crate::compression::get_model_context_window(&m.id) as i64;
+                            DiscoveredModel::new("chatgpt", &m.id)
+                                .with_context_length(context_length)
+                        })
+                        .collect();
+                    all_models.extend(discovered);
                 }
                 Err(e) => {
                     tracing::warn!("Could not fetch ChatGPT models: {}", e);
-                    all_models.extend(vec![
-                        "gpt-4o - ChatGPT (OAuth)".to_string(),
-                        "gpt-4o-mini - ChatGPT (OAuth)".to_string(),
-                        "o1-preview - ChatGPT (OAuth)".to_string(),
-                    ]);
+                    all_models.extend(Self::default_chatgpt_models());
                 }
             }
         }
 
-        // Fetch from API key providers
-        for provider in ApiKeyProvider::ALL {
-            if let Some(api_key_token) = auth::select_api_key(provider.id()) {
-                let provider_name = provider.display_name();
-
+        // Fetch from API key providers (using registry)
+        for provider in RegistryService::api_key_providers() {
+            let has_key = auth::select_api_key(&provider.id);
+            tracing::debug!(
+                "Checking provider {}: has_api_key={}",
+                provider.id,
+                has_key.is_some()
+            );
+            if let Some(api_key_token) = has_key {
                 // Skip providers with non-standard APIs
-                if !provider.is_openai_compatible() {
-                    // For Anthropic, use their specific API
-                    if *provider == ApiKeyProvider::Anthropic {
-                        // Anthropic doesn't have a /models endpoint, use known models
-                        all_models.extend(vec![
-                            format!("claude-sonnet-4-20250514 - {}", provider_name),
-                            format!("claude-3-5-sonnet-20241022 - {}", provider_name),
-                            format!("claude-3-5-haiku-20241022 - {}", provider_name),
-                            format!("claude-3-opus-20240229 - {}", provider_name),
-                        ]);
+                if !provider.is_openai_compatible {
+                    // For Anthropic, use known models
+                    if provider.id == "anthropic" {
+                        all_models.extend(Self::default_anthropic_models(&provider.id));
                     }
                     continue;
                 }
 
                 match Self::fetch_openai_compatible_models(
-                    provider.base_url(),
+                    &provider.api_base_url,
                     &api_key_token.api_key,
-                    provider_name,
+                    &provider.id,
                 )
                 .await
                 {
@@ -157,49 +182,69 @@ impl ModelService {
                         tracing::info!(
                             "Fetched {} models from {}",
                             models.len(),
-                            provider_name
+                            provider.name
                         );
                         all_models.extend(models);
                     }
                     Err(e) => {
-                        tracing::warn!("Could not fetch {} models: {}", provider_name, e);
+                        tracing::warn!("Could not fetch {} models: {}", provider.name, e);
                     }
                 }
             }
         }
 
         if all_models.is_empty() {
-            Err("No models found from any provider".to_string())
-        } else {
-            Ok(all_models)
+            return Err("No models found from any provider".to_string());
         }
+
+        // Persist to database
+        if let Err(e) = Self::persist_models(&all_models) {
+            tracing::warn!("Failed to persist discovered models: {}", e);
+        }
+
+        Ok(all_models)
     }
 
+    /// Fetch models for a specific provider
     pub async fn fetch_for(provider: ProviderId) -> Result<Vec<String>, String> {
-        match provider {
+        let models = Self::fetch_for_discovered(provider).await?;
+        Ok(models.into_iter().map(|m| m.canonical_id).collect())
+    }
+
+    /// Fetch models for a specific provider as DiscoveredModel
+    pub async fn fetch_for_discovered(provider: ProviderId) -> Result<Vec<DiscoveredModel>, String> {
+        let models = match provider {
             ProviderId::Claude => {
                 let token = auth::select_token(crate::config::models::providers::CLAUDE)
                     .ok_or_else(|| "Claude authentication required".to_string())?;
                 let client = ClaudeClient::new(token.access_token);
-                client
-                    .fetch_latest_models()
-                    .await
-                    .map_err(|e| e.to_string())
+                let model_names = client.fetch_latest_models().await.map_err(|e| e.to_string())?;
+                model_names
+                    .into_iter()
+                    .map(|m| {
+                        let context_length = crate::compression::get_model_context_window(&m) as i64;
+                        DiscoveredModel::new("claude", &m).with_context_length(context_length)
+                    })
+                    .collect()
             }
             ProviderId::Gemini => {
                 let token = auth::select_token(crate::config::models::providers::GEMINI)
                     .ok_or_else(|| "Gemini authentication required".to_string())?;
                 let oauth = GeminiOAuth::new();
                 match oauth.fetch_models(&token.access_token, None).await {
-                    Ok(models) => Ok(models.into_iter().map(|m| m.name).collect()),
+                    Ok(models) => models
+                        .into_iter()
+                        .map(|m| {
+                            let context_length = m.input_token_limit.unwrap_or(
+                                crate::compression::get_model_context_window(&m.name)
+                            ) as i64;
+                            DiscoveredModel::new("gemini", &m.name)
+                                .with_context_length(context_length)
+                        })
+                        .collect(),
                     Err(e) => {
                         tracing::warn!("Could not fetch Gemini models ({}), using defaults", e);
-                        Ok(vec![
-                            "gemini-2.0-flash-exp".to_string(),
-                            "gemini-1.5-pro".to_string(),
-                            "gemini-1.5-flash".to_string(),
-                            "gemini-1.0-pro".to_string(),
-                        ])
+                        Self::default_gemini_models()
                     }
                 }
             }
@@ -211,43 +256,157 @@ impl ModelService {
                     .fetch_models(&token.access_token, token.id_token.as_deref())
                     .await
                 {
-                    Ok(models) => Ok(models.into_iter().map(|m| m.id).collect()),
+                    Ok(models) => models
+                        .into_iter()
+                        .map(|m| {
+                            let context_length = crate::compression::get_model_context_window(&m.id) as i64;
+                            DiscoveredModel::new("chatgpt", &m.id)
+                                .with_context_length(context_length)
+                        })
+                        .collect(),
                     Err(e) => {
                         tracing::warn!("Could not fetch ChatGPT models ({}), using defaults", e);
-                        Ok(vec![
-                            "gpt-4o".to_string(),
-                            "gpt-4o-mini".to_string(),
-                            "gpt-4-turbo".to_string(),
-                            "gpt-4".to_string(),
-                            "gpt-3.5-turbo".to_string(),
-                            "o1-preview".to_string(),
-                            "o1-mini".to_string(),
-                        ])
+                        Self::default_chatgpt_models()
                     }
                 }
             }
-            ProviderId::ApiKey(api_provider) => {
-                let api_key_token = auth::select_api_key(api_provider.id())
-                    .ok_or_else(|| format!("{} API key required", api_provider.display_name()))?;
+            ProviderId::ApiKey(provider_id) => {
+                let api_key_token = auth::select_api_key(&provider_id)
+                    .ok_or_else(|| format!("{} API key required", provider_id))?;
 
-                if api_provider.is_openai_compatible() {
+                // Look up provider info from registry
+                let provider_def = RegistryService::find_provider(&provider_id)
+                    .ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
+
+                if provider_def.is_openai_compatible {
                     Self::fetch_openai_compatible_models(
-                        api_provider.base_url(),
+                        &provider_def.api_base_url,
                         &api_key_token.api_key,
-                        api_provider.display_name(),
+                        &provider_id,
                     )
-                    .await
-                } else if api_provider == ApiKeyProvider::Anthropic {
-                    Ok(vec![
-                        format!("claude-sonnet-4-20250514 - {}", api_provider.display_name()),
-                        format!("claude-3-5-sonnet-20241022 - {}", api_provider.display_name()),
-                        format!("claude-3-5-haiku-20241022 - {}", api_provider.display_name()),
-                        format!("claude-3-opus-20240229 - {}", api_provider.display_name()),
-                    ])
+                    .await?
+                } else if provider_id == "anthropic" {
+                    Self::default_anthropic_models(&provider_id)
                 } else {
-                    Err(format!("{} does not support model listing", api_provider.display_name()))
+                    return Err(format!("{} does not support model listing", provider_def.name));
                 }
             }
+        };
+
+        // Persist to database
+        if let Err(e) = Self::persist_models(&models) {
+            tracing::warn!("Failed to persist discovered models: {}", e);
         }
+
+        Ok(models)
     }
+
+    /// Get cached models from the database, filtered by available providers
+    pub fn get_cached_models() -> Result<Vec<DiscoveredModel>, String> {
+        let db = ConfigDatabase::open().map_err(|e| e.to_string())?;
+        let all_models = db.list_discovered_models(None).map_err(|e| e.to_string())?;
+
+        // Filter by available providers
+        let available = auth::available_provider_ids();
+        let filtered: Vec<DiscoveredModel> = all_models
+            .into_iter()
+            .filter(|m| available.contains(&m.provider))
+            .collect();
+
+        Ok(filtered)
+    }
+
+    /// Get cached canonical model IDs, filtered by available providers
+    pub fn get_cached_model_ids() -> Result<Vec<String>, String> {
+        let models = Self::get_cached_models()?;
+        Ok(models.into_iter().map(|m| m.canonical_id).collect())
+    }
+
+    /// Look up context length for a model (from cache or fallback)
+    pub fn get_context_length(model_id: &str) -> i64 {
+        // Try to get from database first
+        if let Ok(db) = ConfigDatabase::open() {
+            // Handle both canonical format and just model name
+            let canonical_id = if model_id.contains(':') {
+                model_id.to_string()
+            } else if let Some(parsed) = ModelId::parse(model_id) {
+                parsed.canonical()
+            } else {
+                model_id.to_string()
+            };
+
+            if let Ok(Some(length)) = db.get_model_context_length(&canonical_id) {
+                return length;
+            }
+        }
+
+        // Fallback to hardcoded values
+        crate::compression::get_model_context_window(model_id) as i64
+    }
+
+    /// Persist models to the database
+    fn persist_models(models: &[DiscoveredModel]) -> Result<(), String> {
+        let db = ConfigDatabase::open().map_err(|e| e.to_string())?;
+        db.upsert_discovered_models_batch(models).map_err(|e| e.to_string())?;
+        tracing::debug!("Persisted {} discovered models to database", models.len());
+        Ok(())
+    }
+
+    // Default fallback models
+
+    fn default_gemini_models() -> Vec<DiscoveredModel> {
+        vec![
+            DiscoveredModel::new("gemini", "gemini-2.0-flash-exp").with_context_length(1_000_000),
+            DiscoveredModel::new("gemini", "gemini-1.5-pro").with_context_length(1_000_000),
+            DiscoveredModel::new("gemini", "gemini-1.5-flash").with_context_length(1_000_000),
+        ]
+    }
+
+    fn default_chatgpt_models() -> Vec<DiscoveredModel> {
+        // ChatGPT OAuth Codex models - curated to GPT-5.x Codex models only
+        // Limited to 270k context for Plus subscription
+        vec![
+            DiscoveredModel::new("chatgpt", "gpt-5.1-codex-max").with_context_length(270_000),
+            DiscoveredModel::new("chatgpt", "gpt-5.1-codex").with_context_length(270_000),
+            DiscoveredModel::new("chatgpt", "gpt-5.1-codex-mini").with_context_length(270_000),
+            DiscoveredModel::new("chatgpt", "gpt-5.2-codex").with_context_length(270_000),
+            DiscoveredModel::new("chatgpt", "gpt-5.2").with_context_length(270_000),
+        ]
+    }
+
+    fn default_anthropic_models(provider_id: &str) -> Vec<DiscoveredModel> {
+        vec![
+            DiscoveredModel::new(provider_id, "claude-sonnet-4-20250514").with_context_length(200_000),
+            DiscoveredModel::new(provider_id, "claude-3-5-sonnet-20241022").with_context_length(200_000),
+            DiscoveredModel::new(provider_id, "claude-3-5-haiku-20241022").with_context_length(200_000),
+            DiscoveredModel::new(provider_id, "claude-3-opus-20240229").with_context_length(200_000),
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_id_parsing() {
+        // Canonical format
+        let id = ModelId::parse("openai:gpt-4o").unwrap();
+        assert_eq!(id.provider, "openai");
+        assert_eq!(id.model, "gpt-4o");
+
+        // Legacy format
+        let id = ModelId::parse("gpt-4o - OpenAI").unwrap();
+        assert_eq!(id.provider, "openai");
+        assert_eq!(id.model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_discovered_model_canonical_id() {
+        let model = DiscoveredModel::new("openai", "gpt-4o");
+        assert_eq!(model.canonical_id, "openai:gpt-4o");
+        assert_eq!(model.provider, "openai");
+        assert_eq!(model.model_id, "gpt-4o");
+    }
+
 }
