@@ -110,6 +110,8 @@ pub fn run_rig_agent_stream(
         .map(|msg| ChatHistoryMessage {
             role: msg.role,
             content: msg.content,
+            reasoning: msg.reasoning,
+            reasoning_signature: msg.reasoning_signature,
         })
         .collect();
 

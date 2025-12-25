@@ -36,6 +36,7 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
                 is_streaming: false,
                 author_label: None,
                 reasoning: None,
+                reasoning_signature: None,
                 parsed_items,
                 last_was_tool_call: false,
             }

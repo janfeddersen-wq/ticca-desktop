@@ -12,6 +12,8 @@ pub struct ChatMessage {
     pub author_label: Option<String>,
     /// Reasoning/thinking content (collapsible)
     pub reasoning: Option<String>,
+    /// Signature for reasoning content (required by Claude for verification)
+    pub reasoning_signature: Option<String>,
     /// Parsed markdown items (cached for rendering)
     pub parsed_items: Vec<markdown::Item>,
     /// Track if last content added was a tool call (for formatting)
@@ -28,6 +30,7 @@ impl ChatMessage {
             is_streaming: false,
             author_label: None,
             reasoning: None,
+            reasoning_signature: None,
             parsed_items,
             last_was_tool_call: false,
         }
@@ -42,6 +45,7 @@ impl ChatMessage {
             is_streaming: false,
             author_label: None,
             reasoning: None,
+            reasoning_signature: None,
             parsed_items,
             last_was_tool_call: false,
         }
@@ -54,6 +58,7 @@ impl ChatMessage {
             is_streaming: true,
             author_label: None,
             reasoning: None,
+            reasoning_signature: None,
             parsed_items: Vec::new(),
             last_was_tool_call: false,
         }
@@ -66,6 +71,7 @@ impl ChatMessage {
             is_streaming: true,
             author_label: Some(label.into()),
             reasoning: None,
+            reasoning_signature: None,
             parsed_items: Vec::new(),
             last_was_tool_call: false,
         }
@@ -81,6 +87,7 @@ impl ChatMessage {
             is_streaming: false,
             author_label: None,
             reasoning: None,
+            reasoning_signature: None,
             parsed_items,
             last_was_tool_call: false,
         }

@@ -75,6 +75,10 @@ const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ChatHistoryMessage {
     pub role: MessageRole,
     pub content: String,
+    /// Reasoning/thinking content for interleaved thinking support
+    pub reasoning: Option<String>,
+    /// Signature for reasoning content (required by Claude for verification)
+    pub reasoning_signature: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -193,6 +197,9 @@ async fn resolve_model_name(model_name: Option<String>) -> Result<String, String
 }
 
 /// Build chat history from stored messages.
+///
+/// For assistant messages with reasoning, creates multi-content messages
+/// to support interleaved thinking (Claude) and thought blocks (Gemini).
 fn build_chat_history(chat_history: Vec<ChatHistoryMessage>) -> Vec<rig::message::Message> {
     use rig::message::Message as RigMessage;
 
@@ -200,10 +207,47 @@ fn build_chat_history(chat_history: Vec<ChatHistoryMessage>) -> Vec<rig::message
         .into_iter()
         .filter_map(|msg| match msg.role {
             MessageRole::User => Some(RigMessage::user(&msg.content)),
-            MessageRole::Assistant => Some(RigMessage::assistant(&msg.content)),
+            MessageRole::Assistant => Some(build_assistant_message_with_reasoning(
+                &msg.content,
+                msg.reasoning.as_deref(),
+                msg.reasoning_signature.as_deref(),
+            )),
             _ => None,
         })
         .collect()
+}
+
+/// Build an assistant message with optional reasoning content.
+///
+/// For interleaved thinking support, reasoning is included as a separate
+/// content block before the text content. The signature is preserved for
+/// Claude's thinking verification.
+fn build_assistant_message_with_reasoning(
+    text: &str,
+    reasoning: Option<&str>,
+    signature: Option<&str>,
+) -> rig::message::Message {
+    use rig::message::{AssistantContent, Message as RigMessage, Reasoning};
+    use rig::one_or_many::OneOrMany;
+
+    match reasoning {
+        Some(reasoning) if !reasoning.is_empty() => {
+            // Create message with both reasoning and text content
+            let mut contents = Vec::new();
+            // Include signature for Claude's thinking verification
+            let reasoning_content = Reasoning::new(reasoning)
+                .with_signature(signature.map(String::from));
+            contents.push(AssistantContent::Reasoning(reasoning_content));
+            if !text.is_empty() {
+                contents.push(AssistantContent::text(text));
+            }
+            // OneOrMany::many returns Result, fall back to text-only if it fails
+            OneOrMany::many(contents)
+                .map(|content| RigMessage::Assistant { id: None, content })
+                .unwrap_or_else(|_| RigMessage::assistant(text))
+        }
+        _ => RigMessage::assistant(text),
+    }
 }
 
 /// Build user message with optional images.
@@ -964,6 +1008,8 @@ where
             .await;
 
         let mut collected_pass = String::new();
+        let mut collected_reasoning = String::new();
+        let mut collected_signature: Option<String> = None;
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
@@ -984,10 +1030,18 @@ where
                     StreamedAssistantContent::Reasoning(reasoning),
                 )) => {
                     let text = reasoning.reasoning.join("");
-                    if !text.is_empty()
-                        && let Some(tx) = &parent_context.agent_stream_tx
-                    {
-                        let _ = tx.send(AgentStreamEvent::Reasoning { node_id, text });
+                    if !text.is_empty() {
+                        collected_reasoning.push_str(&text);
+                        // Preserve signature for Claude's thinking verification
+                        if collected_signature.is_none() {
+                            collected_signature = reasoning.signature.clone();
+                        }
+                        if let Some(tx) = &parent_context.agent_stream_tx {
+                            let _ = tx.send(AgentStreamEvent::Reasoning {
+                                node_id,
+                                text,
+                            });
+                        }
                     }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
@@ -1018,9 +1072,18 @@ where
             }
         }
 
-        if !collected_pass.is_empty() {
+        if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
             collected_all.push_str(&collected_pass);
-            history.push(RigMessage::assistant(&collected_pass));
+            let reasoning_opt = if collected_reasoning.is_empty() {
+                None
+            } else {
+                Some(collected_reasoning.as_str())
+            };
+            history.push(build_assistant_message_with_reasoning(
+                &collected_pass,
+                reasoning_opt,
+                collected_signature.as_deref(),
+            ));
         }
 
         let todo_ok = match &parent_context.todo_store {
@@ -1246,6 +1309,8 @@ async fn run_agent_stream(
                     .await;
 
                 let mut collected_pass = String::new();
+                let mut collected_reasoning = String::new();
+                let mut collected_signature: Option<String> = None;
                 let mut chunk_count = 0u32;
                 while let Some(chunk_result) = stream.next().await {
                     chunk_count += 1;
@@ -1276,6 +1341,10 @@ async fn run_agent_stream(
                         )) => {
                             let text = reasoning.reasoning.join("");
                             if !text.is_empty() {
+                                collected_reasoning.push_str(&text);
+                                if collected_signature.is_none() {
+                                    collected_signature = reasoning.signature.clone();
+                                }
                                 tracing::debug!(
                                     "ChatGPT reasoning chunk #{}: {} chars",
                                     chunk_count,
@@ -1339,8 +1408,17 @@ async fn run_agent_stream(
                     }
                 }
 
-                if !collected_pass.is_empty() {
-                    history.push(RigMessage::assistant(&collected_pass));
+                if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
+                    let reasoning_opt = if collected_reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(collected_reasoning.as_str())
+                    };
+                    history.push(build_assistant_message_with_reasoning(
+                        &collected_pass,
+                        reasoning_opt,
+                        collected_signature.as_deref(),
+                    ));
                 }
 
                 let todo_ok = match &tool_context.todo_store {
@@ -1441,6 +1519,8 @@ async fn run_agent_stream(
                     .await;
 
                 let mut collected_pass = String::new();
+                let mut collected_reasoning = String::new();
+                let mut collected_signature: Option<String> = None;
                 let mut chunk_count = 0u32;
                 while let Some(chunk_result) = stream.next().await {
                     chunk_count += 1;
@@ -1471,6 +1551,10 @@ async fn run_agent_stream(
                         )) => {
                             let text = reasoning.reasoning.join("");
                             if !text.is_empty() {
+                                collected_reasoning.push_str(&text);
+                                if collected_signature.is_none() {
+                                    collected_signature = reasoning.signature.clone();
+                                }
                                 tracing::debug!(
                                     "Gemini reasoning chunk #{}: {} chars",
                                     chunk_count,
@@ -1534,8 +1618,17 @@ async fn run_agent_stream(
                     }
                 }
 
-                if !collected_pass.is_empty() {
-                    history.push(RigMessage::assistant(&collected_pass));
+                if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
+                    let reasoning_opt = if collected_reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(collected_reasoning.as_str())
+                    };
+                    history.push(build_assistant_message_with_reasoning(
+                        &collected_pass,
+                        reasoning_opt,
+                        collected_signature.as_deref(),
+                    ));
                 }
 
                 let todo_ok = match &tool_context.todo_store {
@@ -1638,6 +1731,8 @@ async fn run_agent_stream(
                     .await;
 
                 let mut collected_pass = String::new();
+                let mut collected_reasoning = String::new();
+                let mut collected_signature: Option<String> = None;
                 let mut chunk_count = 0u32;
                 while let Some(chunk_result) = stream.next().await {
                     chunk_count += 1;
@@ -1668,6 +1763,10 @@ async fn run_agent_stream(
                         )) => {
                             let text = reasoning.reasoning.join("");
                             if !text.is_empty() {
+                                collected_reasoning.push_str(&text);
+                                if collected_signature.is_none() {
+                                    collected_signature = reasoning.signature.clone();
+                                }
                                 tracing::debug!(
                                     "Claude reasoning chunk #{}: {} chars",
                                     chunk_count,
@@ -1744,8 +1843,17 @@ async fn run_agent_stream(
                     }
                 }
 
-                if !collected_pass.is_empty() {
-                    history.push(RigMessage::assistant(&collected_pass));
+                if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
+                    let reasoning_opt = if collected_reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(collected_reasoning.as_str())
+                    };
+                    history.push(build_assistant_message_with_reasoning(
+                        &collected_pass,
+                        reasoning_opt,
+                        collected_signature.as_deref(),
+                    ));
                 }
 
                 let todo_ok = match &tool_context.todo_store {
@@ -1866,6 +1974,8 @@ async fn run_agent_stream(
                     .await;
 
                 let mut collected_pass = String::new();
+                let mut collected_reasoning = String::new();
+                let mut collected_signature: Option<String> = None;
                 let mut chunk_count = 0u32;
                 while let Some(chunk_result) = stream.next().await {
                     chunk_count += 1;
@@ -1897,6 +2007,10 @@ async fn run_agent_stream(
                         )) => {
                             let text = reasoning.reasoning.join("");
                             if !text.is_empty() {
+                                collected_reasoning.push_str(&text);
+                                if collected_signature.is_none() {
+                                    collected_signature = reasoning.signature.clone();
+                                }
                                 tracing::debug!(
                                     "{} reasoning chunk #{}: {} chars",
                                     provider_name,
@@ -1958,8 +2072,17 @@ async fn run_agent_stream(
                     }
                 }
 
-                if !collected_pass.is_empty() {
-                    history.push(RigMessage::assistant(&collected_pass));
+                if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
+                    let reasoning_opt = if collected_reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(collected_reasoning.as_str())
+                    };
+                    history.push(build_assistant_message_with_reasoning(
+                        &collected_pass,
+                        reasoning_opt,
+                        collected_signature.as_deref(),
+                    ));
                 }
 
                 let todo_ok = match &tool_context.todo_store {
