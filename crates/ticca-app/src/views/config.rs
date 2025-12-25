@@ -16,7 +16,7 @@ use ticca_core::external_tools::{
     ExternalToolId, FUSE_DOCS_URL, get_all_tool_definitions, is_fuse_available,
 };
 
-use ticca_core::agents::AgentType;
+use ticca_core::agents::{AgentRegistry, AgentType};
 use ticca_core::config::{ApiKeyAccount, CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount};
 use ticca_core::session::Session;
 use ticca_core::RegistryService;
@@ -286,10 +286,6 @@ fn build_model_settings_section<'a>(
     let agent_pinning_desc =
         text("Pin specific models to agents. If not pinned, the default model is used.").size(12);
 
-    // Build agent pinning rows
-    let coding_pinned = agent_pinned_models.get(&AgentType::Coding).cloned();
-    let planning_pinned = agent_pinned_models.get(&AgentType::Planning).cloned();
-
     // Create options with "Use Default" at the start
     let agent_model_options: Vec<ModelOption> = std::iter::once(ModelOption::UseDefault)
         .chain(
@@ -299,68 +295,53 @@ fn build_model_settings_section<'a>(
         )
         .collect();
 
-    let coding_row = if available_models.is_empty() {
-        row![
-            icon(icons::CODE).size(16),
-            text("Coding Agent:").size(14).width(Length::Fixed(120.0)),
-            text("No models available").size(14),
-        ]
-        .spacing(10)
-        .align_y(iced::Alignment::Center)
-    } else {
-        let selected = coding_pinned
-            .map(|m| ModelOption::Model(DisplayModel(m)))
-            .unwrap_or(ModelOption::UseDefault);
-        row![
-            icon(icons::CODE).size(16),
-            text("Coding Agent:").size(14).width(Length::Fixed(120.0)),
-            pick_list(agent_model_options.clone(), Some(selected), move |opt| {
-                match opt {
-                    ModelOption::UseDefault => {
-                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, None))
-                    }
-                    ModelOption::Model(m) => {
-                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Coding, Some(m.canonical_id().to_string())))
-                    }
-                }
-            })
-            .width(Length::Fixed(300.0)),
-        ]
-        .spacing(10)
-        .align_y(iced::Alignment::Center)
-    };
+    // Build agent pinning rows dynamically for all agents
+    let agent_pinning_rows: Vec<Element<'a, Message>> = AgentRegistry::all()
+        .iter()
+        .map(|&agent_type| {
+            let metadata = AgentRegistry::get(agent_type);
+            let pinned = agent_pinned_models.get(&agent_type).cloned();
 
-    let planning_row = if available_models.is_empty() {
-        row![
-            icon(icons::CHECKLIST).size(16),
-            text("Planning Agent:").size(14).width(Length::Fixed(120.0)),
-            text("No models available").size(14),
-        ]
-        .spacing(10)
-        .align_y(iced::Alignment::Center)
-    } else {
-        let selected = planning_pinned
-            .map(|m| ModelOption::Model(DisplayModel(m)))
-            .unwrap_or(ModelOption::UseDefault);
-        row![
-            icon(icons::CHECKLIST).size(16),
-            text("Planning Agent:").size(14).width(Length::Fixed(120.0)),
-            pick_list(agent_model_options.clone(), Some(selected), move |opt| {
-                match opt {
-                    ModelOption::UseDefault => {
-                        Message::Settings(settings::Msg::SetAgentModel(AgentType::Planning, None))
-                    }
-                    ModelOption::Model(m) => Message::Settings(settings::Msg::SetAgentModel(
-                        AgentType::Planning,
-                        Some(m.canonical_id().to_string()),
-                    )),
-                }
-            })
-            .width(Length::Fixed(300.0)),
-        ]
-        .spacing(10)
-        .align_y(iced::Alignment::Center)
-    };
+            if available_models.is_empty() {
+                row![
+                    icon(metadata.icon).size(16),
+                    text(format!("{}:", metadata.display_name))
+                        .size(14)
+                        .width(Length::Fixed(140.0)),
+                    text("No models available").size(14),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center)
+                .into()
+            } else {
+                let selected = pinned
+                    .map(|m| ModelOption::Model(DisplayModel(m)))
+                    .unwrap_or(ModelOption::UseDefault);
+                let options = agent_model_options.clone();
+                row![
+                    icon(metadata.icon).size(16),
+                    text(format!("{}:", metadata.display_name))
+                        .size(14)
+                        .width(Length::Fixed(140.0)),
+                    pick_list(options, Some(selected), move |opt| {
+                        match opt {
+                            ModelOption::UseDefault => {
+                                Message::Settings(settings::Msg::SetAgentModel(agent_type, None))
+                            }
+                            ModelOption::Model(m) => Message::Settings(settings::Msg::SetAgentModel(
+                                agent_type,
+                                Some(m.canonical_id().to_string()),
+                            )),
+                        }
+                    })
+                    .width(Length::Fixed(300.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center)
+                .into()
+            }
+        })
+        .collect();
 
     // Custom horizontal rule using a styled container
     let rule = container(text(""))
@@ -372,21 +353,23 @@ fn build_model_settings_section<'a>(
             ..Default::default()
         });
 
-    container(
-        column![
-            header_row,
-            default_model_row,
-            rule,
-            agent_pinning_header,
-            agent_pinning_desc,
-            coding_row,
-            planning_row,
-        ]
-        .spacing(12),
-    )
-    .padding(20)
-    .style(styles::card_container)
-    .into()
+    // Build the column with dynamic agent rows
+    let mut content = Column::new()
+        .push(header_row)
+        .push(default_model_row)
+        .push(rule)
+        .push(agent_pinning_header)
+        .push(agent_pinning_desc)
+        .spacing(12);
+
+    for row in agent_pinning_rows {
+        content = content.push(row);
+    }
+
+    container(content)
+        .padding(20)
+        .style(styles::card_container)
+        .into()
 }
 
 fn build_tabs(active: SettingsTab, expert_mode_enabled: bool) -> Element<'static, Message> {
@@ -702,7 +685,7 @@ fn build_agent_mcp_section<'a>(
     .padding(20)
     .style(styles::card_container);
 
-    let agents = [AgentType::Coding, AgentType::Planning];
+    let agents = AgentRegistry::all();
 
     let table_body: Element<'a, Message> = if servers.is_empty() {
         text("No MCP servers configured. Add one in the MCP Servers tab.")
@@ -717,8 +700,8 @@ fn build_agent_mcp_section<'a>(
                 text("MCP Server")
                     .size(13)
                     .width(Length::Fixed(server_col_width)),
-                row(agents.iter().map(|agent| {
-                    container(text(agent.display_name()).size(13))
+                row(agents.iter().map(|&agent| {
+                    container(text(AgentRegistry::get(agent).display_name).size(13))
                         .width(Length::Fixed(agent_col_width))
                         .center_x(Length::Fixed(agent_col_width))
                         .into()
@@ -766,7 +749,7 @@ fn build_agent_mcp_section<'a>(
                     .into();
 
             let mut agent_cells: Vec<Element<'a, Message>> = Vec::new();
-            for agent in agents {
+            for &agent in agents {
                 let checked = agent_mcp_server_ids
                     .get(&agent)
                     .map(|ids| ids.contains(&server.id))

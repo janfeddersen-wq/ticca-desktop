@@ -11,7 +11,7 @@ use iced::{Element, Length, widget};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use ticca_core::agents::AgentType;
+use ticca_core::agents::{AgentRegistry, AgentType};
 use ticca_core::session::MessageRole;
 
 use crate::chat_message::ChatMessage;
@@ -40,23 +40,6 @@ fn styled_tooltip<'a>(
         .style(styles::tooltip_style)
 }
 
-/// Get the icon for an agent type
-fn agent_icon(agent_type: AgentType) -> icons::Icon {
-    match agent_type {
-        AgentType::Coding => icons::CODE,
-        AgentType::Planning => icons::CHECKLIST,
-        AgentType::Skills => icons::BUILD,
-    }
-}
-
-/// Get a short display label for an agent type
-fn agent_label(agent_type: AgentType) -> &'static str {
-    match agent_type {
-        AgentType::Coding => "Coding",
-        AgentType::Planning => "Planning",
-        AgentType::Skills => "Skills",
-    }
-}
 
 /// Format token count for display with thousands separator (e.g., 45000 -> "45 000")
 fn format_tokens(tokens: i64) -> String {
@@ -99,9 +82,10 @@ pub fn view<'a>(
             .iter()
             .map(|&agent_type| {
                 let is_selected = current_agent == agent_type;
-                let agent_icon = agent_icon(agent_type);
-                let label = agent_label(agent_type);
-                let description = agent_type.description();
+                let metadata = AgentRegistry::get(agent_type);
+                let agent_icon = metadata.icon;
+                let label = metadata.label;
+                let description = metadata.description;
                 styled_tooltip(
                     button(
                         row![

@@ -3,6 +3,8 @@
 use iced::widget::{canvas, column, container, row, scrollable, text};
 use iced::{Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size, alignment};
 
+use ticca_core::agents::AgentRegistry;
+
 use crate::agent_graph::{AgentCallGraph, AgentNode};
 use crate::material_icons::{icon, icons};
 use crate::messages::Message;
@@ -51,11 +53,8 @@ impl FlowCanvas {
     }
 
     fn node_color(&self, node: &AgentNode) -> iced::Color {
-        match node.agent_type {
-            ticca_core::agents::AgentType::Coding => iced::Color::from_rgb(0.18, 0.55, 0.90),
-            ticca_core::agents::AgentType::Planning => iced::Color::from_rgb(0.24, 0.70, 0.42),
-            ticca_core::agents::AgentType::Skills => iced::Color::from_rgb(0.75, 0.45, 0.85), // Purple for skills
-        }
+        let (r, g, b) = AgentRegistry::get(node.agent_type).color;
+        iced::Color::from_rgb(r, g, b)
     }
 
     fn text_color(&self) -> iced::Color {

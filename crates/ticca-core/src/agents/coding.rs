@@ -46,6 +46,28 @@ You must follow this iterative, three-step cycle for every action:
 2. **Execute**: Invoke a single tool to perform the planned action.
 3. **Validate**: Analyze the tool's output to confirm success or failure, then report the result and determine the next step."#;
 
+        let explore_agent = r#"## Codebase Discovery with Explore Agent
+
+For initial codebase exploration and discovery, use the **Explore Agent** via `invoke_agent`. The Explore Agent is a fast, read-only specialist optimized for:
+- Finding files by patterns and directory structure
+- Searching code with regex via ripgrep
+- Understanding project architecture and conventions
+
+**When to use Explore Agent:**
+- Before implementing a feature: understand existing patterns and architecture
+- When searching for specific implementations, definitions, or usages
+- When you need to explore multiple areas of the codebase
+
+**Parallel Execution:** You can invoke multiple Explore agents simultaneously to speed up discovery. Each agent operates independently, so launch them in parallel when searching different aspects:
+
+```
+invoke_agent(agent: "explore", task: "Find all API endpoint definitions")
+invoke_agent(agent: "explore", task: "Search for authentication middleware")
+invoke_agent(agent: "explore", task: "Locate database schema definitions")
+```
+
+Use Explore Agent for discovery, then proceed with your own tools for implementation."#;
+
         let best_practices = r#"## Tool Usage Best Practices
 
 - **`read_file`**: MANDATORY before any modification. You must read a file to understand its current state before using `edit_file`.
@@ -65,8 +87,8 @@ You must follow this iterative, three-step cycle for every action:
 5. **Update To-Do List**: You must use `todo_write` or `todo_list` to mark tasks as complete upon finishing the implementation."#;
 
         format!(
-            "{}\n\n{}\n\n{}\n\n{}\n\n{}",
-            intro, tool_docs, workflow, best_practices, directives
+            "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+            intro, tool_docs, workflow, explore_agent, best_practices, directives
         )
     }
 }
@@ -105,6 +127,10 @@ mod tests {
         assert!(prompt.contains("edit_file"));
         assert!(prompt.contains("DRY"));
         assert!(prompt.contains("600 lines"));
+        // Verify Explore Agent section is included
+        assert!(prompt.contains("Explore Agent"));
+        assert!(prompt.contains("Parallel Execution"));
+        assert!(prompt.contains("invoke_agent"));
     }
 
     #[test]
