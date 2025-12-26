@@ -207,10 +207,13 @@ impl ConfigDatabase {
     // Discovered models CRUD (model registry cache)
 
     /// Get a discovered model by its canonical ID
-    pub fn get_discovered_model(&self, canonical_id: &str) -> Result<Option<crate::config::models::DiscoveredModel>> {
+    pub fn get_discovered_model(
+        &self,
+        canonical_id: &str,
+    ) -> Result<Option<crate::config::models::DiscoveredModel>> {
         let mut stmt = self.conn.prepare(
             "SELECT canonical_id, provider, model_id, display_name, context_length, discovered_at
-             FROM discovered_models WHERE canonical_id = ?"
+             FROM discovered_models WHERE canonical_id = ?",
         )?;
 
         let result = stmt.query_row(params![canonical_id], |row| {
@@ -232,8 +235,13 @@ impl ConfigDatabase {
     }
 
     /// List all discovered models, optionally filtered by provider
-    pub fn list_discovered_models(&self, provider: Option<&str>) -> Result<Vec<crate::config::models::DiscoveredModel>> {
-        fn map_model(row: &rusqlite::Row<'_>) -> rusqlite::Result<crate::config::models::DiscoveredModel> {
+    pub fn list_discovered_models(
+        &self,
+        provider: Option<&str>,
+    ) -> Result<Vec<crate::config::models::DiscoveredModel>> {
+        fn map_model(
+            row: &rusqlite::Row<'_>,
+        ) -> rusqlite::Result<crate::config::models::DiscoveredModel> {
             Ok(crate::config::models::DiscoveredModel {
                 canonical_id: row.get(0)?,
                 provider: row.get(1)?,
@@ -266,7 +274,10 @@ impl ConfigDatabase {
     }
 
     /// Upsert a discovered model (insert or update)
-    pub fn upsert_discovered_model(&self, model: &crate::config::models::DiscoveredModel) -> Result<()> {
+    pub fn upsert_discovered_model(
+        &self,
+        model: &crate::config::models::DiscoveredModel,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO discovered_models (canonical_id, provider, model_id, display_name, context_length, discovered_at)
              VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
@@ -289,7 +300,10 @@ impl ConfigDatabase {
     }
 
     /// Batch upsert discovered models for a provider
-    pub fn upsert_discovered_models_batch(&self, models: &[crate::config::models::DiscoveredModel]) -> Result<()> {
+    pub fn upsert_discovered_models_batch(
+        &self,
+        models: &[crate::config::models::DiscoveredModel],
+    ) -> Result<()> {
         for model in models {
             self.upsert_discovered_model(model)?;
         }
@@ -316,9 +330,9 @@ impl ConfigDatabase {
 
     /// Get the context length for a model by its canonical ID
     pub fn get_model_context_length(&self, canonical_id: &str) -> Result<Option<i64>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT context_length FROM discovered_models WHERE canonical_id = ?"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT context_length FROM discovered_models WHERE canonical_id = ?")?;
 
         let result = stmt.query_row(params![canonical_id], |row| row.get(0));
 
@@ -1146,8 +1160,13 @@ mod tests {
 
         // Set cooldown
         let cooldown = (Utc::now() + Duration::seconds(60)).to_rfc3339();
-        db.set_api_key_account_cooldown("acc1", Some(cooldown.clone()), Some("429 error".to_string()), Some(Utc::now().to_rfc3339()))
-            .unwrap();
+        db.set_api_key_account_cooldown(
+            "acc1",
+            Some(cooldown.clone()),
+            Some("429 error".to_string()),
+            Some(Utc::now().to_rfc3339()),
+        )
+        .unwrap();
         let retrieved = db.get_api_key_account("acc1").unwrap().unwrap();
         assert!(retrieved.cooldown_until.is_some());
         assert_eq!(retrieved.last_error, Some("429 error".to_string()));
@@ -1185,8 +1204,7 @@ mod tests {
         let model1 = DiscoveredModel::new("claude", "claude-sonnet-4-20250514")
             .with_context_length(200_000)
             .with_display_name("Claude Sonnet 4");
-        let model2 = DiscoveredModel::new("openai", "gpt-4o")
-            .with_context_length(128_000);
+        let model2 = DiscoveredModel::new("openai", "gpt-4o").with_context_length(128_000);
         let model3 = DiscoveredModel::new("claude", "claude-3-5-haiku-20241022")
             .with_context_length(200_000);
 
@@ -1196,7 +1214,10 @@ mod tests {
         db.upsert_discovered_model(&model3).unwrap();
 
         // Read by canonical ID
-        let retrieved = db.get_discovered_model("claude:claude-sonnet-4-20250514").unwrap().unwrap();
+        let retrieved = db
+            .get_discovered_model("claude:claude-sonnet-4-20250514")
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.canonical_id, "claude:claude-sonnet-4-20250514");
         assert_eq!(retrieved.provider, "claude");
         assert_eq!(retrieved.model_id, "claude-sonnet-4-20250514");
@@ -1216,17 +1237,22 @@ mod tests {
         assert_eq!(openai_models[0].model_id, "gpt-4o");
 
         // Get context length
-        let ctx = db.get_model_context_length("claude:claude-sonnet-4-20250514").unwrap();
+        let ctx = db
+            .get_model_context_length("claude:claude-sonnet-4-20250514")
+            .unwrap();
         assert_eq!(ctx, Some(200_000));
 
         let ctx = db.get_model_context_length("nonexistent:model").unwrap();
         assert_eq!(ctx, None);
 
         // Update existing model
-        let model1_updated = DiscoveredModel::new("claude", "claude-sonnet-4-20250514")
-            .with_context_length(250_000);
+        let model1_updated =
+            DiscoveredModel::new("claude", "claude-sonnet-4-20250514").with_context_length(250_000);
         db.upsert_discovered_model(&model1_updated).unwrap();
-        let retrieved = db.get_discovered_model("claude:claude-sonnet-4-20250514").unwrap().unwrap();
+        let retrieved = db
+            .get_discovered_model("claude:claude-sonnet-4-20250514")
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.context_length, 250_000);
 
         // Delete specific model

@@ -33,11 +33,11 @@ pub use external_tools::{
 };
 pub use llm::{ClaudeClient, ModelId, ModelService, get_claude_client, has_claude_credentials};
 pub use python::{create_venv, ensure_uv_available, pip_install, run_python_script};
+pub use registry::{
+    AuthType, DEFAULT_CONTEXT_WINDOW, ModelCapabilities, ModelDefinition, ModelSource,
+    ProviderDefinition, RegistryService,
+};
 pub use session::{MessageRole, Session, SessionDatabase, SessionMessage};
 pub use skills::{SkillMetadata, discover_skills, extract_skills_if_needed, get_skill_path};
-pub use registry::{
-    AuthType, ModelCapabilities, ModelDefinition, ModelSource, ProviderDefinition,
-    RegistryService, DEFAULT_CONTEXT_WINDOW,
-};
 pub use tools::{ToolDefinition, ToolRegistry, ToolResult, create_default_registry};
 pub use version_check::{CURRENT_VERSION, LatestRelease, check_for_update, is_newer_version};

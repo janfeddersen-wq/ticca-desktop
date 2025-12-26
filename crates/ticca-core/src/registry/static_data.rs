@@ -535,7 +535,7 @@ pub fn static_providers() -> Vec<ProviderDefinition> {
             id: "ollama".to_string(),
             name: "Ollama (Local)".to_string(),
             api_base_url: "http://localhost:11434/v1".to_string(),
-            env_vars: vec![], // No API key needed for local
+            env_vars: vec![],            // No API key needed for local
             auth_type: AuthType::ApiKey, // Technically no auth, but compatible
             is_openai_compatible: true,
             doc_url: Some("https://ollama.ai/".to_string()),
@@ -546,11 +546,14 @@ pub fn static_providers() -> Vec<ProviderDefinition> {
         ProviderDefinition {
             id: "azure".to_string(),
             name: "Azure OpenAI".to_string(),
-            api_base_url: "https://{resource}.openai.azure.com/openai/deployments/{deployment}".to_string(),
+            api_base_url: "https://{resource}.openai.azure.com/openai/deployments/{deployment}"
+                .to_string(),
             env_vars: vec!["AZURE_OPENAI_API_KEY".to_string()],
             auth_type: AuthType::ApiKey,
             is_openai_compatible: true,
-            doc_url: Some("https://learn.microsoft.com/en-us/azure/ai-services/openai/".to_string()),
+            doc_url: Some(
+                "https://learn.microsoft.com/en-us/azure/ai-services/openai/".to_string(),
+            ),
         },
         ProviderDefinition {
             id: "xai".to_string(),
@@ -704,7 +707,10 @@ mod tests {
     #[test]
     fn test_static_providers_not_empty() {
         let providers = static_providers();
-        assert!(!providers.is_empty(), "Static providers should not be empty");
+        assert!(
+            !providers.is_empty(),
+            "Static providers should not be empty"
+        );
         assert!(providers.len() >= 5, "Should have at least 5 providers");
     }
 

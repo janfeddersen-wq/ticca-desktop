@@ -22,14 +22,19 @@ pub use paths::{
 };
 pub use repo::ConfigRepo;
 pub use service::{ConfigService, SettingsSnapshot};
-pub use settings::{AccountRotationPolicy, CompressionSettings, CompressionStrategy, TypedSettings};
+pub use settings::{
+    AccountRotationPolicy, CompressionSettings, CompressionStrategy, TypedSettings, UiMode,
+};
 
 /// Well-known setting keys
 pub mod setting_keys {
     pub const THEME: &str = "theme";
     pub const DEFAULT_MODEL: &str = "default_model";
     pub const AUTO_SAVE_SESSIONS: &str = "auto_save_sessions";
-    /// When enabled, show advanced UI sections (accounts list, models/agents tabs, etc).
+    /// UI complexity mode: "easy", "expert", or "debug"
+    pub const UI_MODE: &str = "ui_mode";
+    /// Legacy key - kept for migration, use UI_MODE instead
+    #[deprecated(note = "Use UI_MODE instead")]
     pub const EXPERT_MODE: &str = "expert_mode";
     /// Maximum number of tool call rounds in the ReAct loop (default: 500)
     pub const MAX_TOOL_ROUNDS: &str = "max_tool_rounds";

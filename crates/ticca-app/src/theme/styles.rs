@@ -806,9 +806,9 @@ pub fn message_bubble(theme: &Theme, is_user: bool) -> container::Style {
 pub fn system_message_bubble(theme: &Theme) -> container::Style {
     // Use a muted, distinct color for system messages
     let bg_color = if is_dark_theme(theme) {
-        Color::from_rgb8(50, 55, 65)  // Dark blue-gray
+        Color::from_rgb8(50, 55, 65) // Dark blue-gray
     } else {
-        Color::from_rgb8(230, 235, 245)  // Light blue-gray
+        Color::from_rgb8(230, 235, 245) // Light blue-gray
     };
 
     container::Style {

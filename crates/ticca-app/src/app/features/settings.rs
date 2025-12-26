@@ -9,8 +9,8 @@ use crate::views::config;
 use crate::views::config::{McpServerFormState, ProviderAuthStatus};
 use ticca_core::AgentType;
 use ticca_core::RegistryService;
-use ticca_core::config::{ApiKeyAccount, OAuthAccount};
 use ticca_core::config::models::providers;
+use ticca_core::config::{ApiKeyAccount, OAuthAccount};
 use ticca_core::config::{
     CompressionSettings, CompressionStrategy, ConfigService, McpServer, setting_keys,
 };
@@ -28,7 +28,7 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) accounts_gemini: Vec<OAuthAccount>,
     pub(in crate::app) accounts_chatgpt: Vec<OAuthAccount>,
     pub(in crate::app) api_key_accounts: HashMap<String, Vec<ApiKeyAccount>>, // keyed by provider ID
-    pub(in crate::app) api_key_form_provider: Option<String>, // provider ID
+    pub(in crate::app) api_key_form_provider: Option<String>,                 // provider ID
     pub(in crate::app) api_key_form_value: String,
     pub(in crate::app) api_key_form_label: String,
     // Provider search state
@@ -126,7 +126,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             app.current_view = View::Chat;
         }
         settings::Msg::SwitchSettingsTab(tab) => {
-            if !app.expert_mode_enabled && matches!(tab, SettingsTab::Models | SettingsTab::Agents)
+            if !app.ui_mode.shows_expert_ui()
+                && matches!(tab, SettingsTab::Models | SettingsTab::Agents)
             {
                 app.settings.settings_tab = SettingsTab::Accounts;
                 return effects;
@@ -158,12 +159,12 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             let value = if enabled { "true" } else { "false" };
             let _ = ConfigService::set_setting(setting_keys::YOLO_MODE, value);
         }
-        settings::Msg::SetExpertMode(enabled) => {
-            app.expert_mode_enabled = enabled;
-            let value = if enabled { "true" } else { "false" };
-            let _ = ConfigService::set_setting(setting_keys::EXPERT_MODE, value);
+        settings::Msg::SetUiMode(mode) => {
+            app.ui_mode = mode;
+            let _ = ConfigService::set_setting(setting_keys::UI_MODE, mode.as_str());
 
-            if !enabled
+            // If not showing expert UI, hide expert-only tabs
+            if !mode.shows_expert_ui()
                 && matches!(
                     app.settings.settings_tab,
                     SettingsTab::Models | SettingsTab::Agents
@@ -172,11 +173,13 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 app.settings.settings_tab = SettingsTab::Accounts;
             }
 
-            if !enabled {
+            // Reset todo selected node when not showing internal agents
+            if !mode.shows_internal_agents() {
                 app.chat.todo_selected_node = 0;
             }
 
-            if !enabled
+            // If not showing expert UI, hide expert-only sidebar tabs
+            if !mode.shows_expert_ui()
                 && matches!(
                     app.chat.sidebar_tab,
                     crate::messages::RightSidebarTab::AgentsFlow
@@ -276,7 +279,8 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 Some(label.to_string())
             };
 
-            let account = ApiKeyAccount::new(uuid::Uuid::new_v4().to_string(), provider_id, api_key);
+            let account =
+                ApiKeyAccount::new(uuid::Uuid::new_v4().to_string(), provider_id, api_key);
             let account = if let Some(l) = label {
                 account.with_label(l)
             } else {
@@ -891,7 +895,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
         &app.settings.add_provider_search,
         app.settings.add_provider_expanded,
         app.chat.yolo_mode_enabled,
-        app.expert_mode_enabled,
+        app.ui_mode,
         &app.settings.recent_sessions,
         app.settings.settings_tab,
         &app.settings.mcp_servers,

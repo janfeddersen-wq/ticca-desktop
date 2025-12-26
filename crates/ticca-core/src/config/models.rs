@@ -345,10 +345,7 @@ pub struct DiscoveredModel {
 
 impl DiscoveredModel {
     /// Create a new DiscoveredModel with the canonical ID format
-    pub fn new(
-        provider: impl Into<String>,
-        model_id: impl Into<String>,
-    ) -> Self {
+    pub fn new(provider: impl Into<String>, model_id: impl Into<String>) -> Self {
         let provider = provider.into();
         let model_id = model_id.into();
         let canonical_id = format!("{}:{}", provider, model_id);

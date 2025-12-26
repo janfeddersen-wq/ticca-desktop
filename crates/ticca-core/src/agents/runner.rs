@@ -12,8 +12,8 @@ use crate::config::{CompressionSettings, ConfigDatabase, McpServer, McpTransport
 use crate::llm;
 use crate::llm::auth::{self, AuthToken};
 use crate::llm::providers::GeminiCodeAssistRigClient;
-use crate::llm::providers::chatgpt::ChatGptOAuthClient;
 use crate::llm::providers::OpenAICompatibleApiClient;
+use crate::llm::providers::chatgpt::ChatGptOAuthClient;
 use crate::llm::{ClaudeOAuthClient, ProviderId, ProviderRegistry};
 use crate::registry::RegistryService;
 use crate::session::MessageRole;
@@ -242,8 +242,8 @@ fn build_assistant_message_with_reasoning(
             // Create message with both reasoning and text content
             let mut contents = Vec::new();
             // Include signature for Claude's thinking verification
-            let reasoning_content = Reasoning::new(reasoning)
-                .with_signature(signature.map(String::from));
+            let reasoning_content =
+                Reasoning::new(reasoning).with_signature(signature.map(String::from));
             contents.push(AssistantContent::Reasoning(reasoning_content));
             if !text.is_empty() {
                 contents.push(AssistantContent::text(text));
@@ -663,7 +663,10 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
     let (todo_store, todo_tx) = if agent_type == AgentType::Explore {
         (None, None)
     } else {
-        (parent_context.todo_store.clone(), parent_context.todo_tx.clone())
+        (
+            parent_context.todo_store.clone(),
+            parent_context.todo_tx.clone(),
+        )
     };
 
     let tool_context = Arc::new(ToolContext {
@@ -1066,10 +1069,7 @@ where
                             collected_signature = reasoning.signature.clone();
                         }
                         if let Some(tx) = &parent_context.agent_stream_tx {
-                            let _ = tx.send(AgentStreamEvent::Reasoning {
-                                node_id,
-                                text,
-                            });
+                            let _ = tx.send(AgentStreamEvent::Reasoning { node_id, text });
                         }
                     }
                 }
@@ -1245,7 +1245,9 @@ async fn run_agent_stream(
                         messages_with_reasoning += 1;
                         tracing::debug!(
                             "Message {} has {} reasoning chars ({} tokens)",
-                            i, chars, reasoning_tokens
+                            i,
+                            chars,
+                            reasoning_tokens
                         );
                     }
                     if let rig::message::AssistantContent::Text(t) = c {
@@ -1271,8 +1273,10 @@ async fn run_agent_stream(
         );
         tracing::info!(
             "Content breakdown: text={} chars ({} tokens), reasoning={} chars ({} tokens)",
-            total_text_chars, total_text_tokens,
-            total_reasoning_chars, total_reasoning_tokens
+            total_text_chars,
+            total_text_tokens,
+            total_reasoning_chars,
+            total_reasoning_tokens
         );
         tracing::info!(
             "Estimated totals: system={}, tools={} ({} tool specs), messages={}, grand_total={}",
@@ -1299,8 +1303,10 @@ async fn run_agent_stream(
     });
 
     // Check if compression is needed
-    let compression_needed = crate::compression::needs_compression(&context_estimate, &compression_settings);
-    let threshold_tokens = context_estimate.threshold_tokens(compression_settings.threshold_percent);
+    let compression_needed =
+        crate::compression::needs_compression(&context_estimate, &compression_settings);
+    let threshold_tokens =
+        context_estimate.threshold_tokens(compression_settings.threshold_percent);
 
     // Apply compression if needed
     let full_history = if compression_needed {

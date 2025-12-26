@@ -3,9 +3,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ApiKeyAccount, OAuthAccount};
 use crate::config::models::providers as provider_names;
 use crate::config::{AccountRotationPolicy, ConfigDatabase, TypedSettings};
+use crate::config::{ApiKeyAccount, OAuthAccount};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthToken {

@@ -46,27 +46,35 @@ pub struct AgentMetadata {
     pub provider_order: &'static [ProviderId],
     /// Tool usage policy type
     pub tool_policy: ToolPolicyType,
+    /// Whether this agent is internal (only shown in Debug mode)
+    pub is_internal: bool,
 }
 
 /// Static provider order constants
-const PROVIDER_ORDER_CODING: &[ProviderId] = &[ProviderId::Claude, ProviderId::ChatGpt, ProviderId::Gemini];
-const PROVIDER_ORDER_PLANNING: &[ProviderId] = &[ProviderId::Claude, ProviderId::Gemini, ProviderId::ChatGpt];
+const PROVIDER_ORDER_CODING: &[ProviderId] =
+    &[ProviderId::Claude, ProviderId::ChatGpt, ProviderId::Gemini];
+const PROVIDER_ORDER_PLANNING: &[ProviderId] =
+    &[ProviderId::Claude, ProviderId::Gemini, ProviderId::ChatGpt];
 
 /// Static registry lookup table
 static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::new(|| {
     let mut map = HashMap::new();
 
-    map.insert(AgentType::Coding, AgentMetadata {
-        agent_type: AgentType::Coding,
-        id: "coding",
-        display_name: "Coding Agent",
-        label: "Coding",
-        description: "Writes, modifies, and executes code to complete development tasks.",
-        icon: Icon::Code,
-        color: (0.18, 0.55, 0.90), // Blue
-        provider_order: PROVIDER_ORDER_CODING,
-        tool_policy: ToolPolicyType::FullAccess,
-    });
+    map.insert(
+        AgentType::Coding,
+        AgentMetadata {
+            agent_type: AgentType::Coding,
+            id: "coding",
+            display_name: "Coding Agent",
+            label: "Coding",
+            description: "Writes, modifies, and executes code to complete development tasks.",
+            icon: Icon::Code,
+            color: (0.18, 0.55, 0.90), // Blue
+            provider_order: PROVIDER_ORDER_CODING,
+            tool_policy: ToolPolicyType::FullAccess,
+            is_internal: false,
+        },
+    );
 
     map.insert(AgentType::Planning, AgentMetadata {
         agent_type: AgentType::Planning,
@@ -78,6 +86,7 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
         color: (0.24, 0.70, 0.42), // Green
         provider_order: PROVIDER_ORDER_PLANNING,
         tool_policy: ToolPolicyType::ReadOnly,
+        is_internal: false,
     });
 
     map.insert(AgentType::Skills, AgentMetadata {
@@ -90,6 +99,7 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
         color: (0.75, 0.45, 0.85), // Purple
         provider_order: PROVIDER_ORDER_CODING,
         tool_policy: ToolPolicyType::FullAccess,
+        is_internal: true, // Internal - only shown in Debug mode
     });
 
     map.insert(AgentType::Explore, AgentMetadata {
@@ -102,6 +112,7 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
         color: (0.20, 0.70, 0.70), // Cyan/teal
         provider_order: PROVIDER_ORDER_CODING,
         tool_policy: ToolPolicyType::ReadOnly,
+        is_internal: true, // Internal - only shown in Debug mode
     });
 
     map
@@ -109,7 +120,12 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
 
 /// Static list of all agent types (for iteration)
 static ALL_AGENTS: LazyLock<Vec<AgentType>> = LazyLock::new(|| {
-    vec![AgentType::Coding, AgentType::Planning, AgentType::Skills, AgentType::Explore]
+    vec![
+        AgentType::Coding,
+        AgentType::Planning,
+        AgentType::Skills,
+        AgentType::Explore,
+    ]
 });
 
 /// Agent registry providing centralized access to agent metadata
@@ -139,15 +155,13 @@ impl AgentRegistry {
         match agent_type {
             AgentType::Planning => Box::new(super::planning::PlanningAgent),
             AgentType::Coding => Box::new(super::coding::CodingAgent),
-            AgentType::Skills => {
-                match super::skills::SkillsAgent::new() {
-                    Ok(agent) => Box::new(agent),
-                    Err(e) => {
-                        tracing::warn!("Failed to initialize SkillsAgent: {}, using empty agent", e);
-                        Box::new(super::skills::SkillsAgent::empty())
-                    }
+            AgentType::Skills => match super::skills::SkillsAgent::new() {
+                Ok(agent) => Box::new(agent),
+                Err(e) => {
+                    tracing::warn!("Failed to initialize SkillsAgent: {}, using empty agent", e);
+                    Box::new(super::skills::SkillsAgent::empty())
                 }
-            }
+            },
             AgentType::Explore => Box::new(super::explore::ExploreAgent),
         }
     }
@@ -155,6 +169,25 @@ impl AgentRegistry {
     /// Get all agent metadata (for UI iteration)
     pub fn all_metadata() -> impl Iterator<Item = &'static AgentMetadata> {
         AGENT_REGISTRY.values()
+    }
+
+    /// Get agent types visible for a given show_internal setting
+    pub fn visible_agents(show_internal: bool) -> Vec<AgentType> {
+        ALL_AGENTS
+            .iter()
+            .filter(|agent_type| {
+                let metadata = Self::get(**agent_type);
+                show_internal || !metadata.is_internal
+            })
+            .copied()
+            .collect()
+    }
+
+    /// Get agent metadata visible for a given show_internal setting
+    pub fn visible_metadata(show_internal: bool) -> impl Iterator<Item = &'static AgentMetadata> {
+        AGENT_REGISTRY
+            .values()
+            .filter(move |m| show_internal || !m.is_internal)
     }
 }
 
@@ -189,6 +222,11 @@ impl AgentType {
     /// Get the full metadata for this agent type
     pub fn metadata(&self) -> &'static AgentMetadata {
         AgentRegistry::get(*self)
+    }
+
+    /// Check if this agent is internal (only shown in Debug mode)
+    pub fn is_internal(&self) -> bool {
+        AgentRegistry::get(*self).is_internal
     }
 }
 

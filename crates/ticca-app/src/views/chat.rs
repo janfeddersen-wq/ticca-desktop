@@ -40,7 +40,6 @@ fn styled_tooltip<'a>(
         .style(styles::tooltip_style)
 }
 
-
 /// Format token count for display with thousands separator (e.g., 45000 -> "45 000")
 fn format_tokens(tokens: i64) -> String {
     let s = tokens.to_string();
@@ -140,15 +139,19 @@ pub fn view<'a>(
             text(usage_text).size(11),
             // Progress bar using nested containers
             container(
-                container(Space::new().width(Length::Fixed(filled_width)).height(Length::Fixed(bar_height as f32)))
-                    .style(move |_theme: &iced::Theme| container::Style {
-                        background: Some(bar_color.into()),
-                        border: iced::Border {
-                            radius: 3.0.into(),
-                            ..Default::default()
-                        },
+                container(
+                    Space::new()
+                        .width(Length::Fixed(filled_width))
+                        .height(Length::Fixed(bar_height as f32))
+                )
+                .style(move |_theme: &iced::Theme| container::Style {
+                    background: Some(bar_color.into()),
+                    border: iced::Border {
+                        radius: 3.0.into(),
                         ..Default::default()
-                    })
+                    },
+                    ..Default::default()
+                })
             )
             .width(Length::Fixed(bar_width as f32))
             .height(Length::Fixed(bar_height as f32))
@@ -207,7 +210,11 @@ pub fn view<'a>(
                     .on_press(Message::Chat(chat::Msg::ToggleFlowPanel))
                     .style(styles::icon_button)
                     .padding(8),
-                    if flow_panel_visible { "Hide sidebar" } else { "Show sidebar" },
+                    if flow_panel_visible {
+                        "Hide sidebar"
+                    } else {
+                        "Show sidebar"
+                    },
                     tooltip::Position::Bottom,
                 ),
             ]
@@ -225,8 +232,11 @@ pub fn view<'a>(
         row![
             styled_tooltip(
                 button(
-                    row![icon(icons::FOLDER_OPEN).size(14), text(" Select Workdir").size(12)]
-                        .spacing(2),
+                    row![
+                        icon(icons::FOLDER_OPEN).size(14),
+                        text(" Select Workdir").size(12)
+                    ]
+                    .spacing(2),
                 )
                 .on_press(Message::Chat(chat::Msg::SelectWorkingDirectory))
                 .style(styles::secondary_button)
@@ -352,7 +362,11 @@ pub fn view<'a>(
     }
 
     // Send/Stop button with tooltip
-    let send_button_tooltip = if is_streaming { "Stop generation" } else { "Send message" };
+    let send_button_tooltip = if is_streaming {
+        "Stop generation"
+    } else {
+        "Send message"
+    };
     let send_button = styled_tooltip(
         button(if is_streaming {
             icon(icons::CANCEL).size(20)

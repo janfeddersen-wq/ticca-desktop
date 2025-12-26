@@ -33,8 +33,8 @@ enum ChatPane {
 
 const STARTING_TODO_NODE_ID: usize = 0;
 
-fn enforce_sidebar_tab(expert_mode_enabled: bool, tab: RightSidebarTab) -> RightSidebarTab {
-    if expert_mode_enabled {
+fn enforce_sidebar_tab(shows_expert_ui: bool, tab: RightSidebarTab) -> RightSidebarTab {
+    if shows_expert_ui {
         return tab;
     }
 
@@ -46,8 +46,8 @@ fn enforce_sidebar_tab(expert_mode_enabled: bool, tab: RightSidebarTab) -> Right
     }
 }
 
-fn enforce_todo_selected_node(expert_mode_enabled: bool, node_id: usize) -> usize {
-    if expert_mode_enabled {
+fn enforce_todo_selected_node(shows_internal_agents: bool, node_id: usize) -> usize {
+    if shows_internal_agents {
         node_id
     } else {
         STARTING_TODO_NODE_ID
@@ -169,7 +169,7 @@ impl ChatState {
             chat_pane,
             flow_pane: Some(flow_pane),
             sidebar_tab: enforce_sidebar_tab(
-                config.expert_mode_enabled,
+                config.ui_mode.shows_expert_ui(),
                 RightSidebarTab::AgentsFlow,
             ),
             todo_selected_node: 0,
@@ -407,9 +407,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 ProviderId::ChatGpt => {
                     auth::has_valid_account(ticca_core::config::models::providers::CHATGPT)
                 }
-                ProviderId::ApiKey(ref provider_id) => {
-                    auth::has_valid_api_key(provider_id)
-                }
+                ProviderId::ApiKey(ref provider_id) => auth::has_valid_api_key(provider_id),
             };
 
             if !provider_ok {
@@ -587,7 +585,9 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         } => {
             // Update pre-request context estimate for UI display
             // Use our own context window lookup instead of rig's default (200k)
-            let our_context_window = app.chat.selected_model_name()
+            let our_context_window = app
+                .chat
+                .selected_model_name()
                 .map(|m| ticca_core::llm::ModelService::get_context_length(m) as u64)
                 .unwrap_or(app.chat.context_window);
             let our_usage_percent = if our_context_window > 0 {
@@ -697,12 +697,12 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         }
 
         chat::Msg::SelectSidebarTab(tab) => {
-            app.chat.sidebar_tab = enforce_sidebar_tab(app.expert_mode_enabled, tab);
+            app.chat.sidebar_tab = enforce_sidebar_tab(app.ui_mode.shows_expert_ui(), tab);
         }
 
         chat::Msg::SelectTodoNode(option) => {
             app.chat.todo_selected_node =
-                enforce_todo_selected_node(app.expert_mode_enabled, option.node_id);
+                enforce_todo_selected_node(app.ui_mode.shows_internal_agents(), option.node_id);
         }
 
         chat::Msg::SystemExecNewTerminalNameChanged(name) => {
@@ -725,14 +725,14 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                     }
                     app.chat.system_exec.new_terminal_name.clear();
                     app.chat.sidebar_tab = enforce_sidebar_tab(
-                        app.expert_mode_enabled,
+                        app.ui_mode.shows_expert_ui(),
                         RightSidebarTab::SystemExecutions,
                     );
                 }
                 Err(e) => {
                     app.chat.system_exec.ui_error = Some(e);
                     app.chat.sidebar_tab = enforce_sidebar_tab(
-                        app.expert_mode_enabled,
+                        app.ui_mode.shows_expert_ui(),
                         RightSidebarTab::SystemExecutions,
                     );
                 }
@@ -951,7 +951,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                     }
 
                     app.chat.todo_selected_node = enforce_todo_selected_node(
-                        app.expert_mode_enabled,
+                        app.ui_mode.shows_expert_ui(),
                         app.chat.todo_selected_node,
                     );
                 }
@@ -1121,11 +1121,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 "📦 **Context compressed** ({} strategy)\n\
                  - Removed {} messages (~{} tokens)\n\
                  - Keeping {} messages (~{} tokens)",
-                strategy,
-                saved_messages,
-                saved_tokens,
-                compressed_messages,
-                compressed_tokens
+                strategy, saved_messages, saved_tokens, compressed_messages, compressed_tokens
             );
             app.chat.messages.push(ChatMessage::system(notification));
         }
@@ -1145,7 +1141,12 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             );
             // Update tokens in UI - the usage warning is informational
             // The context bar already shows token usage, this event is for logging
-            let _ = (current_tokens, threshold_tokens, context_window, usage_percent);
+            let _ = (
+                current_tokens,
+                threshold_tokens,
+                context_window,
+                usage_percent,
+            );
         }
     }
 
@@ -1215,7 +1216,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
     iced::widget::pane_grid(&app.chat.panes, |_pane, pane_state, _| {
         let content = match pane_state {
             ChatPane::Chat => crate::views::chat::view(
-                app.expert_mode_enabled,
+                app.ui_mode.shows_expert_ui(),
                 app.chat.current_agent,
                 &app.chat.working_directory,
                 &app.chat.messages,
@@ -1242,7 +1243,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
                 app.chat.sidebar_tab,
                 app.chat.todo_selected_node,
                 app.theme,
-                app.expert_mode_enabled,
+                app.ui_mode.shows_expert_ui(),
             ),
         };
         iced::widget::pane_grid::Content::new(content)

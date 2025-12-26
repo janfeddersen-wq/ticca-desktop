@@ -16,10 +16,13 @@ use ticca_core::external_tools::{
     ExternalToolId, FUSE_DOCS_URL, get_all_tool_definitions, is_fuse_available,
 };
 
-use ticca_core::agents::{AgentRegistry, AgentType};
-use ticca_core::config::{ApiKeyAccount, CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount};
-use ticca_core::session::Session;
 use ticca_core::RegistryService;
+use ticca_core::agents::{AgentRegistry, AgentType};
+use ticca_core::config::{
+    ApiKeyAccount, CompressionSettings, CompressionStrategy, McpServer, McpTransport, OAuthAccount,
+    UiMode,
+};
+use ticca_core::session::Session;
 
 /// Create horizontal space that fills available width (iced 0.14 helper)
 fn horizontal_space() -> Space {
@@ -73,7 +76,7 @@ pub struct AccountsSectionParams<'a> {
     pub api_key_form_label: &'a str,
     pub add_provider_search: &'a str,
     pub add_provider_expanded: bool,
-    pub expert_mode_enabled: bool,
+    pub ui_mode: UiMode,
 }
 
 /// Render the settings view
@@ -95,7 +98,7 @@ pub fn view<'a>(
     add_provider_search: &'a str,
     add_provider_expanded: bool,
     yolo_mode_enabled: bool,
-    expert_mode_enabled: bool,
+    ui_mode: UiMode,
     recent_sessions: &'a [Session],
     active_tab: SettingsTab,
     mcp_servers: &'a [McpServer],
@@ -116,7 +119,7 @@ pub fn view<'a>(
     .padding(10)
     .align_y(iced::Alignment::Center);
 
-    let effective_tab = if !expert_mode_enabled
+    let effective_tab = if !ui_mode.shows_expert_ui()
         && matches!(active_tab, SettingsTab::Models | SettingsTab::Agents)
     {
         SettingsTab::Accounts
@@ -124,7 +127,7 @@ pub fn view<'a>(
         active_tab
     };
 
-    let tabs = build_tabs(effective_tab, expert_mode_enabled);
+    let tabs = build_tabs(effective_tab, ui_mode.shows_expert_ui());
 
     // Theme selector with all available themes
     let theme_options: Vec<AppTheme> = vec![
@@ -162,10 +165,11 @@ pub fn view<'a>(
             .align_y(iced::Alignment::Center),
             row![
                 icon(icons::TUNE).size(16),
-                text("Expert mode:").size(14).width(Length::Fixed(80.0)),
-                checkbox(expert_mode_enabled)
-                    .on_toggle(|v| Message::Settings(settings::Msg::SetExpertMode(v))),
-                text(if expert_mode_enabled { "On" } else { "Off" }).size(12),
+                text("UI Mode:").size(14).width(Length::Fixed(80.0)),
+                pick_list(UiMode::all(), Some(ui_mode), |mode| Message::Settings(
+                    settings::Msg::SetUiMode(mode)
+                ))
+                .width(Length::Fixed(100.0)),
             ]
             .spacing(10)
             .align_y(iced::Alignment::Center),
@@ -195,7 +199,7 @@ pub fn view<'a>(
         api_key_form_label,
         add_provider_search,
         add_provider_expanded,
-        expert_mode_enabled,
+        ui_mode,
     });
     let mcp_servers_section =
         build_mcp_servers_section(mcp_servers, mcp_form, mcp_import_json, theme);
@@ -272,7 +276,9 @@ fn build_model_settings_section<'a>(
         row![
             text("Default Model:").size(14).width(Length::Fixed(140.0)),
             pick_list(model_options.clone(), selected_default, |model| {
-                Message::Settings(settings::Msg::SetDefaultModel(model.canonical_id().to_string()))
+                Message::Settings(settings::Msg::SetDefaultModel(
+                    model.canonical_id().to_string(),
+                ))
             })
             .placeholder("Select default model...")
             .width(Length::Fixed(300.0)),
@@ -328,10 +334,12 @@ fn build_model_settings_section<'a>(
                             ModelOption::UseDefault => {
                                 Message::Settings(settings::Msg::SetAgentModel(agent_type, None))
                             }
-                            ModelOption::Model(m) => Message::Settings(settings::Msg::SetAgentModel(
-                                agent_type,
-                                Some(m.canonical_id().to_string()),
-                            )),
+                            ModelOption::Model(m) => {
+                                Message::Settings(settings::Msg::SetAgentModel(
+                                    agent_type,
+                                    Some(m.canonical_id().to_string()),
+                                ))
+                            }
                         }
                     })
                     .width(Length::Fixed(300.0)),
@@ -372,7 +380,7 @@ fn build_model_settings_section<'a>(
         .into()
 }
 
-fn build_tabs(active: SettingsTab, expert_mode_enabled: bool) -> Element<'static, Message> {
+fn build_tabs(active: SettingsTab, shows_expert_ui: bool) -> Element<'static, Message> {
     let tab_button = |tab: SettingsTab, label: &str, tab_icon| {
         let style = if tab == active {
             styles::primary_button
@@ -394,7 +402,7 @@ fn build_tabs(active: SettingsTab, expert_mode_enabled: bool) -> Element<'static
 
     let mut buttons: Vec<Element<'static, Message>> = Vec::new();
     buttons.push(tab_button(SettingsTab::Accounts, "Accounts", icons::KEY).into());
-    if expert_mode_enabled {
+    if shows_expert_ui {
         buttons.push(tab_button(SettingsTab::Models, "Models", icons::TUNE).into());
         buttons.push(tab_button(SettingsTab::Agents, "Agents", icons::SMART_TOY).into());
     }
@@ -807,7 +815,7 @@ fn build_accounts_section<'a>(params: AccountsSectionParams<'a>) -> Element<'a, 
         api_key_form_label,
         add_provider_search,
         add_provider_expanded,
-        expert_mode_enabled,
+        ui_mode,
     } = params;
     let oauth_button = |provider: OAuthProvider, label: &str, is_authenticated: bool| {
         let auth_icon = if is_authenticated {
@@ -978,7 +986,7 @@ fn build_accounts_section<'a>(params: AccountsSectionParams<'a>) -> Element<'a, 
         .into(),
     );
 
-    if expert_mode_enabled {
+    if ui_mode.shows_expert_ui() {
         children.push(accounts_section("Claude (OAuth)", claude_accounts));
         children.push(accounts_section("Gemini (OAuth)", gemini_accounts));
         children.push(accounts_section("ChatGPT (OAuth)", chatgpt_accounts));
@@ -1046,56 +1054,59 @@ fn build_api_key_providers_section<'a>(
             .collect();
 
         // Build suggestion list if expanded and has results
-        let suggestions: Element<'a, Message> = if search_expanded && !search_text.is_empty() && !filtered_providers.is_empty() {
-            let suggestion_buttons: Vec<Element<'a, Message>> = filtered_providers
-                .into_iter()
-                .map(|provider| {
-                    let provider_id = provider.id.clone();
-                    button(
-                        row![
-                            text(&provider.name).size(13),
-                            horizontal_space(),
-                            text(&provider.id).size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
-                                color: Some(Color::from_rgb8(120, 120, 120)),
-                            }),
-                        ]
+        let suggestions: Element<'a, Message> =
+            if search_expanded && !search_text.is_empty() && !filtered_providers.is_empty() {
+                let suggestion_buttons: Vec<Element<'a, Message>> = filtered_providers
+                    .into_iter()
+                    .map(|provider| {
+                        let provider_id = provider.id.clone();
+                        button(
+                            row![
+                                text(&provider.name).size(13),
+                                horizontal_space(),
+                                text(&provider.id).size(11).style(|_theme: &iced::Theme| {
+                                    iced::widget::text::Style {
+                                        color: Some(Color::from_rgb8(120, 120, 120)),
+                                    }
+                                }),
+                            ]
+                            .width(Length::Fill),
+                        )
+                        .on_press(Message::Settings(settings::Msg::SelectProviderToAdd(
+                            provider_id,
+                        )))
+                        .style(styles::secondary_button)
+                        .padding([8, 12])
                         .width(Length::Fill)
-                    )
-                    .on_press(Message::Settings(settings::Msg::SelectProviderToAdd(provider_id)))
-                    .style(styles::secondary_button)
-                    .padding([8, 12])
-                    .width(Length::Fill)
-                    .into()
-                })
-                .collect();
+                        .into()
+                    })
+                    .collect();
 
-            container(
-                Column::with_children(suggestion_buttons).spacing(2)
-            )
-            .padding(8)
-            .style(|theme: &iced::Theme| container::Style {
-                background: Some(theme.extended_palette().background.weak.color.into()),
-                border: Border {
-                    color: Color::from_rgb8(60, 60, 60),
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-        } else if search_expanded && !search_text.is_empty() && filtered_providers.is_empty() {
-            text("No matching providers found").size(12).style(|_theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(Color::from_rgb8(120, 120, 120)),
-            }).into()
-        } else {
-            column![].into()
-        };
+                container(Column::with_children(suggestion_buttons).spacing(2))
+                    .padding(8)
+                    .style(|theme: &iced::Theme| container::Style {
+                        background: Some(theme.extended_palette().background.weak.color.into()),
+                        border: Border {
+                            color: Color::from_rgb8(60, 60, 60),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .into()
+            } else if search_expanded && !search_text.is_empty() && filtered_providers.is_empty() {
+                text("No matching providers found")
+                    .size(12)
+                    .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(120, 120, 120)),
+                    })
+                    .into()
+            } else {
+                column![].into()
+            };
 
         column![
-            row![
-                icon(icons::ADD).size(16),
-                text(" Add Provider").size(14),
-            ].spacing(4),
+            row![icon(icons::ADD).size(16), text(" Add Provider").size(14),].spacing(4),
             search_input,
             suggestions,
         ]
@@ -1111,10 +1122,12 @@ fn build_api_key_providers_section<'a>(
                     row![
                         text(format!("Add API Key for {}", provider.name)).size(14),
                         horizontal_space(),
-                        button(row![icon(icons::CLOSE).size(14), text(" Cancel").size(12),].spacing(4))
-                            .on_press(Message::Settings(settings::Msg::CancelAddApiKey))
-                            .style(styles::secondary_button)
-                            .padding([6, 10]),
+                        button(
+                            row![icon(icons::CLOSE).size(14), text(" Cancel").size(12),].spacing(4)
+                        )
+                        .on_press(Message::Settings(settings::Msg::CancelAddApiKey))
+                        .style(styles::secondary_button)
+                        .padding([6, 10]),
                     ]
                     .spacing(8)
                     .align_y(iced::Alignment::Center),
@@ -1130,17 +1143,21 @@ fn build_api_key_providers_section<'a>(
                     row![
                         text("Label:").size(13).width(Length::Fixed(80.0)),
                         text_input("Optional label...", form_label)
-                            .on_input(|v| Message::Settings(settings::Msg::ApiKeyLabelFormChanged(v)))
+                            .on_input(|v| Message::Settings(settings::Msg::ApiKeyLabelFormChanged(
+                                v
+                            )))
                             .width(Length::Fill),
                     ]
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
                     row![
                         horizontal_space(),
-                        button(row![icon(icons::SAVE).size(14), text(" Save").size(12),].spacing(4))
-                            .on_press(Message::Settings(settings::Msg::SaveApiKey))
-                            .style(styles::primary_button)
-                            .padding([6, 10]),
+                        button(
+                            row![icon(icons::SAVE).size(14), text(" Save").size(12),].spacing(4)
+                        )
+                        .on_press(Message::Settings(settings::Msg::SaveApiKey))
+                        .style(styles::primary_button)
+                        .padding([6, 10]),
                     ]
                     .spacing(8),
                 ]
@@ -1148,7 +1165,7 @@ fn build_api_key_providers_section<'a>(
             )
             .padding(12)
             .style(styles::card_container)
-            .into()
+            .into(),
         )
     });
 
@@ -1156,7 +1173,10 @@ fn build_api_key_providers_section<'a>(
     let mut provider_cards: Vec<Element<'a, Message>> = Vec::new();
 
     for provider in configured_providers {
-        let accounts = api_key_accounts.get(&provider.id).cloned().unwrap_or_default();
+        let accounts = api_key_accounts
+            .get(&provider.id)
+            .cloned()
+            .unwrap_or_default();
         let is_form_open = form_provider == Some(provider.id.as_str());
 
         // Provider header with Add button
@@ -1168,7 +1188,9 @@ fn build_api_key_providers_section<'a>(
         } else {
             let provider_id = provider.id.clone();
             button(row![icon(icons::ADD).size(14), text(" Add").size(12),].spacing(4))
-                .on_press(Message::Settings(settings::Msg::StartAddApiKeyById(provider_id)))
+                .on_press(Message::Settings(settings::Msg::StartAddApiKeyById(
+                    provider_id,
+                )))
                 .style(styles::success_button)
                 .padding([6, 10])
         };
@@ -1189,7 +1211,9 @@ fn build_api_key_providers_section<'a>(
                         row![
                             text("API Key:").size(13).width(Length::Fixed(80.0)),
                             text_input("Enter API key...", form_value)
-                                .on_input(|v| Message::Settings(settings::Msg::ApiKeyFormChanged(v)))
+                                .on_input(|v| Message::Settings(settings::Msg::ApiKeyFormChanged(
+                                    v
+                                )))
                                 .width(Length::Fill)
                                 .secure(true),
                         ]
@@ -1198,17 +1222,22 @@ fn build_api_key_providers_section<'a>(
                         row![
                             text("Label:").size(13).width(Length::Fixed(80.0)),
                             text_input("Optional label...", form_label)
-                                .on_input(|v| Message::Settings(settings::Msg::ApiKeyLabelFormChanged(v)))
+                                .on_input(|v| Message::Settings(
+                                    settings::Msg::ApiKeyLabelFormChanged(v)
+                                ))
                                 .width(Length::Fill),
                         ]
                         .spacing(10)
                         .align_y(iced::Alignment::Center),
                         row![
                             horizontal_space(),
-                            button(row![icon(icons::SAVE).size(14), text(" Save").size(12),].spacing(4))
-                                .on_press(Message::Settings(settings::Msg::SaveApiKey))
-                                .style(styles::primary_button)
-                                .padding([6, 10]),
+                            button(
+                                row![icon(icons::SAVE).size(14), text(" Save").size(12),]
+                                    .spacing(4)
+                            )
+                            .on_press(Message::Settings(settings::Msg::SaveApiKey))
+                            .style(styles::primary_button)
+                            .padding([6, 10]),
                         ]
                         .spacing(8),
                     ]
@@ -1256,11 +1285,14 @@ fn build_api_key_providers_section<'a>(
                             .spacing(2)
                             .width(Length::Fill),
                         row![
-                            button(icon(if account.is_active {
-                                icons::CHECK_CIRCLE
-                            } else {
-                                icons::CANCEL
-                            }).size(14))
+                            button(
+                                icon(if account.is_active {
+                                    icons::CHECK_CIRCLE
+                                } else {
+                                    icons::CANCEL
+                                })
+                                .size(14)
+                            )
                             .on_press(Message::Settings(
                                 settings::Msg::ToggleApiKeyAccountActive {
                                     account_id: account.id.clone(),
@@ -1311,7 +1343,8 @@ fn build_api_key_providers_section<'a>(
             })
             .collect();
 
-        let accounts_list: Element<'a, Message> = Column::with_children(account_rows).spacing(4).into();
+        let accounts_list: Element<'a, Message> =
+            Column::with_children(account_rows).spacing(4).into();
 
         // Combine header, form, and accounts list
         let mut card_children: Vec<Element<'a, Message>> = vec![header.into()];
@@ -1320,12 +1353,11 @@ fn build_api_key_providers_section<'a>(
         }
         card_children.push(accounts_list);
 
-        let provider_card: Element<'a, Message> = container(
-            Column::with_children(card_children).spacing(10),
-        )
-        .padding(12)
-        .style(styles::card_container)
-        .into();
+        let provider_card: Element<'a, Message> =
+            container(Column::with_children(card_children).spacing(10))
+                .padding(12)
+                .style(styles::card_container)
+                .into();
 
         provider_cards.push(provider_card);
     }
@@ -1345,7 +1377,9 @@ fn build_api_key_providers_section<'a>(
     // Add form section if adding a new provider (not already configured)
     if let Some(form) = form_section {
         // Only show this form if the provider is not already in configured list
-        if let Some(provider_id) = form_provider && !api_key_accounts.contains_key(provider_id) {
+        if let Some(provider_id) = form_provider
+            && !api_key_accounts.contains_key(provider_id)
+        {
             content_children.push(form);
         }
     }
@@ -1354,20 +1388,21 @@ fn build_api_key_providers_section<'a>(
     if !provider_cards.is_empty() {
         content_children.push(
             column![
-                text("Configured Providers").size(14).style(|_theme: &iced::Theme| iced::widget::text::Style {
-                    color: Some(Color::from_rgb8(150, 150, 150)),
-                }),
-            ].into()
+                text("Configured Providers")
+                    .size(14)
+                    .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(150, 150, 150)),
+                    }),
+            ]
+            .into(),
         );
         content_children.push(Column::with_children(provider_cards).spacing(10).into());
     }
 
-    container(
-        Column::with_children(content_children).spacing(12),
-    )
-    .padding(20)
-    .style(styles::card_container)
-    .into()
+    container(Column::with_children(content_children).spacing(12))
+        .padding(20)
+        .style(styles::card_container)
+        .into()
 }
 
 /// Wrapper for model ID with nice display formatting
@@ -1473,10 +1508,17 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
     // Compression enabled toggle
     let enabled_row = row![
         icon(icons::COMPRESS).size(16),
-        text("Context Compression:").size(14).width(Length::Fixed(140.0)),
+        text("Context Compression:")
+            .size(14)
+            .width(Length::Fixed(140.0)),
         checkbox(compression.enabled)
             .on_toggle(|v| Message::Settings(settings::Msg::SetCompressionEnabled(v))),
-        text(if compression.enabled { "Enabled" } else { "Disabled" }).size(12),
+        text(if compression.enabled {
+            "Enabled"
+        } else {
+            "Disabled"
+        })
+        .size(12),
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);
@@ -1489,9 +1531,11 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
         })
         .width(Length::Fixed(200.0)),
         text(format!("{}%", compression.threshold_percent)).size(12),
-        text("of context window").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
-            color: Some(Color::from_rgb8(120, 120, 120)),
-        }),
+        text("of context window")
+            .size(11)
+            .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb8(120, 120, 120)),
+            }),
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);
@@ -1513,18 +1557,18 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
 
     // Strategy description
     let strategy_desc = match compression.strategy {
-        CompressionStrategy::Truncation => {
-            "Keeps system prompt + recent messages (by token count)"
-        }
+        CompressionStrategy::Truncation => "Keeps system prompt + recent messages (by token count)",
         CompressionStrategy::Summarizing => {
             "Generates a summary of removed context (uses LLM tokens)"
         }
     };
     let strategy_desc_row = row![
         Space::new().width(Length::Fixed(140.0)),
-        text(strategy_desc).size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
-            color: Some(Color::from_rgb8(120, 120, 120)),
-        }),
+        text(strategy_desc)
+            .size(11)
+            .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb8(120, 120, 120)),
+            }),
     ]
     .spacing(10);
 
@@ -1536,9 +1580,11 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
         })
         .width(Length::Fixed(120.0)),
         text(format!("{} messages", compression.preserve_first)).size(12),
-        text("(system prompt)").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
-            color: Some(Color::from_rgb8(120, 120, 120)),
-        }),
+        text("(system prompt)")
+            .size(11)
+            .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb8(120, 120, 120)),
+            }),
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);
@@ -1547,15 +1593,19 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
     // Range: 10k to 100k tokens, step by 5k
     let protected_tokens_k = compression.protected_tokens / 1000;
     let preserve_recent_row = row![
-        text("Protected Tokens:").size(14).width(Length::Fixed(140.0)),
+        text("Protected Tokens:")
+            .size(14)
+            .width(Length::Fixed(140.0)),
         iced::widget::slider(10..=100, protected_tokens_k, |v| {
             Message::Settings(settings::Msg::SetCompressionProtectedTokens(v * 1000))
         })
         .width(Length::Fixed(120.0)),
         text(format!("{}k tokens", protected_tokens_k)).size(12),
-        text("(recent context budget)").size(11).style(|_theme: &iced::Theme| iced::widget::text::Style {
-            color: Some(Color::from_rgb8(120, 120, 120)),
-        }),
+        text("(recent context budget)")
+            .size(11)
+            .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb8(120, 120, 120)),
+            }),
     ]
     .spacing(10)
     .align_y(iced::Alignment::Center);
@@ -1563,9 +1613,11 @@ fn build_compression_section(compression: &CompressionSettings) -> Element<'_, M
     container(
         column![
             text("Context Compression").size(18),
-            text("Automatically compress context when approaching token limits.").size(12).style(|_theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(Color::from_rgb8(120, 120, 120)),
-            }),
+            text("Automatically compress context when approaching token limits.")
+                .size(12)
+                .style(|_theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb8(120, 120, 120)),
+                }),
             enabled_row,
             threshold_row,
             strategy_row,

@@ -13,7 +13,9 @@ use reqwest::Client as ReqwestClient;
 use serde_json::Value;
 use std::future::Future;
 
-use rig::http_client::{HttpClientExt, LazyBody, MultipartForm, StreamingResponse, StreamBytesCounter};
+use rig::http_client::{
+    HttpClientExt, LazyBody, MultipartForm, StreamBytesCounter, StreamingResponse,
+};
 
 /// A wrapper around reqwest::Client that adds custom headers to all requests
 #[derive(Clone, Debug)]

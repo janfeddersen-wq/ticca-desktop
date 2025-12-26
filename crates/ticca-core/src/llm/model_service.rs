@@ -6,8 +6,8 @@
 //! - Filtering of models based on available providers
 //! - Context length tracking for each model
 
-use crate::config::models::DiscoveredModel;
 use crate::config::ConfigDatabase;
+use crate::config::models::DiscoveredModel;
 use crate::llm::ClaudeClient;
 use crate::llm::auth;
 use crate::llm::provider_registry::{ModelId, ProviderId};
@@ -48,7 +48,10 @@ impl ModelService {
             .map_err(|e| format!("Failed to fetch models: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(format!("Failed to fetch models: HTTP {}", response.status()));
+            return Err(format!(
+                "Failed to fetch models: HTTP {}",
+                response.status()
+            ));
         }
 
         let models_response: ModelsResponse = response
@@ -70,10 +73,10 @@ impl ModelService {
                     && !id.contains("moderation")
             })
             .map(|m| {
-                let context_length = m.context_window
+                let context_length = m
+                    .context_window
                     .unwrap_or_else(|| crate::compression::get_model_context_window(&m.id) as i64);
-                DiscoveredModel::new(provider_id, &m.id)
-                    .with_context_length(context_length)
+                DiscoveredModel::new(provider_id, &m.id).with_context_length(context_length)
             })
             .collect();
 
@@ -97,7 +100,8 @@ impl ModelService {
                 let discovered: Vec<DiscoveredModel> = models
                     .into_iter()
                     .map(|m| {
-                        let context_length = crate::compression::get_model_context_window(&m) as i64;
+                        let context_length =
+                            crate::compression::get_model_context_window(&m) as i64;
                         DiscoveredModel::new("claude", &m).with_context_length(context_length)
                     })
                     .collect();
@@ -112,9 +116,10 @@ impl ModelService {
                     let discovered: Vec<DiscoveredModel> = models
                         .into_iter()
                         .map(|m| {
-                            let context_length = m.input_token_limit.unwrap_or(
-                                crate::compression::get_model_context_window(&m.name)
-                            ) as i64;
+                            let context_length = m
+                                .input_token_limit
+                                .unwrap_or(crate::compression::get_model_context_window(&m.name))
+                                as i64;
                             DiscoveredModel::new("gemini", &m.name)
                                 .with_context_length(context_length)
                         })
@@ -139,7 +144,8 @@ impl ModelService {
                     let discovered: Vec<DiscoveredModel> = models
                         .into_iter()
                         .map(|m| {
-                            let context_length = crate::compression::get_model_context_window(&m.id) as i64;
+                            let context_length =
+                                crate::compression::get_model_context_window(&m.id) as i64;
                             DiscoveredModel::new("chatgpt", &m.id)
                                 .with_context_length(context_length)
                         })
@@ -179,11 +185,7 @@ impl ModelService {
                 .await
                 {
                     Ok(models) => {
-                        tracing::info!(
-                            "Fetched {} models from {}",
-                            models.len(),
-                            provider.name
-                        );
+                        tracing::info!("Fetched {} models from {}", models.len(), provider.name);
                         all_models.extend(models);
                     }
                     Err(e) => {
@@ -212,17 +214,23 @@ impl ModelService {
     }
 
     /// Fetch models for a specific provider as DiscoveredModel
-    pub async fn fetch_for_discovered(provider: ProviderId) -> Result<Vec<DiscoveredModel>, String> {
+    pub async fn fetch_for_discovered(
+        provider: ProviderId,
+    ) -> Result<Vec<DiscoveredModel>, String> {
         let models = match provider {
             ProviderId::Claude => {
                 let token = auth::select_token(crate::config::models::providers::CLAUDE)
                     .ok_or_else(|| "Claude authentication required".to_string())?;
                 let client = ClaudeClient::new(token.access_token);
-                let model_names = client.fetch_latest_models().await.map_err(|e| e.to_string())?;
+                let model_names = client
+                    .fetch_latest_models()
+                    .await
+                    .map_err(|e| e.to_string())?;
                 model_names
                     .into_iter()
                     .map(|m| {
-                        let context_length = crate::compression::get_model_context_window(&m) as i64;
+                        let context_length =
+                            crate::compression::get_model_context_window(&m) as i64;
                         DiscoveredModel::new("claude", &m).with_context_length(context_length)
                     })
                     .collect()
@@ -235,9 +243,10 @@ impl ModelService {
                     Ok(models) => models
                         .into_iter()
                         .map(|m| {
-                            let context_length = m.input_token_limit.unwrap_or(
-                                crate::compression::get_model_context_window(&m.name)
-                            ) as i64;
+                            let context_length = m
+                                .input_token_limit
+                                .unwrap_or(crate::compression::get_model_context_window(&m.name))
+                                as i64;
                             DiscoveredModel::new("gemini", &m.name)
                                 .with_context_length(context_length)
                         })
@@ -259,7 +268,8 @@ impl ModelService {
                     Ok(models) => models
                         .into_iter()
                         .map(|m| {
-                            let context_length = crate::compression::get_model_context_window(&m.id) as i64;
+                            let context_length =
+                                crate::compression::get_model_context_window(&m.id) as i64;
                             DiscoveredModel::new("chatgpt", &m.id)
                                 .with_context_length(context_length)
                         })
@@ -288,7 +298,10 @@ impl ModelService {
                 } else if provider_id == "anthropic" {
                     Self::default_anthropic_models(&provider_id)
                 } else {
-                    return Err(format!("{} does not support model listing", provider_def.name));
+                    return Err(format!(
+                        "{} does not support model listing",
+                        provider_def.name
+                    ));
                 }
             }
         };
@@ -347,7 +360,8 @@ impl ModelService {
     /// Persist models to the database
     fn persist_models(models: &[DiscoveredModel]) -> Result<(), String> {
         let db = ConfigDatabase::open().map_err(|e| e.to_string())?;
-        db.upsert_discovered_models_batch(models).map_err(|e| e.to_string())?;
+        db.upsert_discovered_models_batch(models)
+            .map_err(|e| e.to_string())?;
         tracing::debug!("Persisted {} discovered models to database", models.len());
         Ok(())
     }
@@ -376,10 +390,14 @@ impl ModelService {
 
     fn default_anthropic_models(provider_id: &str) -> Vec<DiscoveredModel> {
         vec![
-            DiscoveredModel::new(provider_id, "claude-sonnet-4-20250514").with_context_length(200_000),
-            DiscoveredModel::new(provider_id, "claude-3-5-sonnet-20241022").with_context_length(200_000),
-            DiscoveredModel::new(provider_id, "claude-3-5-haiku-20241022").with_context_length(200_000),
-            DiscoveredModel::new(provider_id, "claude-3-opus-20240229").with_context_length(200_000),
+            DiscoveredModel::new(provider_id, "claude-sonnet-4-20250514")
+                .with_context_length(200_000),
+            DiscoveredModel::new(provider_id, "claude-3-5-sonnet-20241022")
+                .with_context_length(200_000),
+            DiscoveredModel::new(provider_id, "claude-3-5-haiku-20241022")
+                .with_context_length(200_000),
+            DiscoveredModel::new(provider_id, "claude-3-opus-20240229")
+                .with_context_length(200_000),
         ]
     }
 }
@@ -408,5 +426,4 @@ mod tests {
         assert_eq!(model.provider, "openai");
         assert_eq!(model.model_id, "gpt-4o");
     }
-
 }

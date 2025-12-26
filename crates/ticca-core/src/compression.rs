@@ -13,13 +13,13 @@
 
 use std::sync::Arc;
 
-use rig::compression::SummarizingCompressor;
 use rig::completion::{Message, Prompt};
+use rig::compression::SummarizingCompressor;
 
 use crate::config::{CompressionSettings, CompressionStrategy};
 
 // Re-export rig's context estimation for use throughout ticca
-pub use rig::compression::{estimate_tokens, CompressionError, ContextEstimate};
+pub use rig::compression::{CompressionError, ContextEstimate, estimate_tokens};
 
 /// Get the context window size for a model (in tokens).
 ///
@@ -72,7 +72,12 @@ pub fn create_context_estimate(
         context_length as u64
     });
 
-    ContextEstimate::new(system_prompt, &tool_definitions_json, messages, context_window)
+    ContextEstimate::new(
+        system_prompt,
+        &tool_definitions_json,
+        messages,
+        context_window,
+    )
 }
 
 /// Check if compression is needed based on a context estimate.
@@ -81,7 +86,9 @@ pub fn needs_compression(estimate: &ContextEstimate, settings: &CompressionSetti
 }
 
 /// Legacy compression check - use create_context_estimate for full context estimation.
-#[deprecated(note = "Use create_context_estimate for comprehensive estimation including system prompt and tools")]
+#[deprecated(
+    note = "Use create_context_estimate for comprehensive estimation including system prompt and tools"
+)]
 pub fn check_compression_needed(
     messages: &[Message],
     model_id: &str,
@@ -214,7 +221,9 @@ pub async fn compress_messages_async<P: Prompt + Send + Sync + 'static>(
 }
 
 /// Convert internal Message format to rig Message format.
-pub fn chat_history_to_rig_messages(history: &[(crate::session::MessageRole, String)]) -> Vec<Message> {
+pub fn chat_history_to_rig_messages(
+    history: &[(crate::session::MessageRole, String)],
+) -> Vec<Message> {
     use crate::session::MessageRole;
 
     history
@@ -230,48 +239,48 @@ pub fn chat_history_to_rig_messages(history: &[(crate::session::MessageRole, Str
 }
 
 /// Convert rig Messages back to internal format.
-pub fn rig_messages_to_chat_history(messages: Vec<Message>) -> Vec<(crate::session::MessageRole, String)> {
+pub fn rig_messages_to_chat_history(
+    messages: Vec<Message>,
+) -> Vec<(crate::session::MessageRole, String)> {
     use rig::completion::message::{AssistantContent, UserContent};
 
     messages
         .into_iter()
-        .filter_map(|msg| {
-            match msg {
-                Message::User { content } => {
-                    let text: String = content
-                        .iter()
-                        .filter_map(|c| {
-                            if let UserContent::Text(t) = c {
-                                Some(t.text.clone())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if text.is_empty() {
-                        None
-                    } else {
-                        Some((crate::session::MessageRole::User, text))
-                    }
+        .filter_map(|msg| match msg {
+            Message::User { content } => {
+                let text: String = content
+                    .iter()
+                    .filter_map(|c| {
+                        if let UserContent::Text(t) = c {
+                            Some(t.text.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if text.is_empty() {
+                    None
+                } else {
+                    Some((crate::session::MessageRole::User, text))
                 }
-                Message::Assistant { content, .. } => {
-                    let text: String = content
-                        .iter()
-                        .filter_map(|c| {
-                            if let AssistantContent::Text(t) = c {
-                                Some(t.text.clone())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if text.is_empty() {
-                        None
-                    } else {
-                        Some((crate::session::MessageRole::Assistant, text))
-                    }
+            }
+            Message::Assistant { content, .. } => {
+                let text: String = content
+                    .iter()
+                    .filter_map(|c| {
+                        if let AssistantContent::Text(t) = c {
+                            Some(t.text.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if text.is_empty() {
+                    None
+                } else {
+                    Some((crate::session::MessageRole::Assistant, text))
                 }
             }
         })
@@ -329,14 +338,17 @@ mod tests {
         assert!(estimate.messages_tokens > 0);
         assert_eq!(
             estimate.total_tokens,
-            estimate.system_prompt_tokens + estimate.tool_definitions_tokens + estimate.messages_tokens
+            estimate.system_prompt_tokens
+                + estimate.tool_definitions_tokens
+                + estimate.messages_tokens
         );
     }
 
     #[test]
     fn test_truncate_messages_by_tokens() {
         // Create messages with longer content to test truncation
-        let long_text = "This is a fairly long message that will use up quite a few tokens. ".repeat(20);
+        let long_text =
+            "This is a fairly long message that will use up quite a few tokens. ".repeat(20);
         let messages = vec![
             Message::user("System prompt - this should always be preserved"),
             Message::assistant(long_text.clone()),
@@ -351,7 +363,12 @@ mod tests {
 
         // Should keep first message (system prompt) + some recent messages
         assert!(!result.is_empty());
-        assert!(result.len() < messages.len(), "Expected truncation but got {} of {} messages", result.len(), messages.len());
+        assert!(
+            result.len() < messages.len(),
+            "Expected truncation but got {} of {} messages",
+            result.len(),
+            messages.len()
+        );
 
         // With large protected_tokens, all should be kept
         let result_all = truncate_messages_by_tokens(messages.clone(), 1, 100_000);

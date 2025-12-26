@@ -21,8 +21,9 @@
 //! ```
 
 use super::{
-    generated_context_overrides, generated_context_windows, generated_models, generated_providers,
-    static_models, static_providers, AuthType, ModelDefinition, ProviderDefinition,
+    AuthType, ModelDefinition, ProviderDefinition, generated_context_overrides,
+    generated_context_windows, generated_models, generated_providers, static_models,
+    static_providers,
 };
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -278,7 +279,9 @@ impl RegistryService {
 
         // Check if there's a global override for just the model ID
         let model_only = Self::strip_provider_prefix(model_id);
-        if model_only != model_id && let Some(&ctx) = CONTEXT_OVERRIDES.get(model_only) {
+        if model_only != model_id
+            && let Some(&ctx) = CONTEXT_OVERRIDES.get(model_only)
+        {
             return ctx;
         }
 
@@ -424,7 +427,10 @@ mod tests {
     fn test_get_context_window_known_model() {
         // Claude models have ~200k context
         let ctx = RegistryService::get_context_window("claude-sonnet-4-20250514");
-        assert!(ctx >= 200_000, "Claude Sonnet 4 should have at least 200k context");
+        assert!(
+            ctx >= 200_000,
+            "Claude Sonnet 4 should have at least 200k context"
+        );
     }
 
     #[test]
@@ -437,7 +443,10 @@ mod tests {
     fn test_get_context_window_gemini() {
         // Gemini 2.0 Flash has 1M+ context (1048576 tokens)
         let ctx = RegistryService::get_context_window("gemini-2.0-flash");
-        assert!(ctx >= 1_000_000, "Gemini 2.0 Flash should have at least 1M context");
+        assert!(
+            ctx >= 1_000_000,
+            "Gemini 2.0 Flash should have at least 1M context"
+        );
     }
 
     #[test]
@@ -450,7 +459,10 @@ mod tests {
     fn test_get_context_window_canonical_format() {
         // Canonical format with provider prefix should work
         let ctx = RegistryService::get_context_window("anthropic:claude-sonnet-4-20250514");
-        assert!(ctx >= 200_000, "Claude Sonnet 4 should have at least 200k context");
+        assert!(
+            ctx >= 200_000,
+            "Claude Sonnet 4 should have at least 200k context"
+        );
 
         let ctx = RegistryService::get_context_window("openai:gpt-4o");
         assert_eq!(ctx, 128_000);
@@ -471,7 +483,11 @@ mod tests {
     fn test_models_for_provider() {
         let anthropic_models = RegistryService::models_for_provider("anthropic");
         assert!(!anthropic_models.is_empty());
-        assert!(anthropic_models.iter().all(|m| m.provider_id == "anthropic"));
+        assert!(
+            anthropic_models
+                .iter()
+                .all(|m| m.provider_id == "anthropic")
+        );
     }
 
     #[test]
@@ -578,10 +594,16 @@ mod tests {
         // ChatGPT OAuth Codex models are limited to 270k via overrides
         // (from data/context_overrides.json)
         let ctx = RegistryService::get_context_window("chatgpt:gpt-5.1-codex");
-        assert_eq!(ctx, 270_000, "ChatGPT OAuth gpt-5.1-codex should be limited to 270k");
+        assert_eq!(
+            ctx, 270_000,
+            "ChatGPT OAuth gpt-5.1-codex should be limited to 270k"
+        );
 
         let ctx = RegistryService::get_context_window("chatgpt:gpt-5.2");
-        assert_eq!(ctx, 270_000, "ChatGPT OAuth gpt-5.2 should be limited to 270k");
+        assert_eq!(
+            ctx, 270_000,
+            "ChatGPT OAuth gpt-5.2 should be limited to 270k"
+        );
 
         // Regular gpt-4o (not ChatGPT OAuth) should use the API value
         let ctx = RegistryService::get_context_window("openai:gpt-4o");

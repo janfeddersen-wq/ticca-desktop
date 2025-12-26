@@ -71,7 +71,7 @@ pub struct UpdateAvailableState {
 pub struct TiccaApp {
     current_view: View,
     theme: AppTheme,
-    expert_mode_enabled: bool,
+    ui_mode: ticca_core::config::UiMode,
     chat: features::chat::ChatState,
     settings: features::settings::SettingsState,
     toast: Option<Toast>,
@@ -104,7 +104,7 @@ impl TiccaApp {
         let app = Self {
             current_view: View::Chat,
             theme: config.theme,
-            expert_mode_enabled: config.expert_mode_enabled,
+            ui_mode: config.ui_mode,
             chat: features::chat::ChatState::new(&config, working_directory),
             settings: features::settings::SettingsState::new(provider_auth_status),
             toast: None,

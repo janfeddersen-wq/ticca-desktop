@@ -76,7 +76,7 @@ pub struct SessionMessage {
     pub content: String,
     pub tool_calls_json: Option<String>, // For assistant tool calls
     pub tool_result_json: Option<String>, // For tool responses
-    pub reasoning: Option<String>,        // Thinking/reasoning content
+    pub reasoning: Option<String>,       // Thinking/reasoning content
     pub reasoning_signature: Option<String>, // Signature for reasoning verification (Claude)
     pub tokens: i64,
     pub created_at: Option<String>,
@@ -158,11 +158,7 @@ impl SessionMessage {
         self
     }
 
-    pub fn with_reasoning(
-        mut self,
-        reasoning: Option<String>,
-        signature: Option<String>,
-    ) -> Self {
+    pub fn with_reasoning(mut self, reasoning: Option<String>, signature: Option<String>) -> Self {
         self.reasoning = reasoning;
         self.reasoning_signature = signature;
         self

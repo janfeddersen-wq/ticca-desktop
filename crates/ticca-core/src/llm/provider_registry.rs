@@ -204,7 +204,10 @@ impl ProviderId {
     }
 
     pub fn is_oauth(&self) -> bool {
-        matches!(self, ProviderId::Claude | ProviderId::Gemini | ProviderId::ChatGpt)
+        matches!(
+            self,
+            ProviderId::Claude | ProviderId::Gemini | ProviderId::ChatGpt
+        )
     }
 }
 
@@ -419,10 +422,16 @@ mod tests {
         assert_eq!(id.resolve_provider(), ProviderId::Gemini);
 
         let id = ModelId::new("openai", "gpt-4o");
-        assert_eq!(id.resolve_provider(), ProviderId::ApiKey("openai".to_string()));
+        assert_eq!(
+            id.resolve_provider(),
+            ProviderId::ApiKey("openai".to_string())
+        );
 
         let id = ModelId::new("groq", "llama-3.1-70b");
-        assert_eq!(id.resolve_provider(), ProviderId::ApiKey("groq".to_string()));
+        assert_eq!(
+            id.resolve_provider(),
+            ProviderId::ApiKey("groq".to_string())
+        );
     }
 
     #[test]

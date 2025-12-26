@@ -2,6 +2,65 @@
 
 use crate::config::{ConfigRepo, defaults, setting_keys};
 
+/// UI complexity mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiMode {
+    /// Simplified UI - hides advanced options and internal agents
+    #[default]
+    Easy,
+    /// Shows advanced options (models, agents tabs) but not internal agents
+    Expert,
+    /// Full access - shows everything including internal/subagents
+    Debug,
+}
+
+impl UiMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UiMode::Easy => "easy",
+            UiMode::Expert => "expert",
+            UiMode::Debug => "debug",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value.to_lowercase().as_str() {
+            "expert" => UiMode::Expert,
+            "debug" => UiMode::Debug,
+            _ => UiMode::Easy,
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            UiMode::Easy => "Easy",
+            UiMode::Expert => "Expert",
+            UiMode::Debug => "Debug",
+        }
+    }
+
+    /// Returns all available UI modes
+    pub fn all() -> &'static [UiMode] {
+        &[UiMode::Easy, UiMode::Expert, UiMode::Debug]
+    }
+
+    /// Whether this mode shows expert UI features (models/agents tabs)
+    pub fn shows_expert_ui(&self) -> bool {
+        matches!(self, UiMode::Expert | UiMode::Debug)
+    }
+
+    /// Whether this mode shows internal/debug agents
+    pub fn shows_internal_agents(&self) -> bool {
+        matches!(self, UiMode::Debug)
+    }
+}
+
+impl std::fmt::Display for UiMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountRotationPolicy {
     PriorityThenLeastRecentlyUsed,
@@ -147,7 +206,7 @@ pub struct TypedSettings {
     pub default_model: Option<String>,
     pub max_tool_rounds: u32,
     pub yolo_mode_enabled: bool,
-    pub expert_mode_enabled: bool,
+    pub ui_mode: UiMode,
     pub account_rotation_policy: AccountRotationPolicy,
     pub external_tools_prompt_dismissed: bool,
     pub update_check_skip_remaining: u32,
@@ -156,6 +215,7 @@ pub struct TypedSettings {
 }
 
 impl TypedSettings {
+    #[allow(deprecated)]
     pub fn load(repo: &impl ConfigRepo) -> Self {
         let theme =
             get_string(repo, setting_keys::THEME).unwrap_or_else(|| defaults::THEME.to_string());
@@ -164,8 +224,21 @@ impl TypedSettings {
             get_u32(repo, setting_keys::MAX_TOOL_ROUNDS).unwrap_or(defaults::MAX_TOOL_ROUNDS);
         let yolo_mode_enabled =
             get_bool(repo, setting_keys::YOLO_MODE).unwrap_or(defaults::YOLO_MODE);
-        let expert_mode_enabled =
-            get_bool(repo, setting_keys::EXPERT_MODE).unwrap_or(defaults::EXPERT_MODE);
+
+        // Load ui_mode with fallback to legacy expert_mode for migration
+        let ui_mode = get_string(repo, setting_keys::UI_MODE)
+            .map(|s| UiMode::parse(&s))
+            .unwrap_or_else(|| {
+                // Migrate from legacy expert_mode if present
+                let legacy_expert =
+                    get_bool(repo, setting_keys::EXPERT_MODE).unwrap_or(defaults::EXPERT_MODE);
+                if legacy_expert {
+                    UiMode::Expert
+                } else {
+                    UiMode::Easy
+                }
+            });
+
         let account_rotation_policy = get_string(repo, setting_keys::ACCOUNT_ROTATION_POLICY)
             .map(|value| AccountRotationPolicy::parse(&value))
             .unwrap_or(defaults::ACCOUNT_ROTATION_POLICY);
@@ -183,7 +256,7 @@ impl TypedSettings {
             default_model,
             max_tool_rounds,
             yolo_mode_enabled,
-            expert_mode_enabled,
+            ui_mode,
             account_rotation_policy,
             external_tools_prompt_dismissed,
             update_check_skip_remaining,

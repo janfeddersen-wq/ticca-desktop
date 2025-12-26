@@ -36,7 +36,7 @@ mod static_data;
 // This provides generated_providers(), generated_models(), and generated_context_windows()
 include!(concat!(env!("OUT_DIR"), "/registry_generated.rs"));
 
-pub use service::{RegistryService, DEFAULT_CONTEXT_WINDOW};
+pub use service::{DEFAULT_CONTEXT_WINDOW, RegistryService};
 pub use static_data::{static_models, static_providers};
 
 use serde::{Deserialize, Serialize};

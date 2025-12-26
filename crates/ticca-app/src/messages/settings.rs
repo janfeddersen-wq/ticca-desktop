@@ -1,5 +1,5 @@
 use ticca_core::agents::AgentType;
-use ticca_core::config::McpTransport;
+use ticca_core::config::{McpTransport, UiMode};
 use ticca_core::external_tools::ExternalToolId;
 
 use crate::theme::AppTheme;
@@ -18,7 +18,7 @@ pub enum Msg {
     ThemeToggle,
     SetTheme(AppTheme),
     SetYoloMode(bool),
-    SetExpertMode(bool),
+    SetUiMode(UiMode),
 
     // OAuth accounts
     StartOAuth(OAuthProvider),
