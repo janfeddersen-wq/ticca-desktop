@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use ticca_core::agents::AgentType;
 use ticca_core::tools::{AgentCallEvent, AgentStreamEvent, SystemExecRequest, TodoListEvent};
 
+use crate::chat_message::MessageId;
+
 use super::{ImageAttachment, RightSidebarTab, TodoNodeOption};
 
 #[derive(Debug, Clone)]
@@ -12,9 +14,9 @@ pub enum Msg {
     InputChanged(String),
     SendMessage,
     ChatScrolled(iced::widget::scrollable::Viewport),
-    CopyMessage(usize),
-    ToggleRawView(usize),
-    RawViewEditorAction(usize, iced::widget::text_editor::Action),
+    CopyMessage(MessageId),
+    ToggleRawView(MessageId),
+    RawViewEditorAction(MessageId, iced::widget::text_editor::Action),
     PaneResized(iced::widget::pane_grid::ResizeEvent),
 
     // Streaming + tool lifecycle

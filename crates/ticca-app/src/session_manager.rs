@@ -8,7 +8,7 @@ use ticca_core::agents::AgentType;
 use ticca_core::session::{Session, SessionMessageInput, SessionService};
 use ticca_core::tools::TodoListState;
 
-use crate::chat_message::ChatMessage;
+use crate::chat_message::{ChatMessage, MessageId};
 use std::collections::HashMap;
 
 /// Session manager data returned after loading a session
@@ -30,7 +30,14 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
         .iter()
         .map(|m| {
             let parsed_items = markdown::parse(&m.content).collect();
+            // Restore message_id if present, otherwise generate fresh one
+            let id = m
+                .message_id
+                .as_ref()
+                .and_then(|s| MessageId::from_string(s))
+                .unwrap_or_else(MessageId::new);
             ChatMessage {
+                id,
                 role: m.role,
                 content: m.content.clone(),
                 is_streaming: false,
@@ -79,6 +86,7 @@ pub fn save_session(
         .iter()
         .filter(|m| !m.is_streaming)
         .map(|m| SessionMessageInput {
+            message_id: Some(m.id.to_string()),
             role: m.role,
             content: m.content.clone(),
             reasoning: m.reasoning.clone(),

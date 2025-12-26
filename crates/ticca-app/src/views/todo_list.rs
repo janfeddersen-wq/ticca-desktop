@@ -24,17 +24,25 @@ pub fn contents<'a>(state: Option<&TodoListState>, _theme: AppTheme) -> Element<
         .filter(|item| item.status == TodoStatus::InProgress)
         .count();
 
-    let status_row = if state.is_completed_and_confirmed() {
+    let all_completed = state.items.iter().all(|item| item.status == TodoStatus::Completed);
+    let status_row = if all_completed && !state.items.is_empty() {
         row![
             icon(icons::CHECK_CIRCLE).size(16),
-            text("Confirmed complete").size(11),
+            text("All complete").size(11),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
+    } else if in_progress > 0 {
+        row![
+            icon(icons::PENDING).size(16),
+            text("In progress").size(11),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center)
     } else {
         row![
-            icon(icons::WARNING).size(16),
-            text("Not confirmed").size(11),
+            icon(icons::RADIO_BUTTON_UNCHECKED).size(16),
+            text("Pending").size(11),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center)
@@ -69,7 +77,7 @@ pub fn contents<'a>(state: Option<&TodoListState>, _theme: AppTheme) -> Element<
 
             row![
                 icon(status_icon).size(16),
-                text(item.text.clone()).size(12).width(Length::Fill),
+                text(item.content.clone()).size(12).width(Length::Fill),
             ]
             .spacing(8)
             .align_y(iced::Alignment::Center)

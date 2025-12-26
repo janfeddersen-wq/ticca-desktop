@@ -8,6 +8,7 @@ use crate::session::models::{MessageRole, Session, SessionMessage};
 use crate::tools::TodoListState;
 
 pub struct SessionMessageInput {
+    pub message_id: Option<String>,
     pub role: MessageRole,
     pub content: String,
     pub reasoning: Option<String>,
@@ -86,6 +87,7 @@ impl SessionService {
         for msg in messages {
             let session_msg = SessionMessage {
                 id: None,
+                message_id: msg.message_id.clone(),
                 session_id: session_id.clone(),
                 role: msg.role,
                 content: msg.content.clone(),

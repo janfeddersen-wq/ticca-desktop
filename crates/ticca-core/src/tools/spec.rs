@@ -382,66 +382,63 @@ pub fn invoke_agent_spec() -> ToolSpec {
 fn todo_write_schema() -> (Value, ToolParameterSchema) {
     let mut item_props = std::collections::HashMap::new();
     item_props.insert(
-        "text".to_string(),
-        ToolParameterSchema::string("Task description (keep short)."),
+        "content".to_string(),
+        ToolParameterSchema::string("Task description."),
     );
     item_props.insert(
         "status".to_string(),
         ToolParameterSchema::string("One of: pending | in_progress | completed."),
     );
+    item_props.insert(
+        "activeForm".to_string(),
+        ToolParameterSchema::string(
+            "Present continuous form shown during execution (e.g., 'Running tests').",
+        ),
+    );
 
-    let item_schema =
-        ToolParameterSchema::object(item_props, vec!["text".to_string(), "status".to_string()]);
+    let item_schema = ToolParameterSchema::object(
+        item_props,
+        vec![
+            "content".to_string(),
+            "status".to_string(),
+            "activeForm".to_string(),
+        ],
+    );
 
     let mut params = std::collections::HashMap::new();
     params.insert(
-        "items".to_string(),
+        "todos".to_string(),
         ToolParameterSchema {
             param_type: "array".to_string(),
-            description: Some("Ordered list of tasks for the current agent.".to_string()),
+            description: Some("The updated todo list.".to_string()),
             default: None,
             properties: None,
             required: None,
             items: Some(Box::new(item_schema)),
         },
     );
-    params.insert(
-        "confirmed_complete".to_string(),
-        ToolParameterSchema::boolean(
-            "Set true to confirm all tasks are completed. Will only be accepted if every item status is completed.",
-        )
-        .with_default(json!(null)),
-    );
-    params.insert(
-        "mark_all_complete".to_string(),
-        ToolParameterSchema::boolean(
-            "Shortcut: set true to mark ALL items as completed and confirm in one step. Overrides individual item statuses.",
-        )
-        .with_default(json!(null)),
-    );
 
     let rig_parameters = json!({
         "type": "object",
         "properties": {
-            "items": {
+            "todos": {
                 "type": "array",
-                "description": "Ordered list of tasks for the current agent",
+                "description": "The updated todo list",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "text": { "type": "string", "description": "Task description (keep short)" },
-                        "status": { "type": "string", "description": "One of: pending | in_progress | completed" }
+                        "content": { "type": "string", "description": "Task description" },
+                        "status": { "type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Task status" },
+                        "activeForm": { "type": "string", "description": "Present continuous form (e.g., 'Running tests')" }
                     },
-                    "required": ["text", "status"]
+                    "required": ["content", "status", "activeForm"]
                 }
-            },
-            "confirmed_complete": { "type": "boolean", "description": "Set true to confirm all tasks are completed (only accepted if all items are completed)" },
-            "mark_all_complete": { "type": "boolean", "description": "Shortcut: set true to mark ALL items as completed and confirm in one step. Overrides individual item statuses." }
+            }
         },
-        "required": ["items"]
+        "required": ["todos"]
     });
 
-    let registry_parameters = ToolParameterSchema::object(params, vec!["items".to_string()]);
+    let registry_parameters = ToolParameterSchema::object(params, vec!["todos".to_string()]);
 
     (rig_parameters, registry_parameters)
 }
@@ -449,7 +446,7 @@ fn todo_write_schema() -> (Value, ToolParameterSchema) {
 pub fn todo_read_spec() -> ToolSpec {
     ToolSpec {
         name: "todo_read",
-        description: "Read the current agent-scoped To Do list (including confirmation state).",
+        description: "Read the current todo list.",
         rig_parameters: json!({
             "type": "object",
             "properties": {},
@@ -459,11 +456,41 @@ pub fn todo_read_spec() -> ToolSpec {
     }
 }
 
+const TODO_WRITE_DESCRIPTION: &str = r#"Create and manage a structured task list for your current session.
+
+## When to Use
+Use proactively for:
+- Complex multi-step tasks (3+ distinct steps)
+- Non-trivial work needing careful planning
+- User provides multiple tasks (numbered/comma-separated)
+- After receiving new instructions - capture as todos
+- Before starting work on a task - mark in_progress
+- After completing a task - mark completed
+
+## When NOT to Use
+Skip when:
+- Single straightforward task
+- Trivial task with no organizational benefit
+- Less than 3 trivial steps
+- Purely conversational or informational
+
+## Task States
+- pending: Not yet started
+- in_progress: Currently working (limit to ONE at a time)
+- completed: Finished successfully
+
+## Management
+- Update status in real-time as you work
+- Mark complete IMMEDIATELY after finishing (don't batch)
+- Exactly ONE task in_progress at any time
+- Only mark complete when FULLY accomplished
+- Keep as in_progress if encountering errors/blockers"#;
+
 pub fn todo_write_spec() -> ToolSpec {
     let (rig_parameters, registry_parameters) = todo_write_schema();
     ToolSpec {
         name: "todo_write",
-        description: "Update the agent-scoped To Do list. Replace the entire list each call; confirm completion by setting confirmed_complete=true when all items are completed.",
+        description: TODO_WRITE_DESCRIPTION,
         rig_parameters,
         registry_parameters,
     }
@@ -473,7 +500,7 @@ pub fn todo_list_spec() -> ToolSpec {
     let (rig_parameters, registry_parameters) = todo_write_schema();
     ToolSpec {
         name: "todo_list",
-        description: "Maintain an agent-scoped To Do list. Replace the entire list each call; confirm completion by setting confirmed_complete=true when all items are completed.",
+        description: TODO_WRITE_DESCRIPTION,
         rig_parameters,
         registry_parameters,
     }

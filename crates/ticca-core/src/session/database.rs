@@ -72,6 +72,10 @@ impl SessionDatabase {
             "ALTER TABLE messages ADD COLUMN reasoning_signature TEXT",
             [],
         );
+        // Migration: add message_id column for stable message identification
+        let _ = self
+            .conn
+            .execute("ALTER TABLE messages ADD COLUMN message_id TEXT", []);
 
         // Create index for efficient message retrieval
         self.conn.execute(
@@ -208,10 +212,11 @@ impl SessionDatabase {
     /// Add a message to a session
     pub fn add_message(&self, message: &SessionMessage) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO messages (session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+            "INSERT INTO messages (session_id, message_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
             params![
                 message.session_id,
+                message.message_id,
                 message.role.as_str(),
                 message.content,
                 message.tool_calls_json,
@@ -232,23 +237,24 @@ impl SessionDatabase {
     /// Get all messages for a session
     pub fn get_messages(&self, session_id: &str) -> Result<Vec<SessionMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at
+            "SELECT id, message_id, session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at
              FROM messages WHERE session_id = ? ORDER BY created_at ASC"
         )?;
 
         let rows = stmt.query_map(params![session_id], |row| {
-            let role_str: String = row.get(2)?;
+            let role_str: String = row.get(3)?;
             Ok(SessionMessage {
                 id: Some(row.get(0)?),
-                session_id: row.get(1)?,
+                message_id: row.get(1)?,
+                session_id: row.get(2)?,
                 role: MessageRole::parse(&role_str),
-                content: row.get(3)?,
-                tool_calls_json: row.get(4)?,
-                tool_result_json: row.get(5)?,
-                reasoning: row.get(6)?,
-                reasoning_signature: row.get(7)?,
-                tokens: row.get(8)?,
-                created_at: row.get(9)?,
+                content: row.get(4)?,
+                tool_calls_json: row.get(5)?,
+                tool_result_json: row.get(6)?,
+                reasoning: row.get(7)?,
+                reasoning_signature: row.get(8)?,
+                tokens: row.get(9)?,
+                created_at: row.get(10)?,
             })
         })?;
 
@@ -262,23 +268,24 @@ impl SessionDatabase {
         limit: usize,
     ) -> Result<Vec<SessionMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at
+            "SELECT id, message_id, session_id, role, content, tool_calls_json, tool_result_json, reasoning, reasoning_signature, tokens, created_at
              FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?"
         )?;
 
         let rows = stmt.query_map(params![session_id, limit as i64], |row| {
-            let role_str: String = row.get(2)?;
+            let role_str: String = row.get(3)?;
             Ok(SessionMessage {
                 id: Some(row.get(0)?),
-                session_id: row.get(1)?,
+                message_id: row.get(1)?,
+                session_id: row.get(2)?,
                 role: MessageRole::parse(&role_str),
-                content: row.get(3)?,
-                tool_calls_json: row.get(4)?,
-                tool_result_json: row.get(5)?,
-                reasoning: row.get(6)?,
-                reasoning_signature: row.get(7)?,
-                tokens: row.get(8)?,
-                created_at: row.get(9)?,
+                content: row.get(4)?,
+                tool_calls_json: row.get(5)?,
+                tool_result_json: row.get(6)?,
+                reasoning: row.get(7)?,
+                reasoning_signature: row.get(8)?,
+                tokens: row.get(9)?,
+                created_at: row.get(10)?,
             })
         })?;
 

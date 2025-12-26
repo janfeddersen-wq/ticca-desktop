@@ -13,31 +13,22 @@ pub enum TodoStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TodoItem {
-    pub text: String,
+    pub content: String,
     pub status: TodoStatus,
+    /// Present continuous form shown during execution (e.g., "Running tests")
+    pub active_form: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TodoListState {
     pub items: Vec<TodoItem>,
-    pub confirmed_complete: bool,
 }
 
 impl TodoListState {
     pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            confirmed_complete: false,
-        }
-    }
-
-    pub fn is_completed_and_confirmed(&self) -> bool {
-        self.confirmed_complete
-            && self
-                .items
-                .iter()
-                .all(|item| item.status == TodoStatus::Completed)
+        Self { items: Vec::new() }
     }
 
     pub fn format_markdown(&self) -> String {
@@ -58,15 +49,8 @@ impl TodoListState {
             .filter(|item| item.status == TodoStatus::Pending)
             .count();
 
-        let status_line = if self.is_completed_and_confirmed() {
-            "✅ Confirmed complete"
-        } else {
-            "⚠️ Not confirmed"
-        };
-
         let mut lines = Vec::new();
         lines.push("## To Do".to_string());
-        lines.push(status_line.to_string());
         lines.push(format!(
             "{} items: {} completed, {} in progress, {} pending",
             total, completed, in_progress, pending
@@ -82,16 +66,8 @@ impl TodoListState {
                     TodoStatus::InProgress => "→",
                     TodoStatus::Completed => "✔",
                 };
-                lines.push(format!("{} {}", icon, item.text));
+                lines.push(format!("{} {}", icon, item.content));
             }
-        }
-
-        if !self.is_completed_and_confirmed() {
-            lines.push(String::new());
-            lines.push(
-                "When all items are completed, call todo_write (or todo_list) with confirmed_complete=true."
-                    .to_string(),
-            );
         }
 
         lines.join("\n")
@@ -139,27 +115,9 @@ impl TodoStore {
         state
     }
 
-    pub async fn update_node(
-        &self,
-        node_id: usize,
-        mut items: Vec<TodoItem>,
-        confirmed_complete: Option<bool>,
-    ) -> TodoListState {
-        items.retain(|item| !item.text.trim().is_empty());
-
-        let is_all_completed = items
-            .iter()
-            .all(|item| item.status == TodoStatus::Completed);
-        let confirmed_complete = match confirmed_complete {
-            Some(true) => is_all_completed,
-            Some(false) | None => false,
-        };
-
-        let state = TodoListState {
-            items,
-            confirmed_complete,
-        };
-
+    pub async fn update_node(&self, node_id: usize, mut items: Vec<TodoItem>) -> TodoListState {
+        items.retain(|item| !item.content.trim().is_empty());
+        let state = TodoListState { items };
         let mut guard = self.inner.write().await;
         guard.insert(node_id, state.clone());
         state

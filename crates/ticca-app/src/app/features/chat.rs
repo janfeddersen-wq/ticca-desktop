@@ -10,7 +10,7 @@ use base64::Engine as _;
 
 use crate::agent_graph::AgentCallGraph;
 use crate::app_config::AppConfig;
-use crate::chat_message::ChatMessage;
+use crate::chat_message::{ChatMessage, MessageId};
 use crate::helpers::format_tool_call_oneliner;
 use crate::messages::{ImageAttachment, Message, RightSidebarTab, chat};
 use crate::session_manager;
@@ -81,8 +81,8 @@ pub(in crate::app) struct ChatState {
     pending_approvals: VecDeque<ToolApprovalPrompt>,
     active_approval: Option<ToolApprovalPrompt>,
     pub(in crate::app) stream_cancel: Option<tokio::sync::oneshot::Sender<()>>,
-    pub(in crate::app) raw_view_messages: HashSet<usize>,
-    pub(in crate::app) raw_view_editors: HashMap<usize, text_editor::Content>,
+    pub(in crate::app) raw_view_messages: HashSet<MessageId>,
+    pub(in crate::app) raw_view_editors: HashMap<MessageId, text_editor::Content>,
     pub(in crate::app) user_at_bottom: bool,
     pub(in crate::app) stream_start_time: Option<std::time::Instant>,
     pub(in crate::app) stream_chars_received: usize,
@@ -98,7 +98,8 @@ pub(in crate::app) struct ChatState {
     pub(in crate::app) estimated_tokens: usize,
     pub(in crate::app) context_window: u64,
     pub(in crate::app) call_graph: AgentCallGraph,
-    pub(in crate::app) subagent_message_indices: HashMap<usize, usize>,
+    /// Maps subagent node_id to the MessageId of their streaming message
+    pub(in crate::app) subagent_messages: HashMap<usize, MessageId>,
     panes: iced::widget::pane_grid::State<ChatPane>,
     chat_pane: iced::widget::pane_grid::Pane,
     flow_pane: Option<iced::widget::pane_grid::Pane>,
@@ -164,7 +165,7 @@ impl ChatState {
             estimated_tokens: 0,
             context_window: 0, // Will be looked up from registry based on selected model
             call_graph: AgentCallGraph::new(AgentType::Coding),
-            subagent_message_indices: HashMap::new(),
+            subagent_messages: HashMap::new(),
             panes,
             chat_pane,
             flow_pane: Some(flow_pane),
@@ -209,6 +210,26 @@ impl ChatState {
         ) {
             self.current_session = Some(session);
         }
+    }
+
+    /// Find a message by its stable ID (mutable)
+    fn message_by_id_mut(&mut self, id: MessageId) -> Option<&mut ChatMessage> {
+        self.messages.iter_mut().find(|m| m.id == id)
+    }
+
+    /// Find a message by its stable ID (immutable)
+    #[allow(dead_code)]
+    fn message_by_id(&self, id: MessageId) -> Option<&ChatMessage> {
+        self.messages.iter().find(|m| m.id == id)
+    }
+
+    /// Get the ID of the current streaming message (main agent)
+    #[allow(dead_code)]
+    fn streaming_message_id(&self) -> Option<MessageId> {
+        self.messages
+            .last()
+            .filter(|m| m.is_streaming)
+            .map(|m| m.id)
     }
 
     /// Get the currently selected model name (pinned or default)
@@ -376,7 +397,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.messages.push(ChatMessage::user(&display_message));
             app.chat.user_at_bottom = true;
             app.chat.call_graph.reset(app.chat.current_agent);
-            app.chat.subagent_message_indices.clear();
+            app.chat.subagent_messages.clear();
             // Clear todo lists for fresh start - don't carry over completed state from previous request
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
@@ -476,27 +497,27 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             effects.push(Effect::ScrollToBottom);
         }
 
-        chat::Msg::CopyMessage(index) => {
-            if let Some(msg) = app.chat.messages.get(index) {
+        chat::Msg::CopyMessage(msg_id) => {
+            if let Some(msg) = app.chat.message_by_id(msg_id) {
                 effects.push(Effect::CopyToClipboard(msg.content.clone()));
             }
         }
 
-        chat::Msg::ToggleRawView(index) => {
-            if app.chat.raw_view_messages.contains(&index) {
-                app.chat.raw_view_messages.remove(&index);
-                app.chat.raw_view_editors.remove(&index);
+        chat::Msg::ToggleRawView(msg_id) => {
+            if app.chat.raw_view_messages.contains(&msg_id) {
+                app.chat.raw_view_messages.remove(&msg_id);
+                app.chat.raw_view_editors.remove(&msg_id);
             } else {
-                if let Some(msg) = app.chat.messages.get(index) {
+                if let Some(msg) = app.chat.message_by_id(msg_id) {
                     let content = text_editor::Content::with_text(&msg.content);
-                    app.chat.raw_view_editors.insert(index, content);
+                    app.chat.raw_view_editors.insert(msg_id, content);
                 }
-                app.chat.raw_view_messages.insert(index);
+                app.chat.raw_view_messages.insert(msg_id);
             }
         }
 
-        chat::Msg::RawViewEditorAction(index, action) => {
-            if let Some(editor) = app.chat.raw_view_editors.get_mut(&index) {
+        chat::Msg::RawViewEditorAction(msg_id, action) => {
+            if let Some(editor) = app.chat.raw_view_editors.get_mut(&msg_id) {
                 editor.perform(action);
             }
         }
@@ -645,7 +666,11 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             if let Some(last) = app.chat.messages.last_mut()
                 && last.is_streaming
             {
-                last.content = format!("❌ Error: {}", error);
+                // PRESERVE existing content, append error instead of replacing
+                if !last.content.trim().is_empty() {
+                    last.content.push_str("\n\n---\n");
+                }
+                last.content.push_str(&format!("❌ Error: {}", error));
                 last.is_streaming = false;
                 last.update_parsed_items();
             }
@@ -672,7 +697,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.current_agent = agent_type;
             app.chat.agent_config = CoreAgentConfig::new(agent_type);
             app.chat.call_graph.reset(agent_type);
-            app.chat.subagent_message_indices.clear();
+            app.chat.subagent_messages.clear();
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
             // Reset context window so it gets looked up fresh for new agent's model
@@ -885,7 +910,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             ));
             app.chat.current_session = None;
             app.chat.call_graph.reset(app.chat.current_agent);
-            app.chat.subagent_message_indices.clear();
+            app.chat.subagent_messages.clear();
         }
 
         chat::Msg::LoadSession(session_id) => {
@@ -913,7 +938,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 tracing::info!("Loaded session with {} messages", app.chat.messages.len());
             }
             app.chat.call_graph.reset(app.chat.current_agent);
-            app.chat.subagent_message_indices.clear();
+            app.chat.subagent_messages.clear();
             app.current_view = View::Chat;
         }
 
@@ -967,34 +992,33 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                     agent_type,
                 } => {
                     let label = format!("{} - {}", agent_type.display_name(), node_id);
-                    app.chat
-                        .messages
-                        .push(ChatMessage::assistant_streaming_named(label));
-                    let index = app.chat.messages.len().saturating_sub(1);
-                    app.chat.subagent_message_indices.insert(node_id, index);
+                    let new_msg = ChatMessage::assistant_streaming_named(label);
+                    let msg_id = new_msg.id;
+                    app.chat.messages.push(new_msg);
+                    app.chat.subagent_messages.insert(node_id, msg_id);
                     app.chat.user_at_bottom = true;
                 }
                 AgentStreamEvent::Chunk { node_id, text } => {
-                    if let Some(&index) = app.chat.subagent_message_indices.get(&node_id)
-                        && let Some(msg) = app.chat.messages.get_mut(index)
-                    {
-                        if msg.last_was_tool_call && !text.trim().is_empty() {
-                            msg.content.push_str("\n\n💡 ");
-                            msg.last_was_tool_call = false;
+                    if let Some(&msg_id) = app.chat.subagent_messages.get(&node_id) {
+                        if let Some(msg) = app.chat.message_by_id_mut(msg_id) {
+                            if msg.last_was_tool_call && !text.trim().is_empty() {
+                                msg.content.push_str("\n\n💡 ");
+                                msg.last_was_tool_call = false;
+                            }
+                            msg.content.push_str(&text);
+                            msg.update_parsed_items();
                         }
-                        msg.content.push_str(&text);
-                        msg.update_parsed_items();
                     }
                     app.chat.push_scroll_if_needed(&mut effects);
                 }
                 AgentStreamEvent::Reasoning { node_id, text } => {
-                    if let Some(&index) = app.chat.subagent_message_indices.get(&node_id)
-                        && let Some(msg) = app.chat.messages.get_mut(index)
-                    {
-                        if let Some(ref mut existing) = msg.reasoning {
-                            existing.push_str(&text);
-                        } else {
-                            msg.reasoning = Some(text);
+                    if let Some(&msg_id) = app.chat.subagent_messages.get(&node_id) {
+                        if let Some(msg) = app.chat.message_by_id_mut(msg_id) {
+                            if let Some(ref mut existing) = msg.reasoning {
+                                existing.push_str(&text);
+                            } else {
+                                msg.reasoning = Some(text);
+                            }
                         }
                     }
                     app.chat.push_scroll_if_needed(&mut effects);
@@ -1004,28 +1028,29 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                     name,
                     args,
                 } => {
-                    if let Some(&index) = app.chat.subagent_message_indices.get(&node_id)
-                        && let Some(msg) = app.chat.messages.get_mut(index)
-                    {
-                        let tool_line = format_tool_call_oneliner(
-                            &name,
-                            &args,
-                            Some(&app.chat.working_directory),
-                        );
-                        msg.content.push_str(&format!("\n\n{}", tool_line));
-                        msg.last_was_tool_call = true;
-                        msg.update_parsed_items();
+                    // Format tool line before mutable borrow
+                    let tool_line = format_tool_call_oneliner(
+                        &name,
+                        &args,
+                        Some(&app.chat.working_directory),
+                    );
+                    if let Some(&msg_id) = app.chat.subagent_messages.get(&node_id) {
+                        if let Some(msg) = app.chat.message_by_id_mut(msg_id) {
+                            msg.content.push_str(&format!("\n\n{}", tool_line));
+                            msg.last_was_tool_call = true;
+                            msg.update_parsed_items();
+                        }
                     }
                     app.chat.push_scroll_if_needed(&mut effects);
                 }
                 AgentStreamEvent::Complete { node_id, output } => {
-                    if let Some(index) = app.chat.subagent_message_indices.remove(&node_id)
-                        && let Some(msg) = app.chat.messages.get_mut(index)
-                    {
-                        // Replace streamed content with the final pure output
-                        msg.content = output;
-                        msg.is_streaming = false;
-                        msg.update_parsed_items();
+                    if let Some(msg_id) = app.chat.subagent_messages.remove(&node_id) {
+                        if let Some(msg) = app.chat.message_by_id_mut(msg_id) {
+                            // Replace streamed content with the final pure output
+                            msg.content = output;
+                            msg.is_streaming = false;
+                            msg.update_parsed_items();
+                        }
                     }
                 }
             }

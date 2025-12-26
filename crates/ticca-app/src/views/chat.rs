@@ -14,7 +14,7 @@ use std::path::Path;
 use ticca_core::agents::{AgentRegistry, AgentType};
 use ticca_core::session::MessageRole;
 
-use crate::chat_message::ChatMessage;
+use crate::chat_message::{ChatMessage, MessageId};
 use crate::material_icons::{icon, icons};
 use crate::messages::{ImageAttachment, Message, chat, settings};
 use crate::theme::{AppTheme, styles};
@@ -64,8 +64,8 @@ pub fn view<'a>(
     input_value: &str,
     is_streaming: bool,
     theme: AppTheme,
-    raw_view_messages: &'a HashSet<usize>,
-    raw_view_editors: &'a HashMap<usize, text_editor::Content>,
+    raw_view_messages: &'a HashSet<MessageId>,
+    raw_view_editors: &'a HashMap<MessageId, text_editor::Content>,
     stream_chars: usize,
     current_tps: f64,
     stream_pulse: bool,
@@ -257,8 +257,7 @@ pub fn view<'a>(
     // Message list
     let message_widgets: Vec<Element<Message>> = messages
         .iter()
-        .enumerate()
-        .map(|(idx, msg)| render_message(idx, msg, theme, raw_view_messages, raw_view_editors))
+        .map(|msg| render_message(msg, theme, raw_view_messages, raw_view_editors))
         .collect();
 
     let messages_view: Element<Message> = scrollable(
@@ -485,16 +484,16 @@ fn build_attachment_preview(
 
 /// Render a single message
 fn render_message<'a>(
-    index: usize,
     msg: &'a ChatMessage,
     theme: AppTheme,
-    raw_view_messages: &'a HashSet<usize>,
-    raw_view_editors: &'a HashMap<usize, text_editor::Content>,
+    raw_view_messages: &'a HashSet<MessageId>,
+    raw_view_editors: &'a HashMap<MessageId, text_editor::Content>,
 ) -> Element<'a, Message> {
+    let msg_id = msg.id;
     let is_user = msg.role == MessageRole::User;
     let is_system = msg.role == MessageRole::System;
     let is_dark = theme.is_dark();
-    let is_raw_view = raw_view_messages.contains(&index);
+    let is_raw_view = raw_view_messages.contains(&msg_id);
 
     let default_label = match msg.role {
         MessageRole::User => "You",
@@ -517,10 +516,10 @@ fn render_message<'a>(
         .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri)))
     } else if is_raw_view {
         // Raw view: show selectable plain text
-        if let Some(editor_content) = raw_view_editors.get(&index) {
+        if let Some(editor_content) = raw_view_editors.get(&msg_id) {
             text_editor(editor_content)
                 .on_action(move |action| {
-                    Message::Chat(chat::Msg::RawViewEditorAction(index, action))
+                    Message::Chat(chat::Msg::RawViewEditorAction(msg_id, action))
                 })
                 .style(move |theme, _status| styles::raw_text_editor(theme, is_dark))
                 .into()
@@ -556,7 +555,7 @@ fn render_message<'a>(
         // Raw/Markdown toggle button
         styled_tooltip(
             button(icon(toggle_icon).size(16))
-                .on_press(Message::Chat(chat::Msg::ToggleRawView(index)))
+                .on_press(Message::Chat(chat::Msg::ToggleRawView(msg_id)))
                 .style(styles::icon_button)
                 .padding([4, 6]),
             toggle_tooltip,
@@ -565,7 +564,7 @@ fn render_message<'a>(
         // Copy button
         styled_tooltip(
             button(icon(icons::CONTENT_COPY).size(16))
-                .on_press(Message::Chat(chat::Msg::CopyMessage(index)))
+                .on_press(Message::Chat(chat::Msg::CopyMessage(msg_id)))
                 .style(styles::icon_button)
                 .padding([4, 6]),
             "Copy message",

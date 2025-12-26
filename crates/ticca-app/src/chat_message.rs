@@ -2,10 +2,40 @@
 
 use iced::widget::markdown;
 use ticca_core::session::MessageRole;
+use uuid::Uuid;
+
+/// Stable identifier for a chat message (survives index changes)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MessageId(pub Uuid);
+
+impl MessageId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Parse from string (for session loading)
+    pub fn from_string(s: &str) -> Option<Self> {
+        Uuid::parse_str(s).ok().map(Self)
+    }
+}
+
+impl Default for MessageId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for MessageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// A chat message for display
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
+    /// Stable identifier (survives index changes)
+    pub id: MessageId,
     pub role: MessageRole,
     pub content: String,
     pub is_streaming: bool,
@@ -25,6 +55,7 @@ impl ChatMessage {
         let content = content.into();
         let parsed_items = markdown::parse(&content).collect();
         Self {
+            id: MessageId::new(),
             role: MessageRole::User,
             content,
             is_streaming: false,
@@ -40,6 +71,7 @@ impl ChatMessage {
         let content = content.into();
         let parsed_items = markdown::parse(&content).collect();
         Self {
+            id: MessageId::new(),
             role: MessageRole::Assistant,
             content,
             is_streaming: false,
@@ -53,6 +85,7 @@ impl ChatMessage {
 
     pub fn assistant_streaming() -> Self {
         Self {
+            id: MessageId::new(),
             role: MessageRole::Assistant,
             content: String::new(),
             is_streaming: true,
@@ -66,6 +99,7 @@ impl ChatMessage {
 
     pub fn assistant_streaming_named(label: impl Into<String>) -> Self {
         Self {
+            id: MessageId::new(),
             role: MessageRole::Assistant,
             content: String::new(),
             is_streaming: true,
@@ -82,6 +116,7 @@ impl ChatMessage {
         let content = content.into();
         let parsed_items = markdown::parse(&content).collect();
         Self {
+            id: MessageId::new(),
             role: MessageRole::System,
             content,
             is_streaming: false,
@@ -91,6 +126,13 @@ impl ChatMessage {
             parsed_items,
             last_was_tool_call: false,
         }
+    }
+
+    /// Create message with a specific ID (for session loading)
+    #[allow(dead_code)]
+    pub fn with_id(mut self, id: MessageId) -> Self {
+        self.id = id;
+        self
     }
 
     /// Update parsed items when content changes

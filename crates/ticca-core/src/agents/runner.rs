@@ -36,43 +36,21 @@ use tokio::time::Duration;
 
 const DEFAULT_COOLDOWN_SECS: i64 = 60;
 const CLAUDE_CODE_INSTRUCTIONS: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
-const TODO_GUARD_FIRST_PROMPT: &str = r#"You must not finish until your To Do list is confirmed complete.
-
-Use the `todo_write` tool now with ONE of these options:
-
-Option A - Mark all items complete:
-```json
-{ "items": [...], "mark_all_complete": true }
-```
-
-Option B - Explicit status for each item:
-```json
-{
-  "items": [{ "text": "Item 1", "status": "completed" }, ...],
-  "confirmed_complete": true
-}
-```
-
-Option C - If your list is empty:
-```json
-{ "items": [], "confirmed_complete": true }
-```
-
-If there is remaining work, add/update items and continue working instead of finishing."#;
-
-const TODO_GUARD_RETRY_PROMPT: &str = r#"Your To Do list is STILL not confirmed complete. This is your final attempt.
-
-REQUIRED: Call `todo_write` with `mark_all_complete: true` to complete your session:
-```json
-{ "items": [...your items...], "mark_all_complete": true }
-```
-
-Or if empty: `{ "items": [], "confirmed_complete": true }`"#;
-const TODO_GUARD_MAX_PASSES: usize = 4;
 const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Maximum characters for subagent output to prevent context explosion
 /// ~30k tokens at 3.4 chars/token = ~100k chars
 const MAX_SUBAGENT_OUTPUT_CHARS: usize = 100_000;
+
+/// Macro to conditionally add a tool to an AgentBuilderSimple based on profile.tool_names.
+/// This ensures agents only have access to tools they're allowed to use.
+/// Note: The builder must already be AgentBuilderSimple (after at least one tool added).
+macro_rules! add_tool_if_allowed {
+    ($builder:expr, $profile:expr, $tool_name:literal, $tool:expr) => {
+        if $profile.tool_names.contains(&$tool_name) {
+            $builder = $builder.tool($tool);
+        }
+    };
+}
 
 #[derive(Debug, Clone)]
 pub struct ChatHistoryMessage {
@@ -478,9 +456,23 @@ pub fn run_rig_agent_stream(
 
         let (call_graph_tx, mut call_graph_rx) = mpsc::unbounded_channel::<AgentCallEvent>();
         let (agent_stream_tx, mut agent_stream_rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
-        let (todo_tx, mut todo_rx) = mpsc::unbounded_channel::<TodoListEvent>();
         let call_graph_counter = Arc::new(AtomicUsize::new(1));
-        let todo_store = Arc::new(TodoStore::new());
+
+        // Explore agent doesn't use todo tools - it's a fast, read-only agent
+        let agent_uses_todos = current_agent != AgentType::Explore;
+        let (todo_store, todo_tx): (Option<Arc<TodoStore>>, Option<mpsc::UnboundedSender<TodoListEvent>>) = if agent_uses_todos {
+            let store = Arc::new(TodoStore::new());
+            let (tx, mut rx) = mpsc::unbounded_channel::<TodoListEvent>();
+            let event_tx_for_todos = event_tx.clone();
+            tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let _ = event_tx_for_todos.send(RunnerEvent::TodoEvent(event));
+                }
+            });
+            (Some(store), Some(tx))
+        } else {
+            (None, None)
+        };
 
         let event_tx_for_graph = event_tx.clone();
         tokio::spawn(async move {
@@ -496,25 +488,21 @@ pub fn run_rig_agent_stream(
             }
         });
 
-        let event_tx_for_todos = event_tx.clone();
-        tokio::spawn(async move {
-            while let Some(event) = todo_rx.recv().await {
-                let _ = event_tx_for_todos.send(RunnerEvent::TodoEvent(event));
-            }
-        });
-
         let agent_invoker: Arc<AgentInvoker> = Arc::new(|request: AgentInvokeRequest| {
             Box::pin(invoke_agent(request))
         });
 
-        let initial_todo_state = match initial_todo_state {
-            Some(state) => todo_store.set_node_state(0, state).await,
-            None => todo_store.reset_node(0).await,
-        };
-        let _ = todo_tx.send(TodoListEvent::Reset {
-            node_id: 0,
-            state: initial_todo_state,
-        });
+        // Only initialize todo state for agents that use todos
+        if let (Some(store), Some(tx)) = (&todo_store, &todo_tx) {
+            let initial_state = match initial_todo_state {
+                Some(state) => store.set_node_state(0, state).await,
+                None => store.reset_node(0).await,
+            };
+            let _ = tx.send(TodoListEvent::Reset {
+                node_id: 0,
+                state: initial_state,
+            });
+        }
 
         let tool_context = Arc::new(ToolContext {
             working_directory: working_directory.clone(),
@@ -529,8 +517,8 @@ pub fn run_rig_agent_stream(
             call_graph_counter: Some(call_graph_counter),
             node_id: 0,
             agent_invoker: Some(agent_invoker),
-            todo_store: Some(todo_store),
-            todo_tx: Some(todo_tx),
+            todo_store,
+            todo_tx,
             system_exec_store: Some(system_exec_store.clone()),
             system_exec_tx: Some(system_exec_tx.clone()),
             process_output_offsets: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -742,24 +730,26 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
 
@@ -808,24 +798,26 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
 
@@ -874,24 +866,26 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
             let mut claude_history = history;
             prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(CLAUDE_CODE_INSTRUCTIONS)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
 
@@ -958,24 +952,26 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(&profile.system_prompt)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, request.agent_type).await;
 
@@ -1021,18 +1017,14 @@ where
     M::StreamingResponse: rig::completion::GetTokenUsage,
 {
     use rig::agent::MultiTurnStreamItem;
-    use rig::message::Message as RigMessage;
     use rig::streaming::StreamingPrompt;
     use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-    let mut passes = 0usize;
     let mut history = history;
     let mut final_output = String::new(); // Only the LAST response, not accumulated
     let max_turns = max_tool_rounds.max(1) as usize;
 
     loop {
-        passes += 1;
-
         let mut stream = agent
             .stream_prompt("")
             .with_history(history.clone())
@@ -1125,28 +1117,8 @@ where
             ));
         }
 
-        let todo_ok = match &parent_context.todo_store {
-            Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
-            None => true,
-        };
-
-        if todo_ok {
-            break;
-        }
-
-        if passes >= TODO_GUARD_MAX_PASSES {
-            let error_note =
-                "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.";
-            return Ok(format!("{}{}", final_output, error_note));
-        }
-
-        // Use first prompt on pass 1, retry prompt on subsequent passes
-        let guard_prompt = if passes == 1 {
-            TODO_GUARD_FIRST_PROMPT
-        } else {
-            TODO_GUARD_RETRY_PROMPT
-        };
-        history.push(RigMessage::user(guard_prompt));
+        // End of pass - break out of the loop
+        break;
     }
 
     // Apply truncation limit to prevent context explosion
@@ -1348,7 +1320,10 @@ async fn run_agent_stream(
         full_history
     };
 
-    let node_id = tool_context.node_id;
+    let _node_id = tool_context.node_id;
+
+    // Get agent profile for tool filtering
+    let profile = AgentProfile::for_type(tool_context.current_agent, max_tool_rounds);
 
     match ProviderRegistry::resolve_provider(&model_name) {
         ProviderId::ChatGpt => {
@@ -1386,24 +1361,26 @@ async fn run_agent_stream(
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(&system_prompt)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
 
@@ -1417,14 +1394,10 @@ async fn run_agent_stream(
             use rig::streaming::StreamingPrompt;
             use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-            use rig::message::Message as RigMessage;
-
-            let mut passes = 0usize;
             let mut history = full_history;
             let max_turns = max_tool_rounds.max(1) as usize;
 
             loop {
-                passes += 1;
 
                 let mut stream = agent
                     .stream_prompt("")
@@ -1566,30 +1539,8 @@ async fn run_agent_stream(
                     ));
                 }
 
-                let todo_ok = match &tool_context.todo_store {
-                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
-                    None => true,
-                };
-
-                if todo_ok {
-                    return Ok(());
-                }
-
-                if passes >= TODO_GUARD_MAX_PASSES {
-                    // Append warning as chunk instead of replacing all streamed output with error
-                    let _ = event_tx.send(RunnerEvent::StreamChunk(
-                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
-                    ));
-                    return Ok(());
-                }
-
-                // Use first prompt on pass 1, retry prompt on subsequent passes
-                let guard_prompt = if passes == 1 {
-                    TODO_GUARD_FIRST_PROMPT
-                } else {
-                    TODO_GUARD_RETRY_PROMPT
-                };
-                history.push(RigMessage::user(guard_prompt));
+                // End of pass - return success
+                return Ok(());
             }
         }
         ProviderId::Gemini => {
@@ -1623,24 +1574,26 @@ async fn run_agent_stream(
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(&system_prompt)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
 
@@ -1650,14 +1603,10 @@ async fn run_agent_stream(
             use rig::streaming::StreamingPrompt;
             use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-            use rig::message::Message as RigMessage;
-
-            let mut passes = 0usize;
             let mut history = full_history;
             let max_turns = max_tool_rounds.max(1) as usize;
 
             loop {
-                passes += 1;
 
                 let mut stream = agent
                     .stream_prompt("")
@@ -1799,30 +1748,8 @@ async fn run_agent_stream(
                     ));
                 }
 
-                let todo_ok = match &tool_context.todo_store {
-                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
-                    None => true,
-                };
-
-                if todo_ok {
-                    return Ok(());
-                }
-
-                if passes >= TODO_GUARD_MAX_PASSES {
-                    // Append warning as chunk instead of replacing all streamed output with error
-                    let _ = event_tx.send(RunnerEvent::StreamChunk(
-                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
-                    ));
-                    return Ok(());
-                }
-
-                // Use first prompt on pass 1, retry prompt on subsequent passes
-                let guard_prompt = if passes == 1 {
-                    TODO_GUARD_FIRST_PROMPT
-                } else {
-                    TODO_GUARD_RETRY_PROMPT
-                };
-                history.push(RigMessage::user(guard_prompt));
+                // End of pass - return success
+                return Ok(());
             }
         }
         ProviderId::Claude => {
@@ -1860,39 +1787,38 @@ async fn run_agent_stream(
             let mut history = full_history;
             prepend_system_to_first_user_message(&system_prompt, &mut history);
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(CLAUDE_CODE_INSTRUCTIONS)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
 
             let agent = builder.temperature(0.7).max_tokens(8192).build();
 
             use rig::agent::MultiTurnStreamItem;
-            use rig::message::Message as RigMessage;
             use rig::streaming::StreamingPrompt;
             use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-            let mut passes = 0usize;
             let max_turns = max_tool_rounds.max(1) as usize;
 
             loop {
-                passes += 1;
 
                 let mut stream = agent
                     .stream_prompt("")
@@ -2046,30 +1972,8 @@ async fn run_agent_stream(
                     ));
                 }
 
-                let todo_ok = match &tool_context.todo_store {
-                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
-                    None => true,
-                };
-
-                if todo_ok {
-                    return Ok(());
-                }
-
-                if passes >= TODO_GUARD_MAX_PASSES {
-                    // Append warning as chunk instead of replacing all streamed output with error
-                    let _ = event_tx.send(RunnerEvent::StreamChunk(
-                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
-                    ));
-                    return Ok(());
-                }
-
-                // Use first prompt on pass 1, retry prompt on subsequent passes
-                let guard_prompt = if passes == 1 {
-                    TODO_GUARD_FIRST_PROMPT
-                } else {
-                    TODO_GUARD_RETRY_PROMPT
-                };
-                history.push(RigMessage::user(guard_prompt));
+                // End of pass - return success
+                return Ok(());
             }
         }
         ProviderId::ApiKey(provider_id) => {
@@ -2124,40 +2028,39 @@ async fn run_agent_stream(
                 invoke_agent_tool,
             ) = crate::tools::create_tools(tool_context.clone());
 
-            let builder = AgentBuilder::new(model)
+            // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
+            let mut builder = AgentBuilder::new(model)
                 .preamble(&system_prompt)
-                .tool(execute_shell)
-                .tool(list_processes)
-                .tool(read_process_output)
-                .tool(kill_process)
-                .tool(read_file)
-                .tool(list_files)
-                .tool(edit_file)
-                .tool(delete_file)
-                .tool(grep)
-                .tool(write_file)
-                .tool(list_agents)
-                .tool(todo_read)
-                .tool(todo_write)
-                .tool(todo_list)
-                .tool(share_reasoning)
-                .tool(invoke_agent_tool);
+                .tool(list_files);
+            // Now conditionally add remaining tools (skip list_files since already added)
+            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
+            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
+            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
+            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
+            add_tool_if_allowed!(builder, profile, "read_file", read_file);
+            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
+            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
+            add_tool_if_allowed!(builder, profile, "grep", grep);
+            add_tool_if_allowed!(builder, profile, "write_file", write_file);
+            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
+            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
+            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
+            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
+            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
+            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
 
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
 
             let agent = builder.temperature(0.7).max_tokens(8192).build();
 
             use rig::agent::MultiTurnStreamItem;
-            use rig::message::Message as RigMessage;
             use rig::streaming::StreamingPrompt;
             use rig::streaming::{StreamedAssistantContent, StreamedUserContent};
 
-            let mut passes = 0usize;
             let mut history = full_history;
             let max_turns = max_tool_rounds.max(1) as usize;
 
             loop {
-                passes += 1;
 
                 let mut stream = agent
                     .stream_prompt("")
@@ -2298,28 +2201,8 @@ async fn run_agent_stream(
                     ));
                 }
 
-                let todo_ok = match &tool_context.todo_store {
-                    Some(store) => store.snapshot(node_id).await.is_completed_and_confirmed(),
-                    None => true,
-                };
-
-                if todo_ok {
-                    return Ok(());
-                }
-
-                if passes >= TODO_GUARD_MAX_PASSES {
-                    let _ = event_tx.send(RunnerEvent::StreamChunk(
-                        "\n\n---\n⚠️ Note: To Do list was not confirmed complete after multiple attempts.".to_string()
-                    ));
-                    return Ok(());
-                }
-
-                let guard_prompt = if passes == 1 {
-                    TODO_GUARD_FIRST_PROMPT
-                } else {
-                    TODO_GUARD_RETRY_PROMPT
-                };
-                history.push(RigMessage::user(guard_prompt));
+                // End of pass - return success
+                return Ok(());
             }
         }
     }

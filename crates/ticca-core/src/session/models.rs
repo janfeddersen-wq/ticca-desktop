@@ -71,6 +71,8 @@ impl MessageRole {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMessage {
     pub id: Option<i64>,
+    /// Stable message identifier (UUID string, survives index changes)
+    pub message_id: Option<String>,
     pub session_id: String,
     pub role: MessageRole,
     pub content: String,
@@ -86,6 +88,7 @@ impl SessionMessage {
     pub fn user(session_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             id: None,
+            message_id: None,
             session_id: session_id.into(),
             role: MessageRole::User,
             content: content.into(),
@@ -101,6 +104,7 @@ impl SessionMessage {
     pub fn assistant(session_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             id: None,
+            message_id: None,
             session_id: session_id.into(),
             role: MessageRole::Assistant,
             content: content.into(),
@@ -116,6 +120,7 @@ impl SessionMessage {
     pub fn system(session_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             id: None,
+            message_id: None,
             session_id: session_id.into(),
             role: MessageRole::System,
             content: content.into(),
@@ -131,6 +136,7 @@ impl SessionMessage {
     pub fn tool(session_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             id: None,
+            message_id: None,
             session_id: session_id.into(),
             role: MessageRole::Tool,
             content: content.into(),
@@ -141,6 +147,12 @@ impl SessionMessage {
             tokens: 0,
             created_at: None,
         }
+    }
+
+    /// Set the stable message ID (UUID string)
+    pub fn with_message_id(mut self, message_id: impl Into<String>) -> Self {
+        self.message_id = Some(message_id.into());
+        self
     }
 
     pub fn with_tokens(mut self, tokens: i64) -> Self {
