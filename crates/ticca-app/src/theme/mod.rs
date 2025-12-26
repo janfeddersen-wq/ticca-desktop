@@ -2,6 +2,7 @@
 //!
 //! Provides multiple color schemes including popular editor themes.
 
+pub mod colors;
 pub mod dark;
 pub mod light;
 pub mod styles;

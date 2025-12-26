@@ -106,15 +106,26 @@ pub fn format_tool_call_oneliner(
             .unwrap_or_default(),
         "list_processes" => "Show active processes".to_string(),
         "grep" => {
-            // Show pattern and optionally path
-            let pattern = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
-            let path = parsed.get("path").and_then(|v| v.as_str());
-            let mut display = format!("\"{}\"", pattern);
-            if let Some(p) = path {
-                let short_path = truncate_start(p, 40);
-                display.push_str(&format!(" in {}", short_path));
+            // Show search_string and optionally directory
+            let pattern = parsed
+                .get("search_string")
+                .or(parsed.get("pattern"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let path = parsed
+                .get("directory")
+                .or(parsed.get("path"))
+                .and_then(|v| v.as_str());
+            if pattern.is_empty() {
+                String::new()
+            } else {
+                let mut display = format!("\"{}\"", truncate_end(pattern, 50));
+                if let Some(p) = path {
+                    let short_path = truncate_start(p, 30);
+                    display.push_str(&format!(" in {}", short_path));
+                }
+                truncate_end(&display, 80)
             }
-            truncate_end(&display, 80)
         }
         "invoke_agent" => {
             let agent = parsed.get("agent").and_then(|v| v.as_str()).unwrap_or("");
