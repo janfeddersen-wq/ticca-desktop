@@ -16,8 +16,10 @@ pub use messages::{
     build_assistant_message_with_reasoning, build_chat_history, build_user_message,
     is_rate_limit_error, prepend_system_to_first_user_message,
 };
-pub use provider::{fetch_best_model, resolve_model_name, resolve_provider, ResolvedProvider};
-pub use types::{ChatHistoryMessage, RunnerEvent, DEFAULT_COOLDOWN_SECS, MAX_SUBAGENT_OUTPUT_CHARS};
+pub use provider::{ResolvedProvider, fetch_best_model, resolve_model_name, resolve_provider};
+pub use types::{
+    ChatHistoryMessage, DEFAULT_COOLDOWN_SECS, MAX_SUBAGENT_OUTPUT_CHARS, RunnerEvent,
+};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -36,8 +38,8 @@ use crate::config::{ConfigDatabase, setting_keys};
 use crate::llm::auth;
 use crate::llm::providers::ChatGptOAuthClient;
 use crate::tools::{
-    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TodoListEvent,
-    TodoStore, ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy,
+    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TodoListEvent, TodoStore,
+    ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy,
 };
 
 use context::{apply_compression_if_needed, estimate_context, log_context_breakdown};
@@ -291,7 +293,10 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
     let (todo_store, todo_tx) = if agent_type == AgentType::Explore {
         (None, None)
     } else {
-        (parent_context.todo_store.clone(), parent_context.todo_tx.clone())
+        (
+            parent_context.todo_store.clone(),
+            parent_context.todo_tx.clone(),
+        )
     };
 
     let tool_context = Arc::new(ToolContext {
@@ -341,7 +346,8 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
         &model_name,
         history,
         max_tool_rounds,
-    ).await;
+    )
+    .await;
 
     if let Some(tx) = &parent_context.agent_stream_tx {
         let output = match &result {
@@ -367,7 +373,6 @@ async fn run_invoked_agent_stream(
     history: Vec<rig::message::Message>,
     max_tool_rounds: u32,
 ) -> Result<String, String> {
-
     let resolved = resolve_provider(model_name)?;
     let preamble = if matches!(resolved, ResolvedProvider::Claude { .. }) {
         CLAUDE_CODE_INSTRUCTIONS
@@ -377,9 +382,22 @@ async fn run_invoked_agent_stream(
 
     // Build tools once
     let (
-        execute_shell, list_processes, read_process_output, kill_process,
-        read_file, list_files, edit_file, delete_file, grep, write_file,
-        list_agents, todo_read, todo_write, todo_list, share_reasoning, invoke_agent_tool,
+        execute_shell,
+        list_processes,
+        read_process_output,
+        kill_process,
+        read_file,
+        list_files,
+        edit_file,
+        delete_file,
+        grep,
+        write_file,
+        list_agents,
+        todo_read,
+        todo_write,
+        todo_list,
+        share_reasoning,
+        invoke_agent_tool,
     ) = crate::tools::create_tools(tool_context.clone());
 
     macro_rules! build_agent {
@@ -410,34 +428,68 @@ async fn run_invoked_agent_stream(
     let max_turns = max_tool_rounds.max(1) as usize;
 
     let mut final_output = match resolved {
-        ResolvedProvider::Claude { client, model_id, .. } => {
+        ResolvedProvider::Claude {
+            client, model_id, ..
+        } => {
             let model = client.completion_model(&model_id);
             let agent = build_agent!(model).build();
 
             let mut claude_history = history;
             prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
 
-            stream_agent_loop(node_id, parent_context, agent, claude_history, max_turns, "Claude").await?
+            stream_agent_loop(
+                node_id,
+                parent_context,
+                agent,
+                claude_history,
+                max_turns,
+                "Claude",
+            )
+            .await?
         }
-        ResolvedProvider::ChatGpt { client, model_id, .. } => {
+        ResolvedProvider::ChatGpt {
+            client, model_id, ..
+        } => {
             let model = client.completion_model(&model_id);
             let agent = build_agent!(model)
                 .additional_params(ChatGptOAuthClient::codex_params())
                 .build();
 
-            stream_agent_loop(node_id, parent_context, agent, history, max_turns, "ChatGPT").await?
+            stream_agent_loop(
+                node_id,
+                parent_context,
+                agent,
+                history,
+                max_turns,
+                "ChatGPT",
+            )
+            .await?
         }
-        ResolvedProvider::Gemini { client, model_id, .. } => {
+        ResolvedProvider::Gemini {
+            client, model_id, ..
+        } => {
             let model = client.completion_model(&model_id);
             let agent = build_agent!(model).build();
 
             stream_agent_loop(node_id, parent_context, agent, history, max_turns, "Gemini").await?
         }
-        ResolvedProvider::ApiKey { client, model_id, provider_name } => {
+        ResolvedProvider::ApiKey {
+            client,
+            model_id,
+            provider_name,
+        } => {
             let model = client.completion_model(&model_id);
             let agent = build_agent!(model).build();
 
-            stream_agent_loop(node_id, parent_context, agent, history, max_turns, &provider_name).await?
+            stream_agent_loop(
+                node_id,
+                parent_context,
+                agent,
+                history,
+                max_turns,
+                &provider_name,
+            )
+            .await?
         }
     };
 
@@ -578,14 +630,21 @@ async fn run_agent_stream(
     let mut stats_window_chars: usize = 0;
 
     let emit_stream_stats = |chars: &mut usize, start: &mut Instant| -> Option<RunnerEvent> {
-        if *chars == 0 { return None; }
+        if *chars == 0 {
+            return None;
+        }
         let elapsed = start.elapsed();
         let window_ms = elapsed.as_millis() as u64;
-        if window_ms < STATS_WINDOW_MIN_MS { return None; }
+        if window_ms < STATS_WINDOW_MIN_MS {
+            return None;
+        }
         let c = *chars;
         *chars = 0;
         *start = Instant::now();
-        Some(RunnerEvent::StreamStats { chars_in_window: c, window_ms })
+        Some(RunnerEvent::StreamStats {
+            chars_in_window: c,
+            window_ms,
+        })
     };
 
     let history = build_chat_history(chat_history);
@@ -623,9 +682,22 @@ async fn run_agent_stream(
 
     // Build tools
     let (
-        execute_shell, list_processes, read_process_output, kill_process,
-        read_file, list_files, edit_file, delete_file, grep, write_file,
-        list_agents, todo_read, todo_write, todo_list, share_reasoning, invoke_agent_tool,
+        execute_shell,
+        list_processes,
+        read_process_output,
+        kill_process,
+        read_file,
+        list_files,
+        edit_file,
+        delete_file,
+        grep,
+        write_file,
+        list_agents,
+        todo_read,
+        todo_write,
+        todo_list,
+        share_reasoning,
+        invoke_agent_tool,
     ) = crate::tools::create_tools(tool_context.clone());
 
     macro_rules! build_and_run {
@@ -650,7 +722,11 @@ async fn run_agent_stream(
             add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
             let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
             let agent = if let Some(params) = $additional_params {
-                builder.temperature(0.7).max_tokens(8192).additional_params(params).build()
+                builder
+                    .temperature(0.7)
+                    .max_tokens(8192)
+                    .additional_params(params)
+                    .build()
             } else {
                 builder.temperature(0.7).max_tokens(8192).build()
             };
@@ -665,28 +741,73 @@ async fn run_agent_stream(
                 &emit_stream_stats,
                 $provider_label,
                 $token,
-            ).await
+            )
+            .await
         }};
     }
 
     match resolved {
-        ResolvedProvider::Claude { client, model_id, token } => {
+        ResolvedProvider::Claude {
+            client,
+            model_id,
+            token,
+        } => {
             let model = client.completion_model(&model_id);
             let mut claude_history = full_history;
             prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
-            build_and_run!(model, CLAUDE_CODE_INSTRUCTIONS, claude_history, None::<serde_json::Value>, "Claude", Some(&token))
+            build_and_run!(
+                model,
+                CLAUDE_CODE_INSTRUCTIONS,
+                claude_history,
+                None::<serde_json::Value>,
+                "Claude",
+                Some(&token)
+            )
         }
-        ResolvedProvider::ChatGpt { client, model_id, token } => {
+        ResolvedProvider::ChatGpt {
+            client,
+            model_id,
+            token,
+        } => {
             let model = client.completion_model(&model_id);
-            build_and_run!(model, &system_prompt, full_history, Some(ChatGptOAuthClient::codex_params()), "ChatGPT", Some(&token))
+            build_and_run!(
+                model,
+                &system_prompt,
+                full_history,
+                Some(ChatGptOAuthClient::codex_params()),
+                "ChatGPT",
+                Some(&token)
+            )
         }
-        ResolvedProvider::Gemini { client, model_id, token } => {
+        ResolvedProvider::Gemini {
+            client,
+            model_id,
+            token,
+        } => {
             let model = client.completion_model(&model_id);
-            build_and_run!(model, &system_prompt, full_history, None::<serde_json::Value>, "Gemini", Some(&token))
+            build_and_run!(
+                model,
+                &system_prompt,
+                full_history,
+                None::<serde_json::Value>,
+                "Gemini",
+                Some(&token)
+            )
         }
-        ResolvedProvider::ApiKey { client, model_id, provider_name } => {
+        ResolvedProvider::ApiKey {
+            client,
+            model_id,
+            provider_name,
+        } => {
             let model = client.completion_model(&model_id);
-            build_and_run!(model, &system_prompt, full_history, None::<serde_json::Value>, &provider_name, None::<&auth::AuthToken>)
+            build_and_run!(
+                model,
+                &system_prompt,
+                full_history,
+                None::<serde_json::Value>,
+                &provider_name,
+                None::<&auth::AuthToken>
+            )
         }
     }
 }
@@ -826,7 +947,9 @@ where
 mod tests {
     use super::*;
     use futures::stream;
-    use rig::completion::{CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage};
+    use rig::completion::{
+        CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage,
+    };
     use rig::message::AssistantContent;
     use rig::one_or_many::OneOrMany;
     use rig::streaming::{RawStreamingChoice, StreamingCompletionResponse};
@@ -847,7 +970,9 @@ mod tests {
         fn completion(
             &self,
             _request: CompletionRequest,
-        ) -> impl std::future::Future<Output = Result<CompletionResponse<Self::Response>, CompletionError>> + Send {
+        ) -> impl std::future::Future<
+            Output = Result<CompletionResponse<Self::Response>, CompletionError>,
+        > + Send {
             async move {
                 Ok(CompletionResponse {
                     choice: OneOrMany::one(AssistantContent::text("mock response")),
@@ -860,7 +985,9 @@ mod tests {
         fn stream(
             &self,
             _request: CompletionRequest,
-        ) -> impl std::future::Future<Output = Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>> + Send {
+        ) -> impl std::future::Future<
+            Output = Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>,
+        > + Send {
             async move {
                 let events = vec![
                     Ok(RawStreamingChoice::Message("mock stream".to_string())),
@@ -876,9 +1003,22 @@ mod tests {
     async fn mock_stream_smoke_test() {
         let tool_context = Arc::new(ToolContext::default());
         let (
-            execute_shell, list_processes, read_process_output, kill_process,
-            read_file, list_files, edit_file, delete_file, grep, write_file,
-            list_agents, todo_read, todo_write, todo_list, share_reasoning, invoke_agent_tool,
+            execute_shell,
+            list_processes,
+            read_process_output,
+            kill_process,
+            read_file,
+            list_files,
+            edit_file,
+            delete_file,
+            grep,
+            write_file,
+            list_agents,
+            todo_read,
+            todo_write,
+            todo_list,
+            share_reasoning,
+            invoke_agent_tool,
         ) = crate::tools::create_tools(tool_context.clone());
 
         let history = build_chat_history(Vec::new());
@@ -920,7 +1060,10 @@ mod tests {
 
         let mut collected = String::new();
         while let Some(chunk_result) = stream.next().await {
-            if let Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(text_chunk))) = chunk_result {
+            if let Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
+                text_chunk,
+            ))) = chunk_result
+            {
                 collected.push_str(&text_chunk.text);
             }
         }
@@ -940,9 +1083,22 @@ mod tests {
 
         let tool_context = Arc::new(parent_context.clone());
         let (
-            execute_shell, list_processes, read_process_output, kill_process,
-            read_file, list_files, edit_file, delete_file, grep, write_file,
-            list_agents, todo_read, todo_write, todo_list, share_reasoning, invoke_agent_tool,
+            execute_shell,
+            list_processes,
+            read_process_output,
+            kill_process,
+            read_file,
+            list_files,
+            edit_file,
+            delete_file,
+            grep,
+            write_file,
+            list_agents,
+            todo_read,
+            todo_write,
+            todo_list,
+            share_reasoning,
+            invoke_agent_tool,
         ) = crate::tools::create_tools(tool_context);
 
         let agent = AgentBuilder::new(MockModel)

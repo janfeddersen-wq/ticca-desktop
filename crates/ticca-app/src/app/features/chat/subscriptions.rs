@@ -56,7 +56,8 @@ pub(super) fn system_exec_request_stream(
 #[derive(Clone)]
 pub(super) struct TerminalBackendSubscriptionData {
     pub terminal_id: u64,
-    pub rx: std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<iced_term::AlacrittyEvent>>>,
+    pub rx:
+        std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<iced_term::AlacrittyEvent>>>,
 }
 
 impl std::hash::Hash for TerminalBackendSubscriptionData {

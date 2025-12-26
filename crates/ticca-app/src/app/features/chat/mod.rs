@@ -21,6 +21,7 @@ mod view;
 
 // Re-export for the app feature module
 pub(in crate::app) use approval::wrap_with_approval_modal;
+pub(crate) use types::DiffModalState;
 pub(in crate::app) use state::ChatState;
 pub(in crate::app) use update::update;
 pub(in crate::app) use view::view;

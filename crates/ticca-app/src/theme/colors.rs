@@ -4,8 +4,8 @@
 //! a trait-based dispatch system.
 
 use iced::{Color, Theme};
-use std::sync::LazyLock;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Trait defining all theme colors.
 /// Each theme module implements this trait.
@@ -41,221 +41,551 @@ pub trait ThemeColors: Send + Sync {
 /// Static struct for Dark theme colors
 pub struct DarkColors;
 impl ThemeColors for DarkColors {
-    fn bg_base(&self) -> Color { super::dark::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::dark::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::dark::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::dark::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::dark::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::dark::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::dark::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::dark::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::dark::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::dark::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::dark::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::dark::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::dark::colors::SUCCESS }
-    fn warning(&self) -> Color { super::dark::colors::WARNING }
-    fn danger(&self) -> Color { super::dark::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::dark::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::dark::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::dark::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::dark::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::dark::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::dark::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::dark::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::dark::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::dark::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::dark::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::dark::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::dark::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::dark::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::dark::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::dark::colors::DANGER
+    }
 }
 
 /// Static struct for Light theme colors
 pub struct LightColors;
 impl ThemeColors for LightColors {
-    fn bg_base(&self) -> Color { super::light::colors::ZINC_50 }
-    fn bg_surface(&self) -> Color { super::light::colors::WHITE }
-    fn bg_elevated(&self) -> Color { super::light::colors::ZINC_100 }
-    fn bg_hover(&self) -> Color { super::light::colors::ZINC_200 }
-    fn text_primary(&self) -> Color { super::light::colors::ZINC_900 }
-    fn text_secondary(&self) -> Color { super::light::colors::ZINC_600 }
-    fn text_muted(&self) -> Color { super::light::colors::ZINC_400 }
-    fn border_subtle(&self) -> Color { super::light::colors::ZINC_200 }
-    fn border_default(&self) -> Color { super::light::colors::ZINC_300 }
-    fn accent(&self) -> Color { super::light::colors::BLUE_600 }
-    fn accent_hover(&self) -> Color { super::light::colors::BLUE_500 }
-    fn accent_muted(&self) -> Color { super::light::colors::BLUE_700 }
-    fn success(&self) -> Color { super::light::colors::GREEN_600 }
-    fn warning(&self) -> Color { super::light::colors::YELLOW_600 }
-    fn danger(&self) -> Color { super::light::colors::RED_600 }
+    fn bg_base(&self) -> Color {
+        super::light::colors::ZINC_50
+    }
+    fn bg_surface(&self) -> Color {
+        super::light::colors::WHITE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::light::colors::ZINC_100
+    }
+    fn bg_hover(&self) -> Color {
+        super::light::colors::ZINC_200
+    }
+    fn text_primary(&self) -> Color {
+        super::light::colors::ZINC_900
+    }
+    fn text_secondary(&self) -> Color {
+        super::light::colors::ZINC_600
+    }
+    fn text_muted(&self) -> Color {
+        super::light::colors::ZINC_400
+    }
+    fn border_subtle(&self) -> Color {
+        super::light::colors::ZINC_200
+    }
+    fn border_default(&self) -> Color {
+        super::light::colors::ZINC_300
+    }
+    fn accent(&self) -> Color {
+        super::light::colors::BLUE_600
+    }
+    fn accent_hover(&self) -> Color {
+        super::light::colors::BLUE_500
+    }
+    fn accent_muted(&self) -> Color {
+        super::light::colors::BLUE_700
+    }
+    fn success(&self) -> Color {
+        super::light::colors::GREEN_600
+    }
+    fn warning(&self) -> Color {
+        super::light::colors::YELLOW_600
+    }
+    fn danger(&self) -> Color {
+        super::light::colors::RED_600
+    }
 }
 
 /// Static struct for Zinc theme colors
 pub struct ZincColors;
 impl ThemeColors for ZincColors {
-    fn bg_base(&self) -> Color { super::zinc::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::zinc::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::zinc::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::zinc::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::zinc::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::zinc::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::zinc::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::zinc::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::zinc::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::zinc::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::zinc::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::zinc::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::zinc::colors::SUCCESS }
-    fn warning(&self) -> Color { super::zinc::colors::WARNING }
-    fn danger(&self) -> Color { super::zinc::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::zinc::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::zinc::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::zinc::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::zinc::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::zinc::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::zinc::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::zinc::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::zinc::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::zinc::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::zinc::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::zinc::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::zinc::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::zinc::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::zinc::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::zinc::colors::DANGER
+    }
 }
 
 /// Static struct for Dracula theme colors
 pub struct DraculaColors;
 impl ThemeColors for DraculaColors {
-    fn bg_base(&self) -> Color { super::dracula::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::dracula::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::dracula::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::dracula::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::dracula::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::dracula::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::dracula::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::dracula::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::dracula::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::dracula::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::dracula::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::dracula::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::dracula::colors::SUCCESS }
-    fn warning(&self) -> Color { super::dracula::colors::WARNING }
-    fn danger(&self) -> Color { super::dracula::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::dracula::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::dracula::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::dracula::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::dracula::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::dracula::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::dracula::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::dracula::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::dracula::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::dracula::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::dracula::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::dracula::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::dracula::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::dracula::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::dracula::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::dracula::colors::DANGER
+    }
 }
 
 /// Static struct for Nord theme colors
 pub struct NordColors;
 impl ThemeColors for NordColors {
-    fn bg_base(&self) -> Color { super::nord::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::nord::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::nord::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::nord::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::nord::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::nord::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::nord::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::nord::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::nord::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::nord::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::nord::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::nord::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::nord::colors::SUCCESS }
-    fn warning(&self) -> Color { super::nord::colors::WARNING }
-    fn danger(&self) -> Color { super::nord::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::nord::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::nord::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::nord::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::nord::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::nord::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::nord::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::nord::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::nord::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::nord::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::nord::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::nord::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::nord::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::nord::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::nord::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::nord::colors::DANGER
+    }
 }
 
 /// Static struct for Catppuccin Mocha theme colors
 pub struct CatppuccinMochaColors;
 impl ThemeColors for CatppuccinMochaColors {
-    fn bg_base(&self) -> Color { super::catppuccin_mocha::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::catppuccin_mocha::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::catppuccin_mocha::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::catppuccin_mocha::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::catppuccin_mocha::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::catppuccin_mocha::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::catppuccin_mocha::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::catppuccin_mocha::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::catppuccin_mocha::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::catppuccin_mocha::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::catppuccin_mocha::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::catppuccin_mocha::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::catppuccin_mocha::colors::SUCCESS }
-    fn warning(&self) -> Color { super::catppuccin_mocha::colors::WARNING }
-    fn danger(&self) -> Color { super::catppuccin_mocha::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::catppuccin_mocha::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::catppuccin_mocha::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::catppuccin_mocha::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::catppuccin_mocha::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::catppuccin_mocha::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::catppuccin_mocha::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::catppuccin_mocha::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::catppuccin_mocha::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::catppuccin_mocha::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::catppuccin_mocha::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::catppuccin_mocha::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::catppuccin_mocha::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::catppuccin_mocha::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::catppuccin_mocha::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::catppuccin_mocha::colors::DANGER
+    }
 }
 
 /// Static struct for Catppuccin Latte theme colors
 pub struct CatppuccinLatteColors;
 impl ThemeColors for CatppuccinLatteColors {
-    fn bg_base(&self) -> Color { super::catppuccin_latte::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::catppuccin_latte::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::catppuccin_latte::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::catppuccin_latte::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::catppuccin_latte::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::catppuccin_latte::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::catppuccin_latte::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::catppuccin_latte::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::catppuccin_latte::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::catppuccin_latte::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::catppuccin_latte::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::catppuccin_latte::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::catppuccin_latte::colors::SUCCESS }
-    fn warning(&self) -> Color { super::catppuccin_latte::colors::WARNING }
-    fn danger(&self) -> Color { super::catppuccin_latte::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::catppuccin_latte::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::catppuccin_latte::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::catppuccin_latte::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::catppuccin_latte::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::catppuccin_latte::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::catppuccin_latte::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::catppuccin_latte::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::catppuccin_latte::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::catppuccin_latte::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::catppuccin_latte::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::catppuccin_latte::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::catppuccin_latte::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::catppuccin_latte::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::catppuccin_latte::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::catppuccin_latte::colors::DANGER
+    }
 }
 
 /// Static struct for Tokyo Night theme colors
 pub struct TokyoNightColors;
 impl ThemeColors for TokyoNightColors {
-    fn bg_base(&self) -> Color { super::tokyo_night::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::tokyo_night::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::tokyo_night::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::tokyo_night::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::tokyo_night::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::tokyo_night::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::tokyo_night::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::tokyo_night::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::tokyo_night::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::tokyo_night::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::tokyo_night::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::tokyo_night::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::tokyo_night::colors::SUCCESS }
-    fn warning(&self) -> Color { super::tokyo_night::colors::WARNING }
-    fn danger(&self) -> Color { super::tokyo_night::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::tokyo_night::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::tokyo_night::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::tokyo_night::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::tokyo_night::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::tokyo_night::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::tokyo_night::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::tokyo_night::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::tokyo_night::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::tokyo_night::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::tokyo_night::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::tokyo_night::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::tokyo_night::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::tokyo_night::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::tokyo_night::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::tokyo_night::colors::DANGER
+    }
 }
 
 /// Static struct for One Dark theme colors
 pub struct OneDarkColors;
 impl ThemeColors for OneDarkColors {
-    fn bg_base(&self) -> Color { super::one_dark::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::one_dark::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::one_dark::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::one_dark::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::one_dark::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::one_dark::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::one_dark::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::one_dark::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::one_dark::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::one_dark::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::one_dark::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::one_dark::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::one_dark::colors::SUCCESS }
-    fn warning(&self) -> Color { super::one_dark::colors::WARNING }
-    fn danger(&self) -> Color { super::one_dark::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::one_dark::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::one_dark::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::one_dark::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::one_dark::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::one_dark::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::one_dark::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::one_dark::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::one_dark::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::one_dark::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::one_dark::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::one_dark::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::one_dark::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::one_dark::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::one_dark::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::one_dark::colors::DANGER
+    }
 }
 
 /// Static struct for Gruvbox Dark theme colors
 pub struct GruvboxDarkColors;
 impl ThemeColors for GruvboxDarkColors {
-    fn bg_base(&self) -> Color { super::gruvbox_dark::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::gruvbox_dark::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::gruvbox_dark::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::gruvbox_dark::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::gruvbox_dark::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::gruvbox_dark::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::gruvbox_dark::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::gruvbox_dark::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::gruvbox_dark::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::gruvbox_dark::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::gruvbox_dark::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::gruvbox_dark::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::gruvbox_dark::colors::SUCCESS }
-    fn warning(&self) -> Color { super::gruvbox_dark::colors::WARNING }
-    fn danger(&self) -> Color { super::gruvbox_dark::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::gruvbox_dark::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::gruvbox_dark::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::gruvbox_dark::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::gruvbox_dark::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::gruvbox_dark::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::gruvbox_dark::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::gruvbox_dark::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::gruvbox_dark::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::gruvbox_dark::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::gruvbox_dark::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::gruvbox_dark::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::gruvbox_dark::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::gruvbox_dark::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::gruvbox_dark::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::gruvbox_dark::colors::DANGER
+    }
 }
 
 /// Static struct for Gruvbox Light theme colors
 pub struct GruvboxLightColors;
 impl ThemeColors for GruvboxLightColors {
-    fn bg_base(&self) -> Color { super::gruvbox_light::colors::BG_BASE }
-    fn bg_surface(&self) -> Color { super::gruvbox_light::colors::BG_SURFACE }
-    fn bg_elevated(&self) -> Color { super::gruvbox_light::colors::BG_ELEVATED }
-    fn bg_hover(&self) -> Color { super::gruvbox_light::colors::BG_HOVER }
-    fn text_primary(&self) -> Color { super::gruvbox_light::colors::TEXT_PRIMARY }
-    fn text_secondary(&self) -> Color { super::gruvbox_light::colors::TEXT_SECONDARY }
-    fn text_muted(&self) -> Color { super::gruvbox_light::colors::TEXT_MUTED }
-    fn border_subtle(&self) -> Color { super::gruvbox_light::colors::BORDER_SUBTLE }
-    fn border_default(&self) -> Color { super::gruvbox_light::colors::BORDER_DEFAULT }
-    fn accent(&self) -> Color { super::gruvbox_light::colors::ACCENT }
-    fn accent_hover(&self) -> Color { super::gruvbox_light::colors::ACCENT_HOVER }
-    fn accent_muted(&self) -> Color { super::gruvbox_light::colors::ACCENT_MUTED }
-    fn success(&self) -> Color { super::gruvbox_light::colors::SUCCESS }
-    fn warning(&self) -> Color { super::gruvbox_light::colors::WARNING }
-    fn danger(&self) -> Color { super::gruvbox_light::colors::DANGER }
+    fn bg_base(&self) -> Color {
+        super::gruvbox_light::colors::BG_BASE
+    }
+    fn bg_surface(&self) -> Color {
+        super::gruvbox_light::colors::BG_SURFACE
+    }
+    fn bg_elevated(&self) -> Color {
+        super::gruvbox_light::colors::BG_ELEVATED
+    }
+    fn bg_hover(&self) -> Color {
+        super::gruvbox_light::colors::BG_HOVER
+    }
+    fn text_primary(&self) -> Color {
+        super::gruvbox_light::colors::TEXT_PRIMARY
+    }
+    fn text_secondary(&self) -> Color {
+        super::gruvbox_light::colors::TEXT_SECONDARY
+    }
+    fn text_muted(&self) -> Color {
+        super::gruvbox_light::colors::TEXT_MUTED
+    }
+    fn border_subtle(&self) -> Color {
+        super::gruvbox_light::colors::BORDER_SUBTLE
+    }
+    fn border_default(&self) -> Color {
+        super::gruvbox_light::colors::BORDER_DEFAULT
+    }
+    fn accent(&self) -> Color {
+        super::gruvbox_light::colors::ACCENT
+    }
+    fn accent_hover(&self) -> Color {
+        super::gruvbox_light::colors::ACCENT_HOVER
+    }
+    fn accent_muted(&self) -> Color {
+        super::gruvbox_light::colors::ACCENT_MUTED
+    }
+    fn success(&self) -> Color {
+        super::gruvbox_light::colors::SUCCESS
+    }
+    fn warning(&self) -> Color {
+        super::gruvbox_light::colors::WARNING
+    }
+    fn danger(&self) -> Color {
+        super::gruvbox_light::colors::DANGER
+    }
 }
 
 // Static instances for the registry
@@ -272,25 +602,26 @@ static GRUVBOX_DARK: GruvboxDarkColors = GruvboxDarkColors;
 static GRUVBOX_LIGHT: GruvboxLightColors = GruvboxLightColors;
 
 /// Theme registry mapping theme names to their color implementations.
-static THEME_REGISTRY: LazyLock<HashMap<&'static str, &'static dyn ThemeColors>> = LazyLock::new(|| {
-    let mut map: HashMap<&'static str, &'static dyn ThemeColors> = HashMap::new();
-    map.insert("Dark", &DARK);
-    map.insert("Light", &LIGHT);
-    map.insert("Zinc", &ZINC);
-    map.insert("Dracula", &DRACULA);
-    map.insert("Nord", &NORD);
-    map.insert("Catppuccin Mocha", &CATPPUCCIN_MOCHA);
-    map.insert("Catppuccin Latte", &CATPPUCCIN_LATTE);
-    map.insert("Tokyo Night", &TOKYO_NIGHT);
-    map.insert("One Dark", &ONE_DARK);
-    map.insert("Gruvbox Dark", &GRUVBOX_DARK);
-    map.insert("Gruvbox Light", &GRUVBOX_LIGHT);
-    // Partial matches for Debug format
-    map.insert("Mocha", &CATPPUCCIN_MOCHA);
-    map.insert("Latte", &CATPPUCCIN_LATTE);
-    map.insert("Tokyo", &TOKYO_NIGHT);
-    map
-});
+static THEME_REGISTRY: LazyLock<HashMap<&'static str, &'static dyn ThemeColors>> =
+    LazyLock::new(|| {
+        let mut map: HashMap<&'static str, &'static dyn ThemeColors> = HashMap::new();
+        map.insert("Dark", &DARK);
+        map.insert("Light", &LIGHT);
+        map.insert("Zinc", &ZINC);
+        map.insert("Dracula", &DRACULA);
+        map.insert("Nord", &NORD);
+        map.insert("Catppuccin Mocha", &CATPPUCCIN_MOCHA);
+        map.insert("Catppuccin Latte", &CATPPUCCIN_LATTE);
+        map.insert("Tokyo Night", &TOKYO_NIGHT);
+        map.insert("One Dark", &ONE_DARK);
+        map.insert("Gruvbox Dark", &GRUVBOX_DARK);
+        map.insert("Gruvbox Light", &GRUVBOX_LIGHT);
+        // Partial matches for Debug format
+        map.insert("Mocha", &CATPPUCCIN_MOCHA);
+        map.insert("Latte", &CATPPUCCIN_LATTE);
+        map.insert("Tokyo", &TOKYO_NIGHT);
+        map
+    });
 
 /// Get the theme colors for a given Iced Theme.
 /// Falls back to Dark theme if not found.

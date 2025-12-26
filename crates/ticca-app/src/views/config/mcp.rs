@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use iced::widget::{
-    button, checkbox, column, container, pick_list, row, text, text_editor, text_input, Column,
-    Space,
+    Column, Space, button, checkbox, column, container, pick_list, row, text, text_editor,
+    text_input,
 };
 use iced::{Element, Length};
 
@@ -15,7 +15,7 @@ use crate::theme::{AppTheme, styles};
 use ticca_core::agents::{AgentRegistry, AgentType};
 use ticca_core::config::{McpServer, McpTransport};
 
-use super::types::{horizontal_space, McpServerFormState};
+use super::types::{McpServerFormState, horizontal_space};
 
 /// Build the MCP servers section
 pub(super) fn build_mcp_servers_section<'a>(

@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use base64::Engine as _;
 
 use crate::app::{TiccaApp, effects::Effect};
+use crate::helpers::extract_diff_markers;
 use crate::chat_message::ChatMessage;
-use crate::helpers::format_tool_call_oneliner;
 use crate::messages::RightSidebarTab;
 use ticca_core::agents::{AgentProfile, ModelSelectionContext};
 use ticca_core::llm::{ProviderId, ProviderRegistry, auth};
@@ -51,8 +51,7 @@ pub(super) fn handle_send_message(app: &mut TiccaApp, effects: &mut Vec<Effect>)
 
     app.chat.messages.push(ChatMessage::user(&display_message));
     app.chat.user_at_bottom = true;
-    app.chat.call_graph.reset(app.chat.current_agent);
-    app.chat.subagent_messages.clear();
+    app.chat.call_graph.start_new_run(app.chat.current_agent);
     // Clear todo lists for fresh start - don't carry over completed state from previous request
     app.chat.todo_lists.clear();
     app.chat.todo_selected_node = 0;
@@ -95,7 +94,10 @@ pub(super) fn handle_send_message(app: &mut TiccaApp, effects: &mut Vec<Effect>)
         return;
     }
 
-    app.chat.messages.push(ChatMessage::assistant_streaming());
+    let streaming_msg = ChatMessage::assistant_streaming();
+    let msg_id = streaming_msg.id;
+    app.chat.messages.push(streaming_msg);
+    app.chat.main_agent_message_id = Some(msg_id);
     app.chat.is_streaming = true;
 
     app.chat.stream_start_time = Some(std::time::Instant::now());
@@ -298,8 +300,7 @@ pub(super) fn handle_terminal_event(
                             .store
                             .mark_finished(&process_id, Some(code));
                         auto_close_if_fast = instance.auto_close_if_fast
-                            && instance.started_at.elapsed()
-                                < std::time::Duration::from_secs(30);
+                            && instance.started_at.elapsed() < std::time::Duration::from_secs(30);
                     }
                 }
 
@@ -336,46 +337,69 @@ pub(super) fn handle_todo_event(app: &mut TiccaApp, event: ticca_core::tools::To
 }
 
 /// Handles subagent streaming events.
+///
+/// Sub-agent content is stored as ContentBlocks inside the main agent's message,
+/// preserving the order of content and sub-agent invocations.
 pub(super) fn handle_subagent_stream(
     app: &mut TiccaApp,
     event: ticca_core::tools::AgentStreamEvent,
     effects: &mut Vec<Effect>,
 ) {
+    use crate::chat_message::SubAgentMessage;
     use ticca_core::tools::AgentStreamEvent;
+
+    // Get the main agent's message ID
+    let Some(main_msg_id) = app.chat.main_agent_message_id else {
+        tracing::warn!("SubagentStream event received but no main_agent_message_id set");
+        return;
+    };
 
     match event {
         AgentStreamEvent::Start {
             node_id,
             agent_type,
         } => {
-            let label = format!("{} - {}", agent_type.display_name(), node_id);
-            let new_msg = ChatMessage::assistant_streaming_named(label);
-            let msg_id = new_msg.id;
-            app.chat.messages.push(new_msg);
-            app.chat.subagent_messages.insert(node_id, msg_id);
-            app.chat.user_at_bottom = true;
+            app.chat
+                .call_graph
+                .ensure_node_exists(node_id, agent_type);
+
+            // Add a new sub-agent block to the main message
+            if let Some(main_msg) = app.chat.message_by_id_mut(main_msg_id) {
+                let sub_agent = SubAgentMessage::new_streaming(node_id, agent_type);
+                main_msg.add_sub_agent(sub_agent);
+            }
+            app.chat.push_scroll_if_needed(effects);
         }
         AgentStreamEvent::Chunk { node_id, text } => {
-            if let Some(&msg_id) = app.chat.subagent_messages.get(&node_id)
-                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+            let mut extracted_diffs = Vec::new();
+            if let Some(main_msg) = app.chat.message_by_id_mut(main_msg_id)
+                && let Some(sub_agent) = main_msg.sub_agent_mut(node_id)
             {
-                if msg.last_was_tool_call && !text.trim().is_empty() {
-                    msg.content.push_str("\n\n💡 ");
-                    msg.last_was_tool_call = false;
+                if sub_agent.last_was_tool_call && !text.trim().is_empty() {
+                    sub_agent.content.push_str("\n\n💡 ");
+                    sub_agent.last_was_tool_call = false;
                 }
-                msg.content.push_str(&text);
-                msg.update_parsed_items();
+                sub_agent.content.push_str(&text);
+                let (cleaned, diffs) = extract_diff_markers(&sub_agent.content);
+                if cleaned != sub_agent.content {
+                    sub_agent.content = cleaned;
+                }
+                extracted_diffs = diffs;
+                sub_agent.update_parsed_items();
+            }
+            for (diff_id, diff_state) in extracted_diffs {
+                app.chat.diff_cache.insert(diff_id, diff_state);
             }
             app.chat.push_scroll_if_needed(effects);
         }
         AgentStreamEvent::Reasoning { node_id, text } => {
-            if let Some(&msg_id) = app.chat.subagent_messages.get(&node_id)
-                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+            if let Some(main_msg) = app.chat.message_by_id_mut(main_msg_id)
+                && let Some(sub_agent) = main_msg.sub_agent_mut(node_id)
             {
-                if let Some(ref mut existing) = msg.reasoning {
+                if let Some(ref mut existing) = sub_agent.reasoning {
                     existing.push_str(&text);
                 } else {
-                    msg.reasoning = Some(text);
+                    sub_agent.reasoning = Some(text);
                 }
             }
             app.chat.push_scroll_if_needed(effects);
@@ -385,27 +409,41 @@ pub(super) fn handle_subagent_stream(
             name,
             args,
         } => {
-            // Format tool line before mutable borrow
-            let tool_line =
-                format_tool_call_oneliner(&name, &args, Some(&app.chat.working_directory));
-            if let Some(&msg_id) = app.chat.subagent_messages.get(&node_id)
-                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+            let tool_line = crate::helpers::format_tool_call_oneliner(
+                &name,
+                &args,
+                Some(&app.chat.working_directory),
+            );
+            if let Some(main_msg) = app.chat.message_by_id_mut(main_msg_id)
+                && let Some(sub_agent) = main_msg.sub_agent_mut(node_id)
             {
-                msg.content.push_str(&format!("\n\n{}", tool_line));
-                msg.last_was_tool_call = true;
-                msg.update_parsed_items();
+                sub_agent.content.push_str(&format!("\n\n{}", tool_line));
+                sub_agent.last_was_tool_call = true;
+                sub_agent.update_parsed_items();
             }
             app.chat.push_scroll_if_needed(effects);
         }
         AgentStreamEvent::Complete { node_id, output } => {
-            if let Some(msg_id) = app.chat.subagent_messages.remove(&node_id)
-                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+            let mut extracted_diffs = Vec::new();
+            if let Some(main_msg) = app.chat.message_by_id_mut(main_msg_id)
+                && let Some(sub_agent) = main_msg.sub_agent_mut(node_id)
             {
                 // Replace streamed content with the final pure output
-                msg.content = output;
-                msg.is_streaming = false;
-                msg.update_parsed_items();
+                sub_agent.content = output;
+                let (cleaned, diffs) = extract_diff_markers(&sub_agent.content);
+                if cleaned != sub_agent.content {
+                    sub_agent.content = cleaned;
+                }
+                extracted_diffs = diffs;
+                sub_agent.is_streaming = false;
+                sub_agent.collapsed = true;
+                sub_agent.update_parsed_items();
             }
+            for (diff_id, diff_state) in extracted_diffs {
+                app.chat.diff_cache.insert(diff_id, diff_state);
+            }
+            // Mark the subagent node as completed in the call graph
+            app.chat.call_graph.mark_node_completed(node_id);
         }
     }
 }

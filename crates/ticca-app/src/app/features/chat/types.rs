@@ -42,3 +42,14 @@ pub(in crate::app) struct ToolApprovalPrompt {
     pub name: String,
     pub args: String,
 }
+
+/// State for the diff modal display
+#[derive(Debug, Clone)]
+pub struct DiffModalState {
+    /// The file path that was edited
+    pub file_path: String,
+    /// The content before the edit
+    pub old_content: String,
+    /// The content after the edit
+    pub new_content: String,
+}

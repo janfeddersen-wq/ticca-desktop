@@ -29,7 +29,8 @@ pub mod todo;
 
 // Re-export registry types
 pub use registry::{
-    RegisteredTool, ToolDefinition, ToolExecutor, ToolParameterSchema, ToolRegistry, ToolResult,
+    DiffData, RegisteredTool, ToolDefinition, ToolExecutor, ToolParameterSchema, ToolRegistry,
+    ToolResult,
 };
 
 // Re-export tool implementations

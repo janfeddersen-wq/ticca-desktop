@@ -34,10 +34,7 @@ impl ConfigDatabase {
     }
 
     /// List all discovered models, optionally filtered by provider.
-    pub fn list_discovered_models(
-        &self,
-        provider: Option<&str>,
-    ) -> Result<Vec<DiscoveredModel>> {
+    pub fn list_discovered_models(&self, provider: Option<&str>) -> Result<Vec<DiscoveredModel>> {
         fn map_model(row: &rusqlite::Row<'_>) -> rusqlite::Result<DiscoveredModel> {
             Ok(DiscoveredModel {
                 canonical_id: row.get(0)?,

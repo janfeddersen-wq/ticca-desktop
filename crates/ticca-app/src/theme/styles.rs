@@ -8,8 +8,8 @@ use iced::{Border, Color, Theme};
 
 // Import color helpers from the registry-based colors module
 use super::colors::{
-    accent, accent_hover, accent_muted, bg_base, bg_elevated, bg_hover, bg_surface,
-    border_default, border_subtle, danger, is_dark_theme, text_muted, text_primary, text_secondary,
+    accent, accent_hover, accent_muted, bg_base, bg_elevated, bg_hover, bg_surface, border_default,
+    border_subtle, danger, is_dark_theme, text_muted, text_primary, text_secondary,
 };
 
 /// Border radius constants
@@ -116,6 +116,41 @@ pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
         button::Status::Pressed => button::Style {
             background: Some(bg_hover(theme).into()),
             text_color: accent(theme),
+            ..base
+        },
+        button::Status::Disabled => button::Style {
+            text_color: text_muted(theme),
+            ..base
+        },
+    }
+}
+
+/// Collapsible header button
+pub fn collapsible_header_button(theme: &Theme, status: button::Status) -> button::Style {
+    let base = button::Style {
+        background: Some(bg_surface(theme).into()),
+        text_color: text_primary(theme),
+        border: Border {
+            color: border_subtle(theme),
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..button::Style::default()
+    };
+
+    match status {
+        button::Status::Active => base,
+        button::Status::Hovered => button::Style {
+            background: Some(bg_elevated(theme).into()),
+            border: Border {
+                color: border_default(theme),
+                width: 1.0,
+                radius: RADIUS_SM.into(),
+            },
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(bg_hover(theme).into()),
             ..base
         },
         button::Status::Disabled => button::Style {
@@ -405,6 +440,51 @@ pub fn flow_panel_container(theme: &Theme) -> container::Style {
     }
 }
 
+/// Style for diff modal container
+pub fn diff_modal_container(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(palette.background.base.color.into()),
+        text_color: Some(palette.background.base.text),
+        border: Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: palette.background.strong.color,
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Style for diff addition lines (green-ish)
+pub fn diff_addition_line(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Color::from_rgba(0.0, 0.5, 0.0, 0.2).into()),
+        text_color: Some(palette.success.base.color),
+        ..container::Style::default()
+    }
+}
+
+/// Style for diff deletion lines (red-ish)
+pub fn diff_deletion_line(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Color::from_rgba(0.5, 0.0, 0.0, 0.2).into()),
+        text_color: Some(palette.danger.base.color),
+        ..container::Style::default()
+    }
+}
+
+/// Style for diff context lines (neutral)
+pub fn diff_context_line(_theme: &Theme) -> container::Style {
+    container::Style::default()
+}
+
 /// Message bubble
 pub fn message_bubble(theme: &Theme, is_user: bool) -> container::Style {
     if is_user {
@@ -433,6 +513,20 @@ pub fn message_bubble(theme: &Theme, is_user: bool) -> container::Style {
             },
             ..container::Style::default()
         }
+    }
+}
+
+/// Sub-agent container
+pub fn sub_agent_container(theme: &Theme, _is_dark: bool) -> container::Style {
+    container::Style {
+        background: Some(bg_base(theme).into()),
+        text_color: Some(text_primary(theme)),
+        border: Border {
+            color: border_subtle(theme),
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..container::Style::default()
     }
 }
 

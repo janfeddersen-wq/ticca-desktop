@@ -16,6 +16,7 @@ use ticca_core::tools::TodoListState;
 
 const STARTING_TODO_NODE_ID: usize = 0;
 
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     graph: &AgentCallGraph,
     todo_lists: &HashMap<usize, TodoListState>,
@@ -24,6 +25,7 @@ pub fn view<'a>(
     selected_todo_node: usize,
     theme: AppTheme,
     expert_mode_enabled: bool,
+    flow_animation_frame: usize,
 ) -> Element<'a, Message> {
     let effective_tab = if !expert_mode_enabled
         && matches!(
@@ -93,7 +95,7 @@ pub fn view<'a>(
     .width(Length::Fill);
 
     let body: Element<Message> = match effective_tab {
-        RightSidebarTab::AgentsFlow => agent_flow::contents(graph, theme),
+        RightSidebarTab::AgentsFlow => agent_flow::contents(graph, theme, flow_animation_frame),
         RightSidebarTab::TodoList => {
             if !expert_mode_enabled {
                 let state = todo_lists.get(&STARTING_TODO_NODE_ID);

@@ -1,8 +1,8 @@
 //! Context estimation and compression logic.
 
-use crate::compression::{compress_messages, create_context_estimate, needs_compression};
-use crate::config::{CompressionSettings, ConfigDatabase};
 use super::types::RunnerEvent;
+use crate::compression::{compress_messages, create_context_estimate};
+use crate::config::{CompressionSettings, ConfigDatabase};
 use tokio::sync::mpsc;
 
 /// Context estimation result with all relevant metrics.
@@ -27,13 +27,7 @@ pub fn estimate_context(
     let estimated_tool_tokens = crate::tools::spec::estimate_all_tools_tokens();
 
     // Create comprehensive context estimate
-    let context_estimate = create_context_estimate(
-        system_prompt,
-        &[],
-        messages,
-        model_name,
-        None,
-    );
+    let context_estimate = create_context_estimate(system_prompt, &[], messages, model_name, None);
 
     // Load compression settings
     let compression_settings = ConfigDatabase::open()
@@ -42,8 +36,11 @@ pub fn estimate_context(
         .unwrap_or_default();
 
     let total_with_tools = context_estimate.total_tokens + estimated_tool_tokens;
-    let threshold_tokens = context_estimate.threshold_tokens(compression_settings.threshold_percent);
-    let compression_needed = needs_compression(&context_estimate, &compression_settings);
+    let threshold_tokens =
+        context_estimate.threshold_tokens(compression_settings.threshold_percent);
+    // Check if compression is needed using total WITH tools (not the estimate without tools)
+    let compression_needed =
+        compression_settings.enabled && total_with_tools as u64 > threshold_tokens;
 
     ContextEstimation {
         system_prompt_tokens: context_estimate.system_prompt_tokens,
@@ -51,7 +48,8 @@ pub fn estimate_context(
         messages_tokens: context_estimate.messages_tokens,
         total_tokens: total_with_tools,
         context_window: context_estimate.context_window,
-        usage_percent: ((total_with_tools as f64 / context_estimate.context_window as f64) * 100.0) as u32,
+        usage_percent: ((total_with_tools as f64 / context_estimate.context_window as f64) * 100.0)
+            as u32,
         threshold_tokens,
         needs_compression: compression_needed,
     }

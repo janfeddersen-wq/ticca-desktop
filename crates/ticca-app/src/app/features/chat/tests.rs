@@ -13,6 +13,7 @@ fn test_config() -> AppConfig {
     AppConfig {
         theme: AppTheme::Dark,
         default_model: None,
+        working_directory: None,
         agent_pinned_models: HashMap::new(),
         max_tool_rounds: 10,
         yolo_mode_enabled: true,

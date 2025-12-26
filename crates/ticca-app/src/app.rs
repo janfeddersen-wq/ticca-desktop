@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 mod effects;
 mod features;
 
+pub(crate) use features::chat::DiffModalState;
+
 use ticca_core::external_tools::ExternalToolId;
 use ticca_core::llm::auth;
 
@@ -98,7 +100,12 @@ impl TiccaApp {
         let config = load_config();
 
         // Load working directory from config or use current directory
-        let working_directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let working_directory = config
+            .working_directory
+            .as_ref()
+            .filter(|path| path.exists() && path.is_dir())
+            .cloned()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let provider_auth_status = features::settings::check_provider_auth_status();
 
         let app = Self {
@@ -287,7 +294,8 @@ impl TiccaApp {
         let with_approval =
             features::chat::wrap_with_approval_modal(self.chat.active_approval.as_ref(), base);
         let with_tools_prompt = self.wrap_with_external_tools_prompt(with_approval);
-        self.wrap_with_update_modal(with_tools_prompt)
+        let with_diff_modal = self.wrap_with_diff_modal(with_tools_prompt);
+        self.wrap_with_update_modal(with_diff_modal)
     }
 
     /// Wrap content with external tools prompt modal if active
@@ -383,6 +391,128 @@ impl TiccaApp {
             });
 
         // Stack base and overlay
+        iced::widget::stack![base, overlay].into()
+    }
+
+    /// Wrap content with diff modal if active
+    fn wrap_with_diff_modal<'a>(&'a self, base: Element<'a, Message>) -> Element<'a, Message> {
+        use crate::theme::styles;
+        use iced::widget::{button, column, container, row, scrollable, text, Space};
+
+        let Some(ref diff_state) = self.chat.active_diff_modal else {
+            return base;
+        };
+
+        let mut diff_lines: Vec<Element<Message>> = Vec::new();
+
+        let old_lines: Vec<&str> = diff_state.old_content.lines().collect();
+        let new_lines: Vec<&str> = diff_state.new_content.lines().collect();
+
+        let mut old_idx = 0;
+        let mut new_idx = 0;
+
+        while old_idx < old_lines.len() || new_idx < new_lines.len() {
+            if old_idx < old_lines.len() && new_idx < new_lines.len() {
+                if old_lines[old_idx] == new_lines[new_idx] {
+                    diff_lines.push(
+                        container(
+                            text(format!("  {}", old_lines[old_idx]))
+                                .size(12)
+                                .font(iced::Font::MONOSPACE),
+                        )
+                        .width(Length::Fill)
+                        .style(styles::diff_context_line)
+                        .into(),
+                    );
+                    old_idx += 1;
+                    new_idx += 1;
+                } else if !new_lines[new_idx..].contains(&old_lines[old_idx]) {
+                    diff_lines.push(
+                        container(
+                            text(format!("- {}", old_lines[old_idx]))
+                                .size(12)
+                                .font(iced::Font::MONOSPACE),
+                        )
+                        .width(Length::Fill)
+                        .style(styles::diff_deletion_line)
+                        .into(),
+                    );
+                    old_idx += 1;
+                } else {
+                    diff_lines.push(
+                        container(
+                            text(format!("+ {}", new_lines[new_idx]))
+                                .size(12)
+                                .font(iced::Font::MONOSPACE),
+                        )
+                        .width(Length::Fill)
+                        .style(styles::diff_addition_line)
+                        .into(),
+                    );
+                    new_idx += 1;
+                }
+            } else if old_idx < old_lines.len() {
+                diff_lines.push(
+                    container(
+                        text(format!("- {}", old_lines[old_idx]))
+                            .size(12)
+                            .font(iced::Font::MONOSPACE),
+                    )
+                    .width(Length::Fill)
+                    .style(styles::diff_deletion_line)
+                    .into(),
+                );
+                old_idx += 1;
+            } else {
+                diff_lines.push(
+                    container(
+                        text(format!("+ {}", new_lines[new_idx]))
+                            .size(12)
+                            .font(iced::Font::MONOSPACE),
+                    )
+                    .width(Length::Fill)
+                    .style(styles::diff_addition_line)
+                    .into(),
+                );
+                new_idx += 1;
+            }
+        }
+
+        let title = text(format!("Changes to: {}", diff_state.file_path)).size(16);
+
+        let close_button = button(text("✕").size(16))
+            .on_press(Message::Chat(crate::messages::chat::Msg::CloseDiffModal))
+            .style(styles::icon_button)
+            .padding([4, 8]);
+
+        let header = row![title, Space::new().width(Length::Fill), close_button]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
+        let diff_content = scrollable(
+            iced::widget::Column::with_children(diff_lines)
+                .spacing(0)
+                .padding(10),
+        )
+        .height(Length::Fixed(400.0));
+
+        let modal_content =
+            container(column![header, diff_content].spacing(10))
+                .padding(20)
+                .width(Length::Fixed(700.0))
+                .max_height(500.0)
+                .style(styles::diff_modal_container);
+
+        let overlay = container(modal_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                ..Default::default()
+            });
+
         iced::widget::stack![base, overlay].into()
     }
 

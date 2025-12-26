@@ -24,7 +24,10 @@ pub fn contents<'a>(state: Option<&TodoListState>, _theme: AppTheme) -> Element<
         .filter(|item| item.status == TodoStatus::InProgress)
         .count();
 
-    let all_completed = state.items.iter().all(|item| item.status == TodoStatus::Completed);
+    let all_completed = state
+        .items
+        .iter()
+        .all(|item| item.status == TodoStatus::Completed);
     let status_row = if all_completed && !state.items.is_empty() {
         row![
             icon(icons::CHECK_CIRCLE).size(16),
@@ -33,12 +36,9 @@ pub fn contents<'a>(state: Option<&TodoListState>, _theme: AppTheme) -> Element<
         .spacing(6)
         .align_y(iced::Alignment::Center)
     } else if in_progress > 0 {
-        row![
-            icon(icons::PENDING).size(16),
-            text("In progress").size(11),
-        ]
-        .spacing(6)
-        .align_y(iced::Alignment::Center)
+        row![icon(icons::PENDING).size(16), text("In progress").size(11),]
+            .spacing(6)
+            .align_y(iced::Alignment::Center)
     } else {
         row![
             icon(icons::RADIO_BUTTON_UNCHECKED).size(16),

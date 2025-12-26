@@ -45,6 +45,8 @@ pub mod icons {
     pub const MORE_VERT: Icon = Icon::MoreVert;
     pub const MORE_HORIZ: Icon = Icon::MoreHoriz;
     pub const MENU: Icon = Icon::Menu;
+    pub const CHEVRON_RIGHT: Icon = Icon::ChevronRight;
+    pub const EXPAND_MORE: Icon = Icon::ExpandMore;
 
     // Theme (using Brightness6 as fallback for dark/light mode icons)
     pub const DARK_MODE: Icon = Icon::Brightness6;

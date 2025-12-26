@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use iced::widget::Space;
 use iced::Length;
+use iced::widget::Space;
 
 use ticca_core::config::{ApiKeyAccount, McpTransport, OAuthAccount, UiMode};
 

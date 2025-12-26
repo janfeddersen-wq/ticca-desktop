@@ -8,7 +8,8 @@ use tokio::time::Duration;
 pub const DEFAULT_COOLDOWN_SECS: i64 = 60;
 
 /// System prompt identifier for Claude.
-pub const CLAUDE_CODE_INSTRUCTIONS: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+pub const CLAUDE_CODE_INSTRUCTIONS: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Timeout for MCP server connections.
 pub const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -47,10 +48,7 @@ pub enum RunnerEvent {
         window_ms: u64,
     },
     /// Tool call notification
-    ToolCall {
-        name: String,
-        args: String,
-    },
+    ToolCall { name: String, args: String },
     /// Agent-to-agent call
     AgentCall(AgentCallEvent),
     /// Subagent stream forwarding
@@ -58,11 +56,7 @@ pub enum RunnerEvent {
     /// Todo list event
     TodoEvent(TodoListEvent),
     /// Tool approval requested
-    ToolApprovalRequested {
-        id: u64,
-        name: String,
-        args: String,
-    },
+    ToolApprovalRequested { id: u64, name: String, args: String },
     /// Token usage from the API response
     Usage {
         input_tokens: u64,

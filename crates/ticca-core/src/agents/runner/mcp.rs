@@ -1,8 +1,8 @@
 //! MCP (Model Context Protocol) server connection handling.
 
+use super::types::MCP_CONNECT_TIMEOUT;
 use crate::agents::AgentType;
 use crate::config::{ConfigDatabase, McpServer, McpTransport};
-use super::types::MCP_CONNECT_TIMEOUT;
 
 /// List active MCP servers for an agent type.
 pub fn list_active_mcp_servers(agent: AgentType) -> Vec<McpServer> {

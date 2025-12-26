@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ticca_core::agents::AgentType;
 use ticca_core::tools::{AgentCallEvent, AgentStreamEvent, SystemExecRequest, TodoListEvent};
 
+use crate::app::DiffModalState;
 use crate::chat_message::MessageId;
 
 use super::{ImageAttachment, RightSidebarTab, TodoNodeOption};
@@ -16,6 +17,11 @@ pub enum Msg {
     ChatScrolled(iced::widget::scrollable::Viewport),
     CopyMessage(MessageId),
     ToggleRawView(MessageId),
+    /// Toggle the collapsed state of a sub-agent within a message
+    ToggleSubAgentCollapsed {
+        msg_id: MessageId,
+        node_id: usize,
+    },
     RawViewEditorAction(MessageId, iced::widget::text_editor::Action),
     PaneResized(iced::widget::pane_grid::ResizeEvent),
 
@@ -83,6 +89,21 @@ pub enum Msg {
     AnimationTick,
     StopStreaming,
 
+    // Agent lifecycle events (for Flow Graph)
+    #[allow(dead_code)]
+    AgentNodeCompleted {
+        node_id: usize,
+    },
+    #[allow(dead_code)]
+    AgentNodeFailed {
+        node_id: usize,
+    },
+    #[allow(dead_code)]
+    RunCompleted {
+        run_id: usize,
+    },
+    FlowAnimationTick,
+
     // Agent selection + UI layout
     SwitchAgent(AgentType),
     ToggleFlowPanel,
@@ -92,6 +113,16 @@ pub enum Msg {
     // Working directory
     SelectWorkingDirectory,
     WorkingDirectoryChanged(PathBuf),
+
+    // Diff modal
+    /// Show the diff modal with the given state
+    #[allow(dead_code)]
+    ShowDiffModal(String),
+    /// Close the diff modal
+    CloseDiffModal,
+    /// Cache a diff for later display
+    #[allow(dead_code)]
+    CacheDiff { id: String, state: DiffModalState },
 
     // Session
     NewSession,

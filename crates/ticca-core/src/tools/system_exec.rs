@@ -83,13 +83,13 @@ impl SystemExecStore {
         request_id: u64,
         responder: oneshot::Sender<SystemExecResponse>,
     ) {
-        let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.pending.insert(request_id, responder);
     }
 
     pub fn respond(&self, request_id: u64, response: SystemExecResponse) {
         let responder = {
-            let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.pending.remove(&request_id)
         };
         if let Some(tx) = responder {
@@ -99,7 +99,7 @@ impl SystemExecStore {
 
     pub fn upsert_process(&self, snapshot: ProcessSnapshot) {
         let notify = {
-            let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let notify = inner
                 .processes
                 .get(&snapshot.process_id)
@@ -119,7 +119,7 @@ impl SystemExecStore {
 
     pub fn set_output(&self, process_id: &str, output: String) {
         let notify = {
-            let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(entry) = inner.processes.get_mut(process_id) else {
                 return;
             };
@@ -132,7 +132,7 @@ impl SystemExecStore {
     pub fn mark_finished(&self, process_id: &str, exit_code: Option<i32>) {
         let now_ms = now_ms();
         let notify = {
-            let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(entry) = inner.processes.get_mut(process_id) else {
                 return;
             };
@@ -145,7 +145,7 @@ impl SystemExecStore {
 
     pub fn set_visible(&self, process_id: &str, visible: bool) {
         let notify = {
-            let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(entry) = inner.processes.get_mut(process_id) else {
                 return;
             };
@@ -156,12 +156,12 @@ impl SystemExecStore {
     }
 
     pub fn remove_process(&self, process_id: &str) {
-        let mut inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.processes.remove(process_id);
     }
 
     pub fn list_visible(&self) -> Vec<String> {
-        let inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let mut ids: Vec<String> = inner
             .processes
             .values()
@@ -173,7 +173,7 @@ impl SystemExecStore {
     }
 
     pub fn snapshot(&self, process_id: &str) -> Option<ProcessSnapshot> {
-        let inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.processes.get(process_id).map(|p| p.snapshot.clone())
     }
 
@@ -187,7 +187,10 @@ impl SystemExecStore {
 
     pub async fn wait_for_update(&self, process_id: &str) -> Result<(), String> {
         let notify = {
-            let inner = self.inner.lock().expect("SystemExecStore mutex poisoned");
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|e| format!("Lock poisoned: {}", e))?;
             inner
                 .processes
                 .get(process_id)

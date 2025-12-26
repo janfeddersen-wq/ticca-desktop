@@ -1,9 +1,11 @@
 //! Application configuration loading and storage
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{ConfigService, UiMode};
+use ticca_core::config::{ConfigDatabase, ConfigRepo, ConfigService, UiMode};
+use ticca_core::config::setting_keys;
 
 use crate::theme::AppTheme;
 
@@ -11,6 +13,7 @@ use crate::theme::AppTheme;
 pub struct AppConfig {
     pub theme: AppTheme,
     pub default_model: Option<String>,
+    pub working_directory: Option<PathBuf>,
     pub agent_pinned_models: HashMap<AgentType, String>,
     pub max_tool_rounds: u32,
     pub yolo_mode_enabled: bool,
@@ -28,6 +31,7 @@ pub fn load_config() -> AppConfig {
             return AppConfig {
                 theme: AppTheme::Dark,
                 default_model: None,
+                working_directory: None,
                 agent_pinned_models: HashMap::new(),
                 max_tool_rounds: ticca_core::config::defaults::MAX_TOOL_ROUNDS,
                 yolo_mode_enabled: ticca_core::config::defaults::YOLO_MODE,
@@ -49,6 +53,10 @@ pub fn load_config() -> AppConfig {
     let external_tools_prompt_dismissed = snapshot.settings.external_tools_prompt_dismissed;
     let update_check_skip_remaining = snapshot.settings.update_check_skip_remaining;
     let update_check_dismissed_version = snapshot.settings.update_check_dismissed_version;
+    let working_directory = ConfigDatabase::open()
+        .ok()
+        .and_then(|db| get_string(&db, setting_keys::WORKING_DIRECTORY))
+        .map(PathBuf::from);
 
     let mut agent_pinned_models = HashMap::new();
     for (agent_str, model) in snapshot.agent_pinned_models {
@@ -60,6 +68,7 @@ pub fn load_config() -> AppConfig {
     AppConfig {
         theme,
         default_model,
+        working_directory,
         agent_pinned_models,
         max_tool_rounds,
         yolo_mode_enabled,
@@ -68,4 +77,8 @@ pub fn load_config() -> AppConfig {
         update_check_skip_remaining,
         update_check_dismissed_version,
     }
+}
+
+fn get_string(repo: &impl ConfigRepo, key: &str) -> Option<String> {
+    repo.get_setting(key).ok().flatten().map(|setting| setting.value)
 }

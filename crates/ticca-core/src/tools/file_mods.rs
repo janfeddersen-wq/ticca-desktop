@@ -1,14 +1,17 @@
 //! File modification tools: edit_file, delete_file
 
-use crate::tools::registry::{ToolDefinition, ToolExecutor, ToolResult};
+use crate::tools::registry::{DiffData, ToolDefinition, ToolExecutor, ToolResult};
 use crate::tools::spec;
 use anyhow::Result;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use strsim::jaro_winkler;
+use uuid::Uuid;
 
 /// Minimum Jaro-Winkler similarity threshold for fuzzy matching (0.95 = 95%)
 const FUZZY_MATCH_THRESHOLD: f64 = 0.95;
@@ -82,6 +85,19 @@ fn generate_diff(old_content: &str, new_content: &str, file_path: &str) -> Strin
     diff_lines.join("\n")
 }
 
+fn encode_diff_marker(diff_data: &DiffData) -> Result<String> {
+    let json = serde_json::to_string(diff_data)?;
+    Ok(format!("<!--TICCA_DIFF:{}-->", BASE64.encode(json)))
+}
+
+fn format_diff_result(summary: &str, diff: &str, diff_data: &DiffData) -> Result<String> {
+    let marker = encode_diff_marker(diff_data)?;
+    Ok(format!(
+        "{}\n{}\n\n[📄 View Diff](ticca-diff://{})\n\n{}",
+        marker, summary, diff_data.id, diff
+    ))
+}
+
 /// Edit a file using content replacement
 fn edit_with_content(payload: &ContentPayload) -> Result<ToolResult> {
     let path = PathBuf::from(&payload.file_path);
@@ -120,16 +136,25 @@ fn edit_with_content(payload: &ContentPayload) -> Result<ToolResult> {
         generate_diff(&old_content, &payload.content, &payload.file_path)
     };
 
-    Ok(ToolResult::success(format!(
-        "File '{}' {} successfully.\n\n{}",
+    let diff_data = DiffData {
+        id: Uuid::new_v4().to_string(),
+        file_path: payload.file_path.clone(),
+        old_content: old_content.clone(),
+        new_content: payload.content.clone(),
+    };
+
+    let summary = format!(
+        "File '{}' {} successfully.",
         payload.file_path,
         if old_content.is_empty() {
             "created"
         } else {
             "overwritten"
         },
-        diff
-    )))
+    );
+    let content = format_diff_result(&summary, &diff, &diff_data)?;
+
+    Ok(ToolResult::success_with_diff(content, diff_data))
 }
 
 /// Edit a file using text replacements
@@ -191,24 +216,31 @@ fn edit_with_replacements(payload: &ReplacementsPayload) -> Result<ToolResult> {
 
     let diff = generate_diff(&old_content, &new_content, &payload.file_path);
 
-    let mut result_msg = if fuzzy_count > 0 {
+    let diff_data = DiffData {
+        id: Uuid::new_v4().to_string(),
+        file_path: payload.file_path.clone(),
+        old_content: old_content.clone(),
+        new_content: new_content.clone(),
+    };
+
+    let summary = if fuzzy_count > 0 {
         format!(
-            "Applied {}/{} replacements ({} fuzzy) to '{}'.\n\n{}",
+            "Applied {}/{} replacements ({} fuzzy) to '{}'.",
             applied_count,
             payload.replacements.len(),
             fuzzy_count,
             payload.file_path,
-            diff
         )
     } else {
         format!(
-            "Applied {}/{} replacements to '{}'.\n\n{}",
+            "Applied {}/{} replacements to '{}'.",
             applied_count,
             payload.replacements.len(),
             payload.file_path,
-            diff
         )
     };
+
+    let mut result_msg = format_diff_result(&summary, &diff, &diff_data)?;
 
     if !notes.is_empty() {
         result_msg.push_str(&format!("\n\nNotes:\n{}", notes.join("\n")));
@@ -218,7 +250,7 @@ fn edit_with_replacements(payload: &ReplacementsPayload) -> Result<ToolResult> {
         result_msg.push_str(&format!("\n\nWarnings:\n{}", errors.join("\n")));
     }
 
-    Ok(ToolResult::success(result_msg))
+    Ok(ToolResult::success_with_diff(result_msg, diff_data))
 }
 
 /// Edit a file by deleting a snippet
@@ -248,10 +280,17 @@ fn edit_with_delete_snippet(payload: &DeleteSnippetPayload) -> Result<ToolResult
 
     let diff = generate_diff(&old_content, &new_content, &payload.file_path);
 
-    Ok(ToolResult::success(format!(
-        "Deleted snippet from '{}'.\n\n{}",
-        payload.file_path, diff
-    )))
+    let diff_data = DiffData {
+        id: Uuid::new_v4().to_string(),
+        file_path: payload.file_path.clone(),
+        old_content,
+        new_content,
+    };
+
+    let summary = format!("Deleted snippet from '{}'.", payload.file_path);
+    let content = format_diff_result(&summary, &diff, &diff_data)?;
+
+    Ok(ToolResult::success_with_diff(content, diff_data))
 }
 
 /// Truncate a string for display purposes (char-safe, not byte-safe)

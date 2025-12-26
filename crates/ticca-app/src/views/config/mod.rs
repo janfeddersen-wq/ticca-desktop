@@ -17,20 +17,20 @@ mod types;
 
 use std::collections::HashMap;
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_editor};
 use iced::Element;
+use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_editor};
 
 use crate::material_icons::{icon, icons};
 use crate::messages::{Message, SettingsTab, settings};
 use crate::theme::{AppTheme, styles};
 
 use ticca_core::agents::AgentType;
-use ticca_core::config::{CompressionSettings, McpServer, OAuthAccount, ApiKeyAccount, UiMode};
+use ticca_core::config::{ApiKeyAccount, CompressionSettings, McpServer, OAuthAccount, UiMode};
 use ticca_core::external_tools::ExternalToolId;
 use ticca_core::session::Session;
 
 // Re-export public types
-pub use types::{McpServerFormState, ProviderAuthStatus, AccountsSectionParams};
+pub use types::{AccountsSectionParams, McpServerFormState, ProviderAuthStatus};
 
 /// Render the settings view
 #[allow(clippy::too_many_arguments)]

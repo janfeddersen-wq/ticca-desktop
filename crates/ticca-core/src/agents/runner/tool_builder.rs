@@ -5,12 +5,12 @@
 
 #![allow(dead_code)]
 
-use std::sync::Arc;
 use rig::agent::{AgentBuilder, AgentBuilderSimple};
+use std::sync::Arc;
 
+use super::mcp::attach_mcp_tools_to_builder;
 use crate::agents::AgentProfile;
 use crate::tools::ToolContext;
-use super::mcp::attach_mcp_tools_to_builder;
 
 /// Macro to conditionally add a tool to an AgentBuilder based on profile.tool_names.
 macro_rules! add_tool_if_allowed {
@@ -89,9 +89,7 @@ where
     ) = crate::tools::create_tools(tool_context.clone());
 
     // All agents have list_files - use it as anchor to convert AgentBuilder -> AgentBuilderSimple
-    let mut builder = AgentBuilder::new(model)
-        .preamble(preamble)
-        .tool(list_files);
+    let mut builder = AgentBuilder::new(model).preamble(preamble).tool(list_files);
 
     // Now conditionally add remaining tools (skip list_files since already added)
     add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);

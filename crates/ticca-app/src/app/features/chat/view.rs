@@ -46,6 +46,7 @@ pub(in crate::app) fn view(app: &TiccaApp) -> Element<'_, Message> {
                 app.chat.todo_selected_node,
                 app.theme,
                 app.ui_mode.shows_expert_ui(),
+                app.chat.flow_animation_frame,
             ),
         };
         iced::widget::pane_grid::Content::new(content)

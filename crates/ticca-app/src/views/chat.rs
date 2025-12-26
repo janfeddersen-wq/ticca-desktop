@@ -14,7 +14,7 @@ use std::path::Path;
 use ticca_core::agents::{AgentRegistry, AgentType};
 use ticca_core::session::MessageRole;
 
-use crate::chat_message::{ChatMessage, MessageId};
+use crate::chat_message::{ChatMessage, ContentBlock, MessageId, SubAgentMessage};
 use crate::material_icons::{icon, icons};
 use crate::messages::{ImageAttachment, Message, chat, settings};
 use crate::theme::{AppTheme, styles};
@@ -482,6 +482,94 @@ fn build_attachment_preview(
     )
 }
 
+/// Render a sub-agent as a collapsible section
+fn render_sub_agent<'a>(
+    msg_id: MessageId,
+    sub_agent: &'a SubAgentMessage,
+    theme: AppTheme,
+) -> Element<'a, Message> {
+    let is_dark = theme.is_dark();
+    let metadata = AgentRegistry::get(sub_agent.agent_type);
+    let header_icon = if sub_agent.collapsed {
+        icons::CHEVRON_RIGHT
+    } else {
+        icons::EXPAND_MORE
+    };
+
+    let status_icon = if sub_agent.is_streaming {
+        icons::PENDING
+    } else {
+        icons::CHECK_CIRCLE
+    };
+
+    let header_text = format!("{} (node {})", metadata.label, sub_agent.node_id);
+
+    // Collapsible header button
+    let header = button(
+        row![
+            icon(header_icon).size(16),
+            icon(status_icon).size(14),
+            text(header_text).size(12),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center),
+    )
+    .on_press(Message::Chat(chat::Msg::ToggleSubAgentCollapsed {
+        msg_id,
+        node_id: sub_agent.node_id,
+    }))
+    .style(styles::collapsible_header_button)
+    .padding([6, 10])
+    .width(Length::Fill);
+
+    if sub_agent.collapsed {
+        // Just show the header when collapsed
+        container(header)
+            .width(Length::Fill)
+            .style(move |theme| styles::sub_agent_container(theme, is_dark))
+            .into()
+    } else {
+        // Show header + content when expanded
+        let content: Element<Message> = if sub_agent.is_streaming && sub_agent.content.is_empty() {
+            row![icon(icons::PENDING).size(14), text(" Working...").size(12),]
+                .spacing(4)
+                .into()
+        } else {
+            markdown::view(
+                &sub_agent.parsed_items,
+                markdown::Settings::with_text_size(13, theme.to_iced_theme()),
+            )
+            .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri)))
+        };
+
+        let mut sub_column = column![header].spacing(8);
+
+        // Add reasoning if present
+        if let Some(ref reasoning) = sub_agent.reasoning {
+            let reasoning_section = container(
+                column![
+                    row![icon(icons::PSYCHOLOGY).size(12), text(" Thinking").size(11),].spacing(4),
+                    container(text(reasoning).size(11)).padding([4, 8])
+                ]
+                .spacing(4),
+            )
+            .padding(6)
+            .width(Length::Fill)
+            .style(move |theme| styles::reasoning_container(theme, is_dark));
+
+            sub_column = sub_column.push(reasoning_section);
+        }
+
+        sub_column = sub_column.push(container(content).padding([0, 10]));
+
+        container(sub_column)
+            .padding(8)
+            .width(Length::Fill)
+            .style(move |theme| styles::sub_agent_container(theme, is_dark))
+            .into()
+    }
+}
+
 /// Render a single message
 fn render_message<'a>(
     msg: &'a ChatMessage,
@@ -503,18 +591,7 @@ fn render_message<'a>(
     };
     let label = msg.author_label.as_deref().unwrap_or(default_label);
 
-    let content: Element<Message> = if msg.is_streaming && msg.content.is_empty() {
-        row![icon(icons::PENDING).size(16), text(" Thinking...").size(14),]
-            .spacing(6)
-            .into()
-    } else if msg.is_streaming {
-        // Render markdown while streaming
-        markdown::view(
-            &msg.parsed_items,
-            markdown::Settings::with_text_size(14, theme.to_iced_theme()),
-        )
-        .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri)))
-    } else if is_raw_view {
+    let content: Element<Message> = if is_raw_view {
         // Raw view: show selectable plain text
         if let Some(editor_content) = raw_view_editors.get(&msg_id) {
             text_editor(editor_content)
@@ -528,12 +605,45 @@ fn render_message<'a>(
             text(&msg.content).size(14).into()
         }
     } else {
-        // Render markdown for completed messages
-        markdown::view(
-            &msg.parsed_items,
-            markdown::Settings::with_text_size(14, theme.to_iced_theme()),
-        )
-        .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri)))
+        let mut blocks: Vec<Element<Message>> = Vec::new();
+
+        for block in &msg.content_blocks {
+            match block {
+                ContentBlock::Text {
+                    content,
+                    parsed_items,
+                } => {
+                    if content.is_empty() {
+                        if msg.is_streaming && msg.content_blocks.len() == 1 {
+                            blocks.push(
+                                row![icon(icons::PENDING).size(16), text(" Thinking...").size(14),]
+                                    .spacing(6)
+                                    .into(),
+                            );
+                        }
+                    } else {
+                        blocks.push(
+                            markdown::view(
+                                parsed_items,
+                                markdown::Settings::with_text_size(14, theme.to_iced_theme()),
+                            )
+                            .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri))),
+                        );
+                    }
+                }
+                ContentBlock::SubAgent(sub_agent) => {
+                    blocks.push(render_sub_agent(msg_id, sub_agent, theme));
+                }
+            }
+        }
+
+        if blocks.is_empty() {
+            row![icon(icons::PENDING).size(16), text(" Thinking...").size(14),]
+                .spacing(6)
+                .into()
+        } else {
+            Column::with_children(blocks).spacing(8).into()
+        }
     };
 
     // Toggle icon: CODE for raw view, DESCRIPTION for markdown view

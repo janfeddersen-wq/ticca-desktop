@@ -4,7 +4,7 @@ use iced::widget::text_editor;
 
 use crate::app::{TiccaApp, Toast, View, effects::Effect};
 use crate::chat_message::ChatMessage;
-use crate::helpers::format_tool_call_oneliner;
+use crate::helpers::{extract_diff_markers, format_tool_call_oneliner};
 use crate::messages::chat;
 use crate::session_manager;
 use ticca_core::agents::AgentConfig as CoreAgentConfig;
@@ -61,6 +61,14 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             }
         }
 
+        chat::Msg::ToggleSubAgentCollapsed { msg_id, node_id } => {
+            if let Some(msg) = app.chat.message_by_id_mut(msg_id)
+                && let Some(sub_agent) = msg.sub_agent_mut(node_id)
+            {
+                sub_agent.collapsed = !sub_agent.collapsed;
+            }
+        }
+
         chat::Msg::RawViewEditorAction(msg_id, action) => {
             if let Some(editor) = app.chat.raw_view_editors.get_mut(&msg_id) {
                 editor.perform(action);
@@ -70,15 +78,27 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         chat::Msg::StreamChunk(chunk) => {
             app.chat.last_bytes_time = Some(std::time::Instant::now());
 
-            if let Some(last) = app.chat.messages.last_mut()
-                && last.is_streaming
+            let mut extracted_diffs = Vec::new();
+            if let Some(msg_id) = app.chat.main_agent_message_id
+                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+                && msg.is_streaming
             {
-                if last.last_was_tool_call && !chunk.trim().is_empty() {
-                    last.content.push_str("\n\n💡 ");
-                    last.last_was_tool_call = false;
+                if msg.last_was_tool_call && !chunk.trim().is_empty() {
+                    msg.current_text_block_mut().push_str("\n\n💡 ");
+                    msg.last_was_tool_call = false;
                 }
-                last.content.push_str(&chunk);
-                last.update_parsed_items();
+                msg.current_text_block_mut().push_str(&chunk);
+                msg.content.push_str(&chunk);
+                let (cleaned, diffs) = extract_diff_markers(&msg.content);
+                if cleaned != msg.content {
+                    msg.content = cleaned.clone();
+                    *msg.current_text_block_mut() = cleaned;
+                }
+                extracted_diffs = diffs;
+                msg.update_parsed_items();
+            }
+            for (diff_id, diff_state) in extracted_diffs {
+                app.chat.diff_cache.insert(diff_id, diff_state);
             }
             app.chat.push_scroll_if_needed(&mut effects);
         }
@@ -86,17 +106,18 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         chat::Msg::Reasoning { text, signature } => {
             app.chat.last_bytes_time = Some(std::time::Instant::now());
 
-            if let Some(last) = app.chat.messages.last_mut()
-                && last.is_streaming
+            if let Some(msg_id) = app.chat.main_agent_message_id
+                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+                && msg.is_streaming
             {
-                if let Some(ref mut existing) = last.reasoning {
+                if let Some(ref mut existing) = msg.reasoning {
                     existing.push_str(&text);
                 } else {
-                    last.reasoning = Some(text);
+                    msg.reasoning = Some(text);
                 }
                 // Store signature (only set once, first one wins)
-                if last.reasoning_signature.is_none() && signature.is_some() {
-                    last.reasoning_signature = signature;
+                if msg.reasoning_signature.is_none() && signature.is_some() {
+                    msg.reasoning_signature = signature;
                 }
             }
             app.chat.push_scroll_if_needed(&mut effects);
@@ -193,47 +214,71 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 return effects;
             }
 
+            let msg_id = app.chat.main_agent_message_id;
+
             app.chat.reset_stream_runtime_state();
 
-            if let Some(last) = app.chat.messages.last_mut()
-                && last.is_streaming
+            if let Some(msg_id) = msg_id
+                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+                && msg.is_streaming
             {
-                last.is_streaming = false;
-                last.update_parsed_items();
+                msg.is_streaming = false;
+                msg.update_parsed_items();
             }
+
+            // Mark main agent (node 0) as completed and finish the run
+            let current_run = app.chat.call_graph.current_run_id();
+            app.chat.call_graph.mark_node_completed(0);
+            app.chat.call_graph.mark_run_completed(current_run);
 
             app.chat.save_current_session();
         }
 
         chat::Msg::StreamError(error) => {
+            let msg_id = app.chat.main_agent_message_id;
+
             app.chat.reset_stream_runtime_state();
 
-            if let Some(last) = app.chat.messages.last_mut()
-                && last.is_streaming
+            if let Some(msg_id) = msg_id
+                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+                && msg.is_streaming
             {
                 // PRESERVE existing content, append error instead of replacing
-                if !last.content.trim().is_empty() {
-                    last.content.push_str("\n\n---\n");
+                if !msg.content.trim().is_empty() {
+                    msg.content.push_str("\n\n---\n");
                 }
-                last.content.push_str(&format!("❌ Error: {}", error));
-                last.is_streaming = false;
-                last.update_parsed_items();
+                msg.content.push_str(&format!("❌ Error: {}", error));
+                msg.is_streaming = false;
+                msg.update_parsed_items();
             }
+
+            // Mark main agent (node 0) as failed and finish the run
+            app.chat.call_graph.mark_node_failed(0);
+            let current_run = app.chat.call_graph.current_run_id();
+            app.chat.call_graph.mark_run_completed(current_run);
         }
 
         chat::Msg::StreamStopped => {
+            let msg_id = app.chat.main_agent_message_id;
+
             app.chat.reset_stream_runtime_state();
 
-            if let Some(last) = app.chat.messages.last_mut()
-                && last.is_streaming
+            if let Some(msg_id) = msg_id
+                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+                && msg.is_streaming
             {
-                if !last.content.trim().is_empty() {
-                    last.content.push_str("\n\n");
+                if !msg.content.trim().is_empty() {
+                    msg.content.push_str("\n\n");
                 }
-                last.content.push_str("[Stopped by user]");
-                last.is_streaming = false;
-                last.update_parsed_items();
+                msg.content.push_str("[Stopped by user]");
+                msg.is_streaming = false;
+                msg.update_parsed_items();
             }
+
+            // Mark main agent (node 0) as failed (stopped by user) and finish the run
+            app.chat.call_graph.mark_node_failed(0);
+            let current_run = app.chat.call_graph.current_run_id();
+            app.chat.call_graph.mark_run_completed(current_run);
 
             app.chat.save_current_session();
         }
@@ -242,7 +287,6 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             app.chat.current_agent = agent_type;
             app.chat.agent_config = CoreAgentConfig::new(agent_type);
             app.chat.call_graph.reset(agent_type);
-            app.chat.subagent_messages.clear();
             app.chat.todo_lists.clear();
             app.chat.todo_selected_node = 0;
             // Reset context window so it gets looked up fresh for new agent's model
@@ -323,7 +367,6 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
             ));
             app.chat.current_session = None;
             app.chat.call_graph.reset(app.chat.current_agent);
-            app.chat.subagent_messages.clear();
         }
 
         chat::Msg::LoadSession(session_id) => {
@@ -351,25 +394,43 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
                 tracing::info!("Loaded session with {} messages", app.chat.messages.len());
             }
             app.chat.call_graph.reset(app.chat.current_agent);
-            app.chat.subagent_messages.clear();
             app.current_view = View::Chat;
         }
 
         chat::Msg::ToolCall { name, args } => {
-            if let Some(last) = app.chat.messages.last_mut()
-                && last.is_streaming
+            let working_directory = app.chat.working_directory.clone();
+            if let Some(msg_id) = app.chat.main_agent_message_id
+                && let Some(msg) = app.chat.message_by_id_mut(msg_id)
+                && msg.is_streaming
             {
-                let tool_line =
-                    format_tool_call_oneliner(&name, &args, Some(&app.chat.working_directory));
-                last.content.push_str(&format!("\n\n{}", tool_line));
-                last.last_was_tool_call = true;
-                last.update_parsed_items();
+                let tool_line = format_tool_call_oneliner(&name, &args, Some(&working_directory));
+                let formatted = format!("\n\n{}", tool_line);
+                msg.current_text_block_mut().push_str(&formatted);
+                msg.content.push_str(&formatted);
+                msg.last_was_tool_call = true;
+                msg.update_parsed_items();
             }
             app.chat.push_scroll_if_needed(&mut effects);
         }
 
         chat::Msg::AgentCall(event) => {
             app.chat.call_graph.record_call(&event);
+        }
+
+        chat::Msg::AgentNodeCompleted { node_id } => {
+            app.chat.call_graph.mark_node_completed(node_id);
+        }
+
+        chat::Msg::AgentNodeFailed { node_id } => {
+            app.chat.call_graph.mark_node_failed(node_id);
+        }
+
+        chat::Msg::RunCompleted { run_id } => {
+            app.chat.call_graph.mark_run_completed(run_id);
+        }
+
+        chat::Msg::FlowAnimationTick => {
+            app.chat.flow_animation_frame = app.chat.flow_animation_frame.wrapping_add(1);
         }
 
         chat::Msg::TodoEvent(event) => {
@@ -401,7 +462,12 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         }
 
         chat::Msg::WorkingDirectoryChanged(path) => {
-            app.chat.working_directory = path;
+            app.chat.working_directory = path.clone();
+            let path_str = path.to_string_lossy().to_string();
+            let _ = ticca_core::config::ConfigService::set_setting(
+                ticca_core::config::setting_keys::WORKING_DIRECTORY,
+                &path_str,
+            );
         }
 
         chat::Msg::SelectImageFile => {
@@ -445,7 +511,28 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: chat::Msg) -> Vec<Effe
         }
 
         chat::Msg::LinkClicked(url) => {
-            effects.push(Effect::OpenUrl(url.as_str().to_string()));
+            let url_str = url.as_str();
+            if let Some(diff_id) = url_str.strip_prefix("ticca-diff://") {
+                if let Some(diff_state) = app.chat.diff_cache.get(diff_id).cloned() {
+                    app.chat.active_diff_modal = Some(diff_state);
+                }
+            } else {
+                effects.push(Effect::OpenUrl(url_str.to_string()));
+            }
+        }
+
+        chat::Msg::ShowDiffModal(diff_id) => {
+            if let Some(diff_state) = app.chat.diff_cache.get(&diff_id).cloned() {
+                app.chat.active_diff_modal = Some(diff_state);
+            }
+        }
+
+        chat::Msg::CloseDiffModal => {
+            app.chat.active_diff_modal = None;
+        }
+
+        chat::Msg::CacheDiff { id, state } => {
+            app.chat.diff_cache.insert(id, state);
         }
 
         chat::Msg::ContextCompressed {

@@ -1,5 +1,10 @@
 //! Helper functions for the application
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
+
+use crate::app::DiffModalState;
+
 /// Truncate a string to a maximum number of characters (char-safe, not byte-safe)
 fn truncate_end(s: &str, max_chars: usize) -> String {
     let char_count = s.chars().count();
@@ -21,6 +26,43 @@ fn truncate_start(s: &str, max_chars: usize) -> String {
         let truncated: String = s.chars().skip(skip).collect();
         format!("...{}", truncated)
     }
+}
+
+const DIFF_MARKER_PREFIX: &str = "<!--TICCA_DIFF:";
+const DIFF_MARKER_SUFFIX: &str = "-->";
+
+/// Extract diff markers from content and return cleaned content + diffs.
+pub fn extract_diff_markers(
+    content: &str,
+) -> (String, Vec<(String, DiffModalState)>) {
+    let mut cleaned = String::new();
+    let mut diffs = Vec::new();
+    let mut cursor = content;
+
+    while let Some(start) = cursor.find(DIFF_MARKER_PREFIX) {
+        let (before, rest) = cursor.split_at(start);
+        cleaned.push_str(before);
+        let Some(end) = rest.find(DIFF_MARKER_SUFFIX) else {
+            cleaned.push_str(rest);
+            return (cleaned, diffs);
+        };
+        let marker = &rest[DIFF_MARKER_PREFIX.len()..end];
+        if let Ok(decoded) = BASE64.decode(marker)
+            && let Ok(diff_data) =
+                serde_json::from_slice::<ticca_core::tools::DiffData>(&decoded)
+        {
+            let diff_state = DiffModalState {
+                file_path: diff_data.file_path,
+                old_content: diff_data.old_content,
+                new_content: diff_data.new_content,
+            };
+            diffs.push((diff_data.id, diff_state));
+        }
+        cursor = &rest[end + DIFF_MARKER_SUFFIX.len()..];
+    }
+
+    cleaned.push_str(cursor);
+    (cleaned, diffs)
 }
 
 /// Format a tool call as a concise one-liner for display

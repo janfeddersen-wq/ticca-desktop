@@ -5,20 +5,28 @@ use iced::{Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size, ali
 
 use ticca_core::agents::AgentRegistry;
 
-use crate::agent_graph::{AgentCallGraph, AgentNode};
+use crate::agent_graph::{AgentCallGraph, AgentNode, AgentStatus};
 use crate::material_icons::{icon, icons};
 use crate::messages::Message;
 use crate::theme::{AppTheme, styles};
 
-pub fn contents<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Message> {
-    let subtitle = row![
-        icon(icons::FORUM).size(16),
-        text("Live call graph").size(11),
-    ]
-    .spacing(6)
-    .align_y(iced::Alignment::Center);
+pub fn contents<'a>(
+    graph: &AgentCallGraph,
+    theme: AppTheme,
+    animation_frame: usize,
+) -> Element<'a, Message> {
+    let current_run = graph.current_run_id();
+    let run_text = if current_run > 0 {
+        format!("Live call graph • Run #{}", current_run)
+    } else {
+        "Live call graph".to_string()
+    };
 
-    let canvas = canvas::Canvas::new(FlowCanvas::new(graph.clone(), theme))
+    let subtitle = row![icon(icons::FORUM).size(16), text(run_text).size(11),]
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
+
+    let canvas = canvas::Canvas::new(FlowCanvas::new(graph.clone(), theme, animation_frame))
         .width(Length::Fill)
         .height(Length::Fill);
 
@@ -29,8 +37,12 @@ pub fn contents<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Mess
 }
 
 #[allow(dead_code)]
-pub fn view<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Message> {
-    container(contents(graph, theme))
+pub fn view<'a>(
+    graph: &AgentCallGraph,
+    theme: AppTheme,
+    animation_frame: usize,
+) -> Element<'a, Message> {
+    container(contents(graph, theme, animation_frame))
         .width(Length::Fixed(280.0))
         .height(Length::Fill)
         .style(styles::flow_panel_container)
@@ -41,11 +53,16 @@ pub fn view<'a>(graph: &AgentCallGraph, theme: AppTheme) -> Element<'a, Message>
 struct FlowCanvas {
     graph: AgentCallGraph,
     theme: AppTheme,
+    animation_frame: usize,
 }
 
 impl FlowCanvas {
-    fn new(graph: AgentCallGraph, theme: AppTheme) -> Self {
-        Self { graph, theme }
+    fn new(graph: AgentCallGraph, theme: AppTheme, animation_frame: usize) -> Self {
+        Self {
+            graph,
+            theme,
+            animation_frame,
+        }
     }
 
     fn is_dark(&self) -> bool {
@@ -54,7 +71,13 @@ impl FlowCanvas {
 
     fn node_color(&self, node: &AgentNode) -> iced::Color {
         let (r, g, b) = AgentRegistry::get(node.agent_type).color;
-        iced::Color::from_rgb(r, g, b)
+        let base = iced::Color::from_rgb(r, g, b);
+
+        match node.status {
+            AgentStatus::Running => base, // Full opacity
+            AgentStatus::Completed => iced::Color { a: 0.85, ..base },
+            AgentStatus::Failed => iced::Color::from_rgb(0.9, 0.3, 0.3), // Red tint
+        }
     }
 
     fn text_color(&self) -> iced::Color {
@@ -62,6 +85,14 @@ impl FlowCanvas {
             iced::Color::from_rgb(0.95, 0.95, 0.95)
         } else {
             iced::Color::from_rgb(0.10, 0.10, 0.10)
+        }
+    }
+
+    fn secondary_text_color(&self) -> iced::Color {
+        if self.is_dark() {
+            iced::Color::from_rgb(0.70, 0.70, 0.70)
+        } else {
+            iced::Color::from_rgb(0.40, 0.40, 0.40)
         }
     }
 
@@ -79,6 +110,162 @@ impl FlowCanvas {
         } else {
             iced::Color::from_rgba(0.60, 0.60, 0.65, 0.25)
         }
+    }
+
+    /// Draw a status indicator in the top-right corner of a node
+    fn draw_status_indicator(
+        &self,
+        frame: &mut canvas::Frame,
+        position: Point,
+        node_width: f32,
+        status: AgentStatus,
+    ) {
+        let indicator_center = Point::new(position.x + node_width - 12.0, position.y + 12.0);
+
+        match status {
+            AgentStatus::Running => {
+                // Draw spinning arc
+                let rotation = (self.animation_frame as f32 * 0.15) % (2.0 * std::f32::consts::PI);
+                let arc_radius = 5.0;
+
+                // Draw arc background (subtle circle)
+                let bg_circle = canvas::Path::circle(indicator_center, arc_radius);
+                frame.stroke(
+                    &bg_circle,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.2)),
+                );
+
+                // Draw spinning arc segment
+                let arc = canvas::Path::new(|builder| {
+                    let segments = 8;
+                    let arc_length = std::f32::consts::PI * 0.75;
+                    for i in 0..=segments {
+                        let angle = rotation + (i as f32 / segments as f32) * arc_length;
+                        let x = indicator_center.x + angle.cos() * arc_radius;
+                        let y = indicator_center.y + angle.sin() * arc_radius;
+                        if i == 0 {
+                            builder.move_to(Point::new(x, y));
+                        } else {
+                            builder.line_to(Point::new(x, y));
+                        }
+                    }
+                });
+                frame.stroke(
+                    &arc,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgb(1.0, 1.0, 1.0)),
+                );
+            }
+            AgentStatus::Completed => {
+                // Draw checkmark
+                let check = canvas::Path::new(|builder| {
+                    builder.move_to(Point::new(indicator_center.x - 4.0, indicator_center.y));
+                    builder.line_to(Point::new(
+                        indicator_center.x - 1.0,
+                        indicator_center.y + 3.0,
+                    ));
+                    builder.line_to(Point::new(
+                        indicator_center.x + 4.0,
+                        indicator_center.y - 3.0,
+                    ));
+                });
+                frame.stroke(
+                    &check,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgb(0.2, 0.8, 0.3)),
+                );
+            }
+            AgentStatus::Failed => {
+                // Draw X
+                let x_path = canvas::Path::new(|builder| {
+                    builder.move_to(Point::new(
+                        indicator_center.x - 4.0,
+                        indicator_center.y - 4.0,
+                    ));
+                    builder.line_to(Point::new(
+                        indicator_center.x + 4.0,
+                        indicator_center.y + 4.0,
+                    ));
+                    builder.move_to(Point::new(
+                        indicator_center.x + 4.0,
+                        indicator_center.y - 4.0,
+                    ));
+                    builder.line_to(Point::new(
+                        indicator_center.x - 4.0,
+                        indicator_center.y + 4.0,
+                    ));
+                });
+                frame.stroke(
+                    &x_path,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgb(1.0, 0.4, 0.4)),
+                );
+            }
+        }
+    }
+
+    /// Draw duration/elapsed text below the node label
+    fn draw_duration_text(
+        &self,
+        frame: &mut canvas::Frame,
+        node: &AgentNode,
+        position: Point,
+        node_width: f32,
+        node_height: f32,
+    ) {
+        let duration_text = match node.status {
+            AgentStatus::Running => node.elapsed().map(|d| {
+                let secs = d.as_secs();
+                if secs < 60 {
+                    format!("{}s", secs)
+                } else {
+                    format!("{}m {}s", secs / 60, secs % 60)
+                }
+            }),
+            AgentStatus::Completed | AgentStatus::Failed => node.duration().map(|d| {
+                let secs = d.as_secs();
+                if secs < 60 {
+                    format!("took {}s", secs)
+                } else {
+                    format!("took {}m {}s", secs / 60, secs % 60)
+                }
+            }),
+        };
+
+        if let Some(text_content) = duration_text {
+            frame.fill_text(canvas::Text {
+                content: text_content,
+                position: Point::new(
+                    position.x + node_width / 2.0,
+                    position.y + node_height / 2.0 + 12.0,
+                ),
+                align_x: alignment::Horizontal::Center.into(),
+                align_y: alignment::Vertical::Center,
+                color: self.secondary_text_color(),
+                size: Pixels(10.0),
+                ..canvas::Text::default()
+            });
+        }
+    }
+
+    /// Draw a pulsing glow effect for running nodes
+    fn draw_running_glow(&self, frame: &mut canvas::Frame, origin: Point, size: Size) {
+        // Pulse between 0.1 and 0.3 alpha
+        let pulse = (self.animation_frame as f32 * 0.1).sin() * 0.1 + 0.2;
+        let glow_color = Color::from_rgba(0.4, 0.7, 1.0, pulse);
+
+        // Draw outer glow
+        let glow_rect = canvas::Path::rounded_rectangle(
+            Point::new(origin.x - 3.0, origin.y - 3.0),
+            Size::new(size.width + 6.0, size.height + 6.0),
+            12.0.into(),
+        );
+        frame.fill(&glow_rect, glow_color);
     }
 }
 
@@ -138,6 +325,7 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
             }
         }
 
+        // Draw grid dots
         let grid_color = self.grid_color();
         let step = 20.0;
         let bounds_size = bounds.size();
@@ -154,6 +342,21 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
             y += step;
         }
 
+        if self.graph.runs().is_empty() {
+            frame.fill_text(canvas::Text {
+                content: "Waiting for agent...".to_string(),
+                position: Point::new(bounds.width / 2.0, bounds.height / 2.0),
+                align_x: alignment::Horizontal::Center.into(),
+                align_y: alignment::Vertical::Center,
+                color: self.secondary_text_color(),
+                size: Pixels(14.0),
+                ..canvas::Text::default()
+            });
+
+            return vec![frame.into_geometry()];
+        }
+
+        // Draw edges
         for edge in self.graph.edges() {
             if let (Some(from), Some(to)) = (positions.get(&edge.from), positions.get(&edge.to)) {
                 let start = Point::new(from.x + node_width, from.y + node_height / 2.0);
@@ -184,6 +387,7 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
             }
         }
 
+        // Draw nodes
         for node_id in self.graph.order() {
             if let Some(node) = self.graph.nodes().get(node_id) {
                 let Some(position) = positions.get(&node.id) else {
@@ -191,6 +395,12 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
                 };
                 let origin = Point::new(position.x, position.y);
                 let size = Size::new(node_width, node_height);
+
+                // Draw pulsing glow for running nodes
+                if node.status == AgentStatus::Running {
+                    self.draw_running_glow(&mut frame, origin, size);
+                }
+
                 let rounded = canvas::Path::rounded_rectangle(origin, size, 10.0.into());
                 let shadow = canvas::Path::rounded_rectangle(
                     Point::new(origin.x + 2.0, origin.y + 3.0),
@@ -199,19 +409,29 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
                 );
                 frame.fill(&shadow, Color::from_rgba(0.0, 0.0, 0.0, 0.2));
                 frame.fill(&rounded, self.node_color(node));
+
+                // Border color varies by status
+                let border_color = match node.status {
+                    AgentStatus::Running => Color::from_rgba(0.5, 0.7, 1.0, 0.8),
+                    AgentStatus::Completed => Color {
+                        a: 0.4,
+                        ..self.edge_color()
+                    },
+                    AgentStatus::Failed => Color::from_rgba(0.9, 0.3, 0.3, 0.8),
+                };
                 frame.stroke(
                     &rounded,
-                    canvas::Stroke::default().with_width(1.2).with_color(Color {
-                        a: 0.6,
-                        ..self.edge_color()
-                    }),
+                    canvas::Stroke::default()
+                        .with_width(1.5)
+                        .with_color(border_color),
                 );
 
+                // Draw node label
                 frame.fill_text(canvas::Text {
                     content: node.label.clone(),
                     position: Point::new(
                         position.x + node_width / 2.0,
-                        position.y + node_height / 2.0,
+                        position.y + node_height / 2.0 - 4.0,
                     ),
                     align_x: alignment::Horizontal::Center.into(),
                     align_y: alignment::Vertical::Center,
@@ -219,6 +439,12 @@ impl<Message> canvas::Program<Message> for FlowCanvas {
                     size: Pixels(14.0),
                     ..canvas::Text::default()
                 });
+
+                // Draw status indicator
+                self.draw_status_indicator(&mut frame, *position, node_width, node.status);
+
+                // Draw duration/elapsed text
+                self.draw_duration_text(&mut frame, node, *position, node_width, node_height);
             }
         }
 

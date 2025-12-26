@@ -2,20 +2,22 @@
 
 use std::collections::HashMap;
 
-use iced::widget::{button, column, container, row, text, text_input, Column};
+use iced::widget::{Column, button, column, container, row, text, text_input};
 use iced::{Border, Color, Element, Length};
 
 use crate::material_icons::{icon, icons};
 use crate::messages::{Message, OAuthProvider, settings};
 use crate::theme::styles;
 
-use ticca_core::config::{ApiKeyAccount, OAuthAccount};
 use ticca_core::RegistryService;
+use ticca_core::config::{ApiKeyAccount, OAuthAccount};
 
-use super::types::{horizontal_space, AccountsSectionParams};
+use super::types::{AccountsSectionParams, horizontal_space};
 
 /// Build the accounts section with OAuth and API key providers
-pub(super) fn build_accounts_section<'a>(params: AccountsSectionParams<'a>) -> Element<'a, Message> {
+pub(super) fn build_accounts_section<'a>(
+    params: AccountsSectionParams<'a>,
+) -> Element<'a, Message> {
     let AccountsSectionParams {
         auth_status,
         claude_accounts,

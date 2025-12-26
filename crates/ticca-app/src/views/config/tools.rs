@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use iced::widget::{button, checkbox, column, container, pick_list, row, text, Column, Space};
+use iced::widget::{Column, Space, button, checkbox, column, container, pick_list, row, text};
 use iced::{Border, Color, Element, Length};
 
 use crate::material_icons::{icon, icons};
@@ -352,11 +352,13 @@ fn build_external_tools_section<'a>(
                     .on_press(Message::Settings(settings::Msg::OpenUrl(
                         FUSE_DOCS_URL.to_string()
                     )))
-                    .style(|_theme: &iced::Theme, _status| iced::widget::button::Style {
-                        background: None,
-                        text_color: Color::from_rgb8(100, 160, 255),
-                        ..Default::default()
-                    })
+                    .style(
+                        |_theme: &iced::Theme, _status| iced::widget::button::Style {
+                            background: None,
+                            text_color: Color::from_rgb8(100, 160, 255),
+                            ..Default::default()
+                        }
+                    )
                     .padding(0),
                 ]
                 .spacing(4),

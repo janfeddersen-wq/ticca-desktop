@@ -48,6 +48,8 @@ pub mod setting_keys {
     pub const UPDATE_CHECK_SKIP_REMAINING: &str = "update_check_skip_remaining";
     /// Version that was dismissed via "Skip This Version" button.
     pub const UPDATE_CHECK_DISMISSED_VERSION: &str = "update_check_dismissed_version";
+    /// Last used working directory path
+    pub const WORKING_DIRECTORY: &str = "working_directory";
 
     // Compression settings
     /// Whether context compression is enabled.

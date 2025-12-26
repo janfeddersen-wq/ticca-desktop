@@ -8,12 +8,23 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// Diff metadata for tool results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffData {
+    pub id: String,
+    pub file_path: String,
+    pub old_content: String,
+    pub new_content: String,
+}
+
 /// Result of a tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub success: bool,
     pub content: String,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_data: Option<DiffData>,
 }
 
 impl ToolResult {
@@ -22,6 +33,16 @@ impl ToolResult {
             success: true,
             content: content.into(),
             error: None,
+            diff_data: None,
+        }
+    }
+
+    pub fn success_with_diff(content: impl Into<String>, diff_data: DiffData) -> Self {
+        Self {
+            success: true,
+            content: content.into(),
+            error: None,
+            diff_data: Some(diff_data),
         }
     }
 
@@ -31,6 +52,7 @@ impl ToolResult {
             success: false,
             content: String::new(),
             error: Some(msg),
+            diff_data: None,
         }
     }
 }

@@ -5,7 +5,9 @@
 
 use crate::config::models::providers;
 use crate::llm::auth::{self, AuthToken};
-use crate::llm::providers::{ChatGptOAuthClient, GeminiCodeAssistRigClient, OpenAICompatibleApiClient};
+use crate::llm::providers::{
+    ChatGptOAuthClient, GeminiCodeAssistRigClient, OpenAICompatibleApiClient,
+};
 use crate::llm::{ClaudeOAuthClient, ProviderId, ProviderRegistry};
 use crate::registry::RegistryService;
 

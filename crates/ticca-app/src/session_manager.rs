@@ -2,13 +2,11 @@
 //!
 //! Handles persistence of chat sessions to the database.
 
-use iced::widget::markdown;
-
 use ticca_core::agents::AgentType;
 use ticca_core::session::{Session, SessionMessageInput, SessionService};
 use ticca_core::tools::TodoListState;
 
-use crate::chat_message::{ChatMessage, MessageId};
+use crate::chat_message::{ChatMessage, ContentBlock, MessageId};
 use std::collections::HashMap;
 
 /// Session manager data returned after loading a session
@@ -29,22 +27,22 @@ pub fn load_session(session_id: &str) -> Option<LoadedSession> {
     let chat_messages: Vec<ChatMessage> = messages
         .iter()
         .map(|m| {
-            let parsed_items = markdown::parse(&m.content).collect();
             // Restore message_id if present, otherwise generate fresh one
             let id = m
                 .message_id
                 .as_ref()
                 .and_then(|s| MessageId::from_string(s))
                 .unwrap_or_else(MessageId::new);
+            let content = m.content.clone();
             ChatMessage {
                 id,
                 role: m.role,
-                content: m.content.clone(),
+                content: content.clone(),
                 is_streaming: false,
                 author_label: None,
                 reasoning: m.reasoning.clone(),
                 reasoning_signature: m.reasoning_signature.clone(),
-                parsed_items,
+                content_blocks: vec![ContentBlock::text(content)],
                 last_was_tool_call: false,
             }
         })

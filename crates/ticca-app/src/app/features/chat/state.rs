@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
-use iced::widget::text_editor;
 use iced::Subscription;
+use iced::widget::text_editor;
 use tokio::sync::mpsc;
 
 use crate::agent_graph::AgentCallGraph;
@@ -16,12 +16,12 @@ use crate::system_executions::SystemExecutionsState;
 use ticca_core::agents::{AgentConfig as CoreAgentConfig, AgentType};
 use ticca_core::tools::{SystemExecRequest, SystemExecStore, TodoListState};
 
-use super::subscriptions::{
-    SystemExecRequestSubscriptionData, TerminalBackendSubscriptionData,
-    system_exec_request_stream, terminal_backend_stream,
-};
-use super::types::{ChatPane, ToolApprovalPrompt, enforce_sidebar_tab};
 use super::Effect;
+use super::subscriptions::{
+    SystemExecRequestSubscriptionData, TerminalBackendSubscriptionData, system_exec_request_stream,
+    terminal_backend_stream,
+};
+use super::types::{ChatPane, DiffModalState, ToolApprovalPrompt, enforce_sidebar_tab};
 
 /// Main chat state containing all conversation and streaming data.
 pub(in crate::app) struct ChatState {
@@ -43,6 +43,8 @@ pub(in crate::app) struct ChatState {
         Option<mpsc::UnboundedSender<ticca_core::tools::ToolApprovalDecision>>,
     pub(super) pending_approvals: VecDeque<ToolApprovalPrompt>,
     pub(in crate::app) active_approval: Option<ToolApprovalPrompt>,
+    pub(in crate::app) active_diff_modal: Option<DiffModalState>,
+    pub(in crate::app) diff_cache: HashMap<String, DiffModalState>,
     pub(in crate::app) stream_cancel: Option<tokio::sync::oneshot::Sender<()>>,
     pub(in crate::app) raw_view_messages: HashSet<MessageId>,
     pub(in crate::app) raw_view_editors: HashMap<MessageId, text_editor::Content>,
@@ -54,6 +56,7 @@ pub(in crate::app) struct ChatState {
     pub(in crate::app) tps_samples: VecDeque<f64>,
     pub(in crate::app) last_bytes_time: Option<std::time::Instant>,
     pub(in crate::app) spinner_frame: usize,
+    pub(in crate::app) flow_animation_frame: usize,
     /// Token usage from API responses (input_tokens includes system prompt, tools, all messages)
     pub(in crate::app) input_tokens: u64,
     pub(in crate::app) output_tokens: u64,
@@ -61,8 +64,8 @@ pub(in crate::app) struct ChatState {
     pub(in crate::app) estimated_tokens: usize,
     pub(in crate::app) context_window: u64,
     pub(in crate::app) call_graph: AgentCallGraph,
-    /// Maps subagent node_id to the MessageId of their streaming message
-    pub(in crate::app) subagent_messages: HashMap<usize, MessageId>,
+    /// ID of the main agent's streaming message (node 0)
+    pub(in crate::app) main_agent_message_id: Option<MessageId>,
     pub(super) panes: iced::widget::pane_grid::State<ChatPane>,
     pub(super) chat_pane: iced::widget::pane_grid::Pane,
     pub(super) flow_pane: Option<iced::widget::pane_grid::Pane>,
@@ -113,6 +116,8 @@ impl ChatState {
             approval_tx: None,
             pending_approvals: VecDeque::new(),
             active_approval: None,
+            active_diff_modal: None,
+            diff_cache: HashMap::new(),
             stream_cancel: None,
             raw_view_messages: HashSet::new(),
             raw_view_editors: HashMap::new(),
@@ -124,12 +129,13 @@ impl ChatState {
             tps_samples: VecDeque::with_capacity(60),
             last_bytes_time: None,
             spinner_frame: 0,
+            flow_animation_frame: 0,
             input_tokens: 0,
             output_tokens: 0,
             estimated_tokens: 0,
             context_window: 0, // Will be looked up from registry based on selected model
             call_graph: AgentCallGraph::new(AgentType::Coding),
-            subagent_messages: HashMap::new(),
+            main_agent_message_id: None,
             panes,
             chat_pane,
             flow_pane: Some(flow_pane),
@@ -162,6 +168,7 @@ impl ChatState {
         self.stream_start_time = None;
         self.stream_chars_received = 0;
         self.current_tps = 0.0;
+        self.main_agent_message_id = None;
         self.tps_samples.clear();
         self.last_bytes_time = None;
         self.spinner_frame = 0;
@@ -217,7 +224,7 @@ impl ChatState {
         } else {
             // Fall back to registry lookup for the selected model
             self.selected_model_name()
-                .map(|name| ticca_core::RegistryService::get_context_window(name) as i64)
+                .map(ticca_core::llm::ModelService::get_context_length)
                 .unwrap_or(ticca_core::registry::DEFAULT_CONTEXT_WINDOW as i64)
         }
     }
@@ -305,6 +312,14 @@ impl ChatState {
                         .map(|_| Message::Chat(chat::Msg::AnimationTick)),
                 );
             }
+        }
+
+        // Flow graph animation when any agent is running
+        if self.call_graph.is_any_running() {
+            subs.push(
+                time::every(std::time::Duration::from_millis(50)) // 20 FPS for smooth but efficient animation
+                    .map(|_| Message::Chat(chat::Msg::FlowAnimationTick)),
+            );
         }
 
         subs
