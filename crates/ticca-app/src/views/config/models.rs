@@ -76,7 +76,7 @@ pub(super) fn build_model_settings_section<'a>(
                 ))
             })
             .placeholder("Select default model...")
-            .width(Length::Fixed(300.0)),
+            .width(Length::Fill),
         ]
         .spacing(10)
         .align_y(iced::Alignment::Center)
@@ -137,7 +137,7 @@ pub(super) fn build_model_settings_section<'a>(
                             }
                         }
                     })
-                    .width(Length::Fixed(300.0)),
+                    .width(Length::Fill),
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center)

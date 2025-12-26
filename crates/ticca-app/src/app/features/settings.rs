@@ -262,7 +262,7 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
             app.settings.api_key_form_label = value;
         }
         settings::Msg::SaveApiKey => {
-            let Some(ref provider_id) = app.settings.api_key_form_provider else {
+            let Some(provider_id) = app.settings.api_key_form_provider.clone() else {
                 return effects;
             };
 
@@ -279,8 +279,11 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                 Some(label.to_string())
             };
 
-            let account =
-                ApiKeyAccount::new(uuid::Uuid::new_v4().to_string(), provider_id, api_key);
+            let account = ApiKeyAccount::new(
+                uuid::Uuid::new_v4().to_string(),
+                provider_id.clone(),
+                api_key,
+            );
             let account = if let Some(l) = label {
                 account.with_label(l)
             } else {
@@ -296,6 +299,9 @@ pub(in crate::app) fn update(app: &mut TiccaApp, message: settings::Msg) -> Vec<
                     app.settings.add_provider_search = String::new();
                     app.settings.add_provider_expanded = false;
                     app.settings.refresh_api_key_accounts();
+                    effects.push(Effect::RefreshModelsForProvider(
+                        ProviderId::ApiKey(provider_id.clone()),
+                    ));
                 }
                 Err(e) => {
                     app.toast = Some(Toast::new(format!("Failed to save API key: {}", e)));

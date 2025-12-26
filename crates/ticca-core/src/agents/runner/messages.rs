@@ -90,6 +90,38 @@ pub fn build_user_message(
     }
 }
 
+/// Extract the last user message text from history, returning the remaining history.
+///
+/// This is needed because `stream_prompt("")` with an empty string causes validation
+/// errors on strict OpenAI-compatible providers (e.g., Synthetic, Z.ai).
+/// Instead, we pass the actual user message to `stream_prompt()`.
+pub fn extract_last_user_message(
+    mut history: Vec<rig::message::Message>,
+) -> (Vec<rig::message::Message>, String) {
+    if let Some(pos) = history
+        .iter()
+        .rposition(|msg| matches!(msg, rig::message::Message::User { .. }))
+    {
+        let last_user = history.remove(pos);
+        let text = match last_user {
+            rig::message::Message::User { content } => content
+                .iter()
+                .filter_map(|part| match part {
+                    rig::message::UserContent::Text(text_content) => {
+                        Some(text_content.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        (history, text)
+    } else {
+        (history, String::new())
+    }
+}
+
 /// Prepend system prompt to the first user message (for providers that don't support system prompts).
 pub fn prepend_system_to_first_user_message(
     system_prompt: &str,

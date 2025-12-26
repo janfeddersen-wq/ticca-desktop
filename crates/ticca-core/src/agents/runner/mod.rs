@@ -14,7 +14,7 @@ mod types;
 
 pub use messages::{
     build_assistant_message_with_reasoning, build_chat_history, build_user_message,
-    is_rate_limit_error, prepend_system_to_first_user_message,
+    extract_last_user_message, is_rate_limit_error, prepend_system_to_first_user_message,
 };
 pub use provider::{ResolvedProvider, fetch_best_model, resolve_model_name, resolve_provider};
 pub use types::{
@@ -526,9 +526,10 @@ where
     let mut history = history;
     let mut final_output = String::new();
 
+    let (history_for_context, prompt_text) = extract_last_user_message(history.clone());
     let mut stream = agent
-        .stream_prompt("")
-        .with_history(history.clone())
+        .stream_prompt(&prompt_text)
+        .with_history(history_for_context)
         .multi_turn(max_turns)
         .await;
 
@@ -836,9 +837,10 @@ where
     let mut history = full_history;
     let max_turns = max_tool_rounds.max(1) as usize;
 
+    let (history_for_context, prompt_text) = extract_last_user_message(history.clone());
     let mut stream = agent
-        .stream_prompt("")
-        .with_history(history.clone())
+        .stream_prompt(&prompt_text)
+        .with_history(history_for_context)
         .multi_turn(max_turns)
         .await;
 
@@ -1052,9 +1054,10 @@ mod tests {
         use rig::streaming::StreamedAssistantContent;
         use rig::streaming::StreamingPrompt;
 
+        let (history_for_context, prompt_text) = extract_last_user_message(full_history);
         let mut stream = agent
-            .stream_prompt("")
-            .with_history(full_history)
+            .stream_prompt(&prompt_text)
+            .with_history(history_for_context)
             .multi_turn(1)
             .await;
 

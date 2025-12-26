@@ -10,10 +10,11 @@
 use rig::client::{BearerAuth, CompletionClient};
 use rig::providers::openai;
 
+use crate::llm::providers::http_wrapper::ApiKeyHttpClient;
 use crate::registry::RegistryService;
 
 /// Type alias for OpenAI-compatible client (using Chat Completions API)
-pub type OpenAICompatibleClient = openai::CompletionsClient;
+pub type OpenAICompatibleClient = openai::CompletionsClient<ApiKeyHttpClient>;
 
 /// OpenAI-compatible API key client
 ///
@@ -62,7 +63,9 @@ impl OpenAICompatibleApiClient {
 
         // Build the base client, then switch to Chat Completions API
         // (the default is Responses API which is OpenAI-specific)
-        let inner = openai::Client::builder()
+        let http_client = ApiKeyHttpClient::new();
+        let inner = openai::Client::<ApiKeyHttpClient>::builder()
+            .http_client(http_client)
             .api_key(auth)
             .base_url(base_url)
             .build()

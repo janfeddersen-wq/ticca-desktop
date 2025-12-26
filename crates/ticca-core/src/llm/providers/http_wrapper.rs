@@ -198,6 +198,140 @@ impl HttpClientExt for OAuthHttpClient {
 }
 
 // ============================================================================
+// ApiKeyHttpClient - HTTP client for API key providers with proper headers
+// ============================================================================
+
+/// A wrapper around reqwest::Client that ensures proper headers for API key providers.
+///
+/// Some OpenAI-compatible providers (like Synthetic, Z.ai) require explicit
+/// Content-Type: application/json headers that rig's default client may not set.
+#[derive(Clone, Debug)]
+pub struct ApiKeyHttpClient {
+    inner: ReqwestClient,
+}
+
+impl Default for ApiKeyHttpClient {
+    fn default() -> Self {
+        Self {
+            inner: ReqwestClient::new(),
+        }
+    }
+}
+
+impl ApiKeyHttpClient {
+    /// Create a new API key HTTP client
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ensure required headers are set
+    fn ensure_headers(&self, mut headers: HeaderMap) -> HeaderMap {
+        if !headers.contains_key(http::header::CONTENT_TYPE) {
+            headers.insert(
+                http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
+        }
+
+        headers
+    }
+}
+
+impl HttpClientExt for ApiKeyHttpClient {
+    fn send<T, U>(
+        &self,
+        req: Request<T>,
+    ) -> impl Future<Output = rig::http_client::Result<Response<LazyBody<U>>>> + Send + 'static
+    where
+        T: Into<Bytes> + Send,
+        U: From<Bytes> + Send + 'static,
+    {
+        let (mut parts, body) = req.into_parts();
+        parts.headers = self.ensure_headers(parts.headers);
+        let body_bytes: Bytes = body.into();
+
+        tracing::debug!(
+            "ApiKeyHttpClient::send - {} {} (headers: {}, body: {} bytes)",
+            parts.method,
+            parts.uri,
+            parts.headers.len(),
+            body_bytes.len()
+        );
+
+        let req = Request::from_parts(parts, body_bytes);
+        self.inner.send(req)
+    }
+
+    fn send_multipart<U>(
+        &self,
+        req: Request<MultipartForm>,
+    ) -> impl Future<Output = rig::http_client::Result<Response<LazyBody<U>>>> + Send + 'static
+    where
+        U: From<Bytes> + Send + 'static,
+    {
+        let (mut parts, body) = req.into_parts();
+        parts.headers = self.ensure_headers(parts.headers);
+        let req = Request::from_parts(parts, body);
+
+        tracing::debug!(
+            "ApiKeyHttpClient::send_multipart - {} {} (headers: {})",
+            req.method(),
+            req.uri(),
+            req.headers().len()
+        );
+
+        self.inner.send_multipart(req)
+    }
+
+    fn send_streaming<T>(
+        &self,
+        req: Request<T>,
+    ) -> impl Future<Output = rig::http_client::Result<StreamingResponse>> + Send
+    where
+        T: Into<Bytes>,
+    {
+        let (mut parts, body) = req.into_parts();
+        parts.headers = self.ensure_headers(parts.headers);
+        let body_bytes: Bytes = body.into();
+
+        tracing::debug!(
+            "ApiKeyHttpClient::send_streaming - {} {} (headers: {}, body: {} bytes)",
+            parts.method,
+            parts.uri,
+            parts.headers.len(),
+            body_bytes.len()
+        );
+
+        let req = Request::from_parts(parts, body_bytes);
+        self.inner.send_streaming(req)
+    }
+
+    fn send_streaming_with_stats<T>(
+        &self,
+        req: Request<T>,
+        counter: StreamBytesCounter,
+    ) -> impl Future<Output = rig::http_client::Result<StreamingResponse>> + Send
+    where
+        T: Into<Bytes>,
+    {
+        let (mut parts, body) = req.into_parts();
+        parts.headers = self.ensure_headers(parts.headers);
+        let body_bytes: Bytes = body.into();
+
+        tracing::debug!(
+            "ApiKeyHttpClient::send_streaming_with_stats - {} {} (headers: {}, body: {} bytes)",
+            parts.method,
+            parts.uri,
+            parts.headers.len(),
+            body_bytes.len()
+        );
+
+        let req = Request::from_parts(parts, body_bytes);
+        self.inner.send_streaming_with_stats(req, counter)
+    }
+}
+
+// ============================================================================
 // CodexHttpClient - Specialized client for ChatGPT Codex backend
 // ============================================================================
 
