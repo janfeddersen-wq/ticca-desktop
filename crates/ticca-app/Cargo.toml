@@ -23,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+clap.workspace = true
 pulldown-cmark.workspace = true
 syntect.workspace = true
 anyhow.workspace = true
@@ -31,6 +32,11 @@ chrono.workspace = true
 async-stream = "0.3"
 futures.workspace = true
 rfd.workspace = true
+
+# TUI dependencies (optional, enabled by tui feature)
+ratatui = { workspace = true, optional = true }
+crossterm = { workspace = true, optional = true }
+tui-textarea = { version = "0.7", optional = true }
 
 # Emoji rendering via Twemoji SVG
 twemoji-assets = { version = "1.5", features = ["svg"] }
@@ -63,6 +69,11 @@ http = "1"
 
 # Embedded terminals (System Executions)
 iced_term = { git = "https://github.com/janfeddersen-wq/iced_term.git", rev = "ea244f23afa20b368f44b573b9c893e12a6c74d3" }
+
+[features]
+default = ["gui", "tui"]
+gui = []
+tui = ["dep:ratatui", "dep:crossterm", "dep:tui-textarea"]
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

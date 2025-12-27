@@ -36,6 +36,12 @@ bytes = "1.7"
 iced = { version = "0.14", features = ["tokio", "advanced", "svg", "image", "markdown", "highlighter", "canvas"] }
 iced_fonts = { version = "0.1", features = ["bootstrap"] }
 
+# CLI & TUI
+clap = { version = "4.5", features = ["derive"] }
+ratatui = "0.29"
+crossterm = "0.28"
+tui-textarea = "0.7"
+
 # Material Icons
 material-icons = "0.2"
 

@@ -104,6 +104,103 @@ On-demand downloads for specialized tasks:
 
 ---
 
+## Console Mode (TUI)
+
+Ticca supports a terminal-based user interface as an alternative to the GUI, perfect for remote servers, SSH sessions, or terminal enthusiasts.
+
+### Running in Console Mode
+
+```bash
+# Start in console/TUI mode
+ticca --console
+# or
+ticca -c
+
+# With additional options
+ticca -c --working-dir /path/to/project --agent coding --theme dracula
+```
+
+### Console Mode Options
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--console` | `-c` | Run in terminal UI mode |
+| `--working-dir <DIR>` | `-w` | Set working directory |
+| `--agent <AGENT>` | `-a` | Start with agent (planning/coding/skills) |
+| `--theme <THEME>` | `-t` | Set theme (dark/light/dracula/nord/etc.) |
+| `--session <ID>` | `-s` | Load session by ID |
+| `--yolo` | | Enable YOLO mode (auto-approve tools) |
+
+### Keyboard Shortcuts
+
+#### Global
+| Key | Action |
+|-----|--------|
+| `q` / `Ctrl+Q` | Quit |
+| `Ctrl+,` | Open Settings |
+| `?` | Show Help |
+| `Escape` | Close/Back |
+
+#### Chat View
+| Key | Action |
+|-----|--------|
+| `Ctrl+Enter` | Send message |
+| `Ctrl+N` | New session |
+| `Ctrl+C` | Stop streaming |
+| `F1` | Pick agent |
+| `F2` | Pick model |
+| `F3` | Toggle YOLO mode |
+| `Ctrl+W` | Change working directory |
+| `Ctrl+1/2/3` | Switch to Planning/Coding/Skills agent |
+| `↑/↓` | Scroll messages |
+| `PgUp/PgDn` | Page scroll |
+| `Tab` | Cycle focus |
+
+#### Settings View
+| Key | Action |
+|-----|--------|
+| `1-7` | Switch to tab |
+| `←/→` | Previous/Next tab |
+| `↑/↓` | Navigate list |
+| `Enter` | Select/Confirm |
+| `n` | Add new item |
+| `e` | Edit selected |
+| `d` | Delete selected |
+| `Space` | Toggle checkbox |
+
+#### Tool Approval
+| Key | Action |
+|-----|--------|
+| `Y` | Approve |
+| `N` | Deny |
+| `A` | Always approve |
+
+### Available Themes
+
+Console mode supports all 11 themes:
+- **Dark** (default)
+- **Light**
+- **Zinc**
+- **Dracula**
+- **Nord**
+- **Catppuccin Mocha**
+- **Catppuccin Latte**
+- **Tokyo Night**
+- **One Dark**
+- **Gruvbox Dark**
+- **Gruvbox Light**
+
+### Building Console-Only Binary
+
+For headless servers where GUI dependencies aren't needed:
+
+```bash
+# Build with only TUI support
+cargo build --release -p ticca-app --no-default-features --features tui
+```
+
+---
+
 ## Installation
 
 ### Pre-built Binaries
