@@ -9,28 +9,8 @@
 //! 1. **Legacy Claude Client** (`claude.rs`): Direct HTTP client for Claude API,
 //!    used for model fetching and simple chat operations.
 //!
-//! 2. **OAuth Providers** (`providers/`): Rig-compatible OAuth wrappers that work
-//!    with upstream rig's agent and streaming infrastructure. These are the preferred
-//!    way to build agents with tool support.
-//!
-//! # Usage
-//!
-//! For simple model fetching:
-//! ```ignore
-//! let client = get_claude_client()?;
-//! let models = client.fetch_latest_models().await?;
-//! ```
-//!
-//! For building agents with tools:
-//! ```ignore
-//! use ticca_core::llm::providers::ClaudeOAuthClient;
-//!
-//! let client = ClaudeOAuthClient::new(oauth_token)?;
-//! let agent = client.agent("claude-sonnet-4")
-//!     .preamble("You are a helpful assistant")
-//!     .tool(my_tool)
-//!     .build();
-//! ```
+//! 2. **OAuth Providers** (`providers/`): serdesAI-compatible OAuth wrappers that work
+//!    with the agent and streaming infrastructure.
 
 pub mod auth;
 pub mod claude;
@@ -50,7 +30,7 @@ pub use model_service::ModelService;
 pub use provider_registry::{
     ModelId, ProviderCapabilities, ProviderId, ProviderInfo, ProviderRegistry,
 };
-pub use providers::{ChatGptOAuthClient, ClaudeOAuthClient, GeminiOAuthClient, OAuthProviderError};
+pub use providers::{ChatGptOAuthClient, ClaudeOAuthClient, OAuthProviderError};
 
 /// Get a Claude client if we have valid credentials
 pub fn get_claude_client() -> Option<ClaudeClient> {
@@ -96,12 +76,5 @@ pub fn get_claude_oauth_client() -> Option<ClaudeOAuthClient> {
 /// Get a ChatGPT OAuth client if we have valid credentials
 pub fn get_chatgpt_oauth_client() -> Option<ChatGptOAuthClient> {
     let token = account_auth::select_token(provider_names::CHATGPT)?;
-    let id_token = token.id_token?;
-    ChatGptOAuthClient::from_tokens(token.access_token, &id_token).ok()
-}
-
-/// Get a Gemini OAuth client if we have valid credentials
-pub fn get_gemini_oauth_client() -> Option<GeminiOAuthClient> {
-    let token = account_auth::select_token(provider_names::GEMINI)?;
-    GeminiOAuthClient::new(token.access_token).ok()
+    ChatGptOAuthClient::new(token.access_token).ok()
 }

@@ -1,19 +1,20 @@
 //! Agent execution + LLM streaming runner.
 //!
-//! This module contains the provider/tool streaming loop, refactored into
-//! focused sub-modules for maintainability.
+//! This module contains the provider/tool streaming loop using serdesAI models.
+//!
+//! Note: This is a simplified implementation that uses models directly.
+//! Full agent abstraction with tools will be added in a future iteration.
 
 #![allow(clippy::items_after_test_module)]
 
 mod context;
-mod mcp;
 mod messages;
 mod provider;
 mod tool_builder;
 mod types;
 
 pub use messages::{
-    build_assistant_message_with_reasoning, build_chat_history, build_user_message,
+    build_chat_history, build_user_message,
     extract_last_user_message, is_rate_limit_error, prepend_system_to_first_user_message,
 };
 pub use provider::{ResolvedProvider, fetch_best_model, resolve_model_name, resolve_provider};
@@ -28,31 +29,32 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
 
 use futures::StreamExt;
-use rig::agent::AgentBuilder;
-use rig::completion::GetTokenUsage;
 use tokio::sync::mpsc;
+
+use serdes_ai_core::{ModelRequest, ModelResponse, ModelSettings};
+use serdes_ai_core::messages::{ModelRequestPart, ModelResponsePart, ThinkingPart, ToolCallPart, ToolReturnPart, UserContent};
+use serdes_ai_models::{Model, ModelRequestParameters};
+use serdes_ai_tools::{RunContext, ToolDefinition};
+use serdes_ai_toolsets::AbstractToolset;
 
 use crate::agents::{AgentProfile, AgentType};
 use crate::config::{ConfigDatabase, setting_keys};
-// ProviderId and ProviderRegistry used via provider module
 use crate::llm::auth;
-use crate::llm::providers::ChatGptOAuthClient;
 use crate::tools::{
-    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TodoListEvent, TodoStore,
+    AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, TiccaDeps, TodoListEvent, TodoStore,
     ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest, ToolContext, ToolPolicy,
 };
 
 use context::{apply_compression_if_needed, estimate_context, log_context_breakdown};
-use mcp::attach_mcp_tools_to_builder;
-use tool_builder::add_tool_if_allowed;
+use tool_builder::build_toolset_for_profile;
 use types::{CLAUDE_CODE_INSTRUCTIONS, STATS_WINDOW_MIN_MS};
 
-/// Run the Rig agent with streaming response and tools (ReAct loop).
+/// Run the agent with streaming response.
 ///
-/// Routes to Claude, ChatGPT/Codex, or Gemini based on model name.
+/// Routes to Claude or ChatGPT based on model name.
 /// Returns a Stream that yields events for each chunk.
 #[allow(clippy::too_many_arguments)]
-pub fn run_rig_agent_stream(
+pub fn run_agent_stream(
     system_prompt: String,
     user_message: String,
     model_name: Option<String>,
@@ -88,6 +90,9 @@ pub fn run_rig_agent_stream(
             Err(error) => {
                 let _ = event_tx.send(RunnerEvent::StreamError(error));
                 let _ = event_tx.send(RunnerEvent::StreamComplete);
+                while let Some(event) = event_rx.recv().await {
+                    yield event;
+                }
                 return;
             }
         };
@@ -192,7 +197,7 @@ pub fn run_rig_agent_stream(
         let event_tx_for_worker = event_tx.clone();
         let tool_context_worker = tool_context.clone();
         tokio::spawn(async move {
-            let mut worker = tokio::spawn(run_agent_stream(
+            let mut worker = tokio::spawn(run_streaming_agent(
                 event_tx_for_worker.clone(),
                 tool_context_worker,
                 system_prompt,
@@ -276,9 +281,8 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
     let parent_context = request.parent_context;
     let agent_type = request.agent_type;
     let model_name = resolve_invocation_model(agent_type, &parent_context)?;
-    let max_tool_rounds = parent_context.max_tool_rounds.max(1);
 
-    let mut profile = AgentProfile::for_type(agent_type, max_tool_rounds);
+    let mut profile = AgentProfile::for_type(agent_type, parent_context.max_tool_rounds);
     profile.system_prompt =
         append_agents_md(&profile.system_prompt, &parent_context.working_directory).await;
 
@@ -289,209 +293,72 @@ async fn invoke_agent(request: AgentInvokeRequest) -> Result<String, String> {
         });
     }
 
-    // Explore agent doesn't use todo tools
-    let (todo_store, todo_tx) = if agent_type == AgentType::Explore {
-        (None, None)
-    } else {
-        (
-            parent_context.todo_store.clone(),
-            parent_context.todo_tx.clone(),
-        )
-    };
+    // Build a simple request and run it
+    let resolved = resolve_provider(&model_name)?;
 
-    let tool_context = Arc::new(ToolContext {
-        working_directory: parent_context.working_directory.clone(),
-        approval_gate: parent_context.approval_gate.clone(),
-        yolo_mode_enabled: parent_context.yolo_mode_enabled,
-        policy: parent_context.policy.clone(),
-        current_agent: agent_type,
-        current_model: Some(model_name.clone()),
-        max_tool_rounds,
-        call_graph_tx: parent_context.call_graph_tx.clone(),
-        agent_stream_tx: parent_context.agent_stream_tx.clone(),
-        call_graph_counter: parent_context.call_graph_counter.clone(),
-        node_id: request.node_id,
-        agent_invoker: parent_context.agent_invoker.clone(),
-        todo_store,
-        todo_tx,
-        system_exec_store: parent_context.system_exec_store.clone(),
-        system_exec_tx: parent_context.system_exec_tx.clone(),
-        process_output_offsets: parent_context.process_output_offsets.clone(),
-    });
+    let mut final_output = String::new();
 
-    // Reset todo for agents that use it
-    if let Some(store) = &tool_context.todo_store {
-        let state = store.reset_node(request.node_id).await;
-        if let Some(tx) = &tool_context.todo_tx {
-            let _ = tx.send(TodoListEvent::Reset {
-                node_id: request.node_id,
-                state,
-            });
+    // For subagents, use a simple non-streaming request
+    match resolved {
+        ResolvedProvider::Claude { model, .. } => {
+            let mut req = ModelRequest::new();
+            req.add_system_prompt(&profile.system_prompt);
+            req.add_user_prompt(UserContent::text(&request.prompt));
+
+            let settings = ModelSettings::new().temperature(0.7).max_tokens(8192);
+            let params = ModelRequestParameters::default();
+
+            match model.request(&[req], &settings, &params).await {
+                Ok(response) => {
+                    final_output = response.text_content();
+                }
+                Err(e) => {
+                    return Err(format!("Claude invoke error: {}", e));
+                }
+            }
+        }
+        ResolvedProvider::ChatGpt { model, .. } => {
+            let mut req = ModelRequest::new();
+            req.add_system_prompt(&profile.system_prompt);
+            req.add_user_prompt(UserContent::text(&request.prompt));
+
+            let settings = ModelSettings::new().temperature(0.7).max_tokens(16384);
+            let params = ModelRequestParameters::default();
+
+            match model.request(&[req], &settings, &params).await {
+                Ok(response) => {
+                    final_output = response.text_content();
+                }
+                Err(e) => {
+                    return Err(format!("ChatGPT invoke error: {}", e));
+                }
+            }
+        }
+        ResolvedProvider::OpenAICompatible { model, provider_id, .. } => {
+            let mut req = ModelRequest::new();
+            req.add_system_prompt(&profile.system_prompt);
+            req.add_user_prompt(UserContent::text(&request.prompt));
+
+            let settings = ModelSettings::new().temperature(0.7).max_tokens(8192);
+            let params = ModelRequestParameters::default();
+
+            match model.request(&[req], &settings, &params).await {
+                Ok(response) => {
+                    final_output = response.text_content();
+                }
+                Err(e) => {
+                    return Err(format!("{} invoke error: {}", provider_id, e));
+                }
+            }
         }
     }
-
-    let invoke_prompt = format!(
-        "You are assisting the {}. Provide a concise, actionable response for the invoking agent.\n\nTask:\n{}",
-        parent_context.current_agent.display_name(),
-        request.prompt
-    );
-    let user_msg = build_user_message(&invoke_prompt, Vec::new());
-    let history = vec![user_msg];
-
-    let result = run_invoked_agent_stream(
-        request.node_id,
-        &tool_context,
-        &parent_context,
-        &profile,
-        &model_name,
-        history,
-        max_tool_rounds,
-    )
-    .await;
 
     if let Some(tx) = &parent_context.agent_stream_tx {
-        let output = match &result {
-            Ok(text) => text.clone(),
-            Err(error) => format!("Error: {}", error),
-        };
         let _ = tx.send(AgentStreamEvent::Complete {
             node_id: request.node_id,
-            output,
+            output: final_output.clone(),
         });
     }
-
-    result
-}
-
-/// Run the streaming loop for an invoked subagent.
-async fn run_invoked_agent_stream(
-    node_id: usize,
-    tool_context: &Arc<ToolContext>,
-    parent_context: &ToolContext,
-    profile: &AgentProfile,
-    model_name: &str,
-    history: Vec<rig::message::Message>,
-    max_tool_rounds: u32,
-) -> Result<String, String> {
-    let resolved = resolve_provider(model_name)?;
-    let preamble = if matches!(resolved, ResolvedProvider::Claude { .. }) {
-        CLAUDE_CODE_INSTRUCTIONS
-    } else {
-        &profile.system_prompt
-    };
-
-    // Build tools once
-    let (
-        execute_shell,
-        list_processes,
-        read_process_output,
-        kill_process,
-        read_file,
-        list_files,
-        edit_file,
-        delete_file,
-        grep,
-        write_file,
-        list_agents,
-        todo_read,
-        todo_write,
-        todo_list,
-        share_reasoning,
-        invoke_agent_tool,
-    ) = crate::tools::create_tools(tool_context.clone());
-
-    macro_rules! build_agent {
-        ($model:expr) => {{
-            let mut builder = AgentBuilder::new($model)
-                .preamble(preamble)
-                .tool(list_files);
-            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
-            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
-            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
-            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
-            add_tool_if_allowed!(builder, profile, "read_file", read_file);
-            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
-            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
-            add_tool_if_allowed!(builder, profile, "grep", grep);
-            add_tool_if_allowed!(builder, profile, "write_file", write_file);
-            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
-            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
-            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
-            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
-            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
-            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
-            let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
-            builder.temperature(0.7).max_tokens(8192)
-        }};
-    }
-
-    let max_turns = max_tool_rounds.max(1) as usize;
-
-    let mut final_output = match resolved {
-        ResolvedProvider::Claude {
-            client, model_id, ..
-        } => {
-            let model = client.completion_model(&model_id);
-            let agent = build_agent!(model).build();
-
-            let mut claude_history = history;
-            prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
-
-            stream_agent_loop(
-                node_id,
-                parent_context,
-                agent,
-                claude_history,
-                max_turns,
-                "Claude",
-            )
-            .await?
-        }
-        ResolvedProvider::ChatGpt {
-            client, model_id, ..
-        } => {
-            let model = client.completion_model(&model_id);
-            let agent = build_agent!(model)
-                .additional_params(ChatGptOAuthClient::codex_params())
-                .build();
-
-            stream_agent_loop(
-                node_id,
-                parent_context,
-                agent,
-                history,
-                max_turns,
-                "ChatGPT",
-            )
-            .await?
-        }
-        ResolvedProvider::Gemini {
-            client, model_id, ..
-        } => {
-            let model = client.completion_model(&model_id);
-            let agent = build_agent!(model).build();
-
-            stream_agent_loop(node_id, parent_context, agent, history, max_turns, "Gemini").await?
-        }
-        ResolvedProvider::ApiKey {
-            client,
-            model_id,
-            provider_name,
-        } => {
-            let model = client.completion_model(&model_id);
-            let agent = build_agent!(model).build();
-
-            stream_agent_loop(
-                node_id,
-                parent_context,
-                agent,
-                history,
-                max_turns,
-                &provider_name,
-            )
-            .await?
-        }
-    };
 
     // Truncate if needed
     if final_output.len() > MAX_SUBAGENT_OUTPUT_CHARS {
@@ -507,117 +374,9 @@ async fn run_invoked_agent_stream(
     Ok(final_output)
 }
 
-/// Generic streaming loop for any agent.
-async fn stream_agent_loop<M>(
-    node_id: usize,
-    parent_context: &ToolContext,
-    agent: rig::agent::Agent<M>,
-    history: Vec<rig::message::Message>,
-    max_turns: usize,
-    provider_label: &str,
-) -> Result<String, String>
-where
-    M: rig::completion::CompletionModel + 'static,
-    M::StreamingResponse: GetTokenUsage,
-{
-    use rig::agent::MultiTurnStreamItem;
-    use rig::streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt};
-
-    let mut history = history;
-    let mut final_output = String::new();
-
-    let (history_for_context, prompt_text) = extract_last_user_message(history.clone());
-    let mut stream = agent
-        .stream_prompt(&prompt_text)
-        .with_history(history_for_context)
-        .multi_turn(max_turns)
-        .await;
-
-    let mut collected_pass = String::new();
-    let mut collected_reasoning = String::new();
-    let mut collected_signature: Option<String> = None;
-
-    while let Some(chunk_result) = stream.next().await {
-        match chunk_result {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                text_chunk,
-            ))) => {
-                if !text_chunk.text.is_empty() {
-                    collected_pass.push_str(&text_chunk.text);
-                    if let Some(tx) = &parent_context.agent_stream_tx {
-                        let _ = tx.send(AgentStreamEvent::Chunk {
-                            node_id,
-                            text: text_chunk.text,
-                        });
-                    }
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(
-                reasoning,
-            ))) => {
-                let text = reasoning.reasoning.join("");
-                if !text.is_empty() {
-                    collected_reasoning.push_str(&text);
-                    if collected_signature.is_none() {
-                        collected_signature = reasoning.signature.clone();
-                    }
-                    if let Some(tx) = &parent_context.agent_stream_tx {
-                        let _ = tx.send(AgentStreamEvent::Reasoning { node_id, text });
-                    }
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ToolCall(
-                tool_call,
-            ))) => {
-                collected_pass.clear();
-                collected_reasoning.clear();
-                collected_signature = None;
-                if let Some(tx) = &parent_context.agent_stream_tx {
-                    let _ = tx.send(AgentStreamEvent::ToolCall {
-                        node_id,
-                        name: tool_call.function.name,
-                        args: tool_call.function.arguments.to_string(),
-                    });
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {
-                collected_pass.clear();
-                collected_reasoning.clear();
-                collected_signature = None;
-            }
-            Ok(_) => {}
-            Err(e) => {
-                let error_msg = format!("{} invoke error: {}", provider_label, e);
-                if let Some(tx) = &parent_context.agent_stream_tx {
-                    let _ = tx.send(AgentStreamEvent::Chunk {
-                        node_id,
-                        text: format!("❌ {}", error_msg),
-                    });
-                }
-                return Err(error_msg);
-            }
-        }
-    }
-
-    if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
-        final_output = collected_pass.clone();
-        let reasoning_opt = if collected_reasoning.is_empty() {
-            None
-        } else {
-            Some(collected_reasoning.as_str())
-        };
-        history.push(build_assistant_message_with_reasoning(
-            &collected_pass,
-            reasoning_opt,
-            collected_signature.as_deref(),
-        ));
-    }
-
-    Ok(final_output)
-}
-
+/// Main streaming agent runner with tool execution loop.
 #[allow(clippy::too_many_arguments)]
-async fn run_agent_stream(
+async fn run_streaming_agent(
     event_tx: mpsc::UnboundedSender<RunnerEvent>,
     tool_context: Arc<ToolContext>,
     system_prompt: String,
@@ -627,36 +386,35 @@ async fn run_agent_stream(
     chat_history: Vec<ChatHistoryMessage>,
     image_data: Vec<(String, String)>,
 ) -> Result<(), String> {
-    let mut stats_window_start = Instant::now();
-    let mut stats_window_chars: usize = 0;
+    // Build the toolset for this agent
+    let agent_type = tool_context.current_agent;
+    let profile = AgentProfile::for_type(agent_type, max_tool_rounds);
+    let toolset = build_toolset_for_profile(&profile, tool_context.clone());
+    
+    // Get tool definitions
+    let deps = TiccaDeps::new(tool_context.clone());
+    let run_context = RunContext::<TiccaDeps>::new(deps, &model_name);
+    let tools_map = toolset.get_tools(&run_context).await
+        .map_err(|e| format!("Failed to get tools: {}", e))?;
+    
+    let tool_defs: Vec<ToolDefinition> = tools_map.values()
+        .map(|t| t.tool_def.clone())
+        .collect();
+    
+    tracing::info!("Agent {} has {} tools available", agent_type.as_str(), tool_defs.len());
+    
+    let tool_defs_arc = Arc::new(tool_defs);
 
-    let emit_stream_stats = |chars: &mut usize, start: &mut Instant| -> Option<RunnerEvent> {
-        if *chars == 0 {
-            return None;
-        }
-        let elapsed = start.elapsed();
-        let window_ms = elapsed.as_millis() as u64;
-        if window_ms < STATS_WINDOW_MIN_MS {
-            return None;
-        }
-        let c = *chars;
-        *chars = 0;
-        *start = Instant::now();
-        Some(RunnerEvent::StreamStats {
-            chars_in_window: c,
-            window_ms,
-        })
-    };
-
+    // Build initial messages
     let history = build_chat_history(chat_history);
     let user_msg = build_user_message(&user_message, image_data);
 
-    let mut rig_messages: Vec<rig::message::Message> = history.clone();
-    rig_messages.push(user_msg.clone());
+    let mut messages: Vec<ModelRequest> = history;
+    messages.push(user_msg);
 
     // Estimate context and emit event
-    let estimation = estimate_context(&system_prompt, &rig_messages, &model_name);
-    log_context_breakdown(&system_prompt, &rig_messages, &estimation);
+    let estimation = estimate_context(&system_prompt, &messages, &model_name);
+    log_context_breakdown(&system_prompt, &messages, &estimation);
 
     let _ = event_tx.send(RunnerEvent::ContextEstimate {
         system_prompt_tokens: estimation.system_prompt_tokens,
@@ -668,468 +426,731 @@ async fn run_agent_stream(
     });
 
     // Apply compression if needed
-    let full_history = if estimation.needs_compression {
-        apply_compression_if_needed(rig_messages, &estimation, &event_tx)
+    let mut messages = if estimation.needs_compression {
+        apply_compression_if_needed(messages, &estimation, &event_tx)
     } else {
-        let mut h = history;
-        h.push(user_msg);
-        h
+        messages
     };
 
-    let profile = AgentProfile::for_type(tool_context.current_agent, max_tool_rounds);
     let resolved = resolve_provider(&model_name)?;
 
-    // preamble is handled per-provider in build_and_run! macro
+    // Determine system prompt based on provider
+    let effective_system_prompt = match &resolved {
+        ResolvedProvider::Claude { .. } => CLAUDE_CODE_INSTRUCTIONS.to_string(),
+        ResolvedProvider::ChatGpt { .. } => system_prompt.clone(),
+        ResolvedProvider::OpenAICompatible { .. } => system_prompt.clone(),
+    };
 
-    // Build tools
-    let (
-        execute_shell,
-        list_processes,
-        read_process_output,
-        kill_process,
-        read_file,
-        list_files,
-        edit_file,
-        delete_file,
-        grep,
-        write_file,
-        list_agents,
-        todo_read,
-        todo_write,
-        todo_list,
-        share_reasoning,
-        invoke_agent_tool,
-    ) = crate::tools::create_tools(tool_context.clone());
+    // For Claude, prepend the full system prompt to the first user message
+    messages = match &resolved {
+        ResolvedProvider::Claude { .. } => {
+            let mut msgs = messages;
+            prepend_system_to_first_user_message(&system_prompt, &mut msgs);
+            msgs
+        }
+        ResolvedProvider::ChatGpt { .. } => messages,
+        ResolvedProvider::OpenAICompatible { .. } => messages,
+    };
 
-    macro_rules! build_and_run {
-        ($model:expr, $preamble:expr, $history:expr, $additional_params:expr, $provider_label:expr, $token:expr) => {{
-            let mut builder = AgentBuilder::new($model)
-                .preamble($preamble)
-                .tool(list_files);
-            add_tool_if_allowed!(builder, profile, "execute_shell", execute_shell);
-            add_tool_if_allowed!(builder, profile, "list_processes", list_processes);
-            add_tool_if_allowed!(builder, profile, "read_process_output", read_process_output);
-            add_tool_if_allowed!(builder, profile, "kill_process", kill_process);
-            add_tool_if_allowed!(builder, profile, "read_file", read_file);
-            add_tool_if_allowed!(builder, profile, "edit_file", edit_file);
-            add_tool_if_allowed!(builder, profile, "delete_file", delete_file);
-            add_tool_if_allowed!(builder, profile, "grep", grep);
-            add_tool_if_allowed!(builder, profile, "write_file", write_file);
-            add_tool_if_allowed!(builder, profile, "list_agents", list_agents);
-            add_tool_if_allowed!(builder, profile, "todo_read", todo_read);
-            add_tool_if_allowed!(builder, profile, "todo_write", todo_write);
-            add_tool_if_allowed!(builder, profile, "todo_list", todo_list);
-            add_tool_if_allowed!(builder, profile, "share_reasoning", share_reasoning);
-            add_tool_if_allowed!(builder, profile, "invoke_agent", invoke_agent_tool);
-            let builder = attach_mcp_tools_to_builder(builder, tool_context.current_agent).await;
-            let agent = if let Some(params) = $additional_params {
-                builder
-                    .temperature(0.7)
-                    .max_tokens(8192)
-                    .additional_params(params)
-                    .build()
-            } else {
-                builder.temperature(0.7).max_tokens(8192).build()
+    // Add system prompt as first message
+    let mut sys_req = ModelRequest::new();
+    sys_req.add_system_prompt(&effective_system_prompt);
+    messages.insert(0, sys_req);
+
+    let settings = ModelSettings::new().temperature(0.7).max_tokens(8192);
+    
+    // Create params with tools
+    let params = ModelRequestParameters::new()
+        .with_tools_arc(tool_defs_arc.clone())
+        .with_allow_text(true);
+
+    // Tool execution loop
+    let mut tool_round = 0;
+    loop {
+        tool_round += 1;
+        if tool_round > max_tool_rounds as usize {
+            tracing::warn!("Max tool rounds ({}) reached, stopping", max_tool_rounds);
+            break;
+        }
+        
+        tracing::debug!("Tool round {} starting", tool_round);
+        
+        // Run streaming and collect response
+        let response = run_streaming_with_response(
+            &resolved,
+            &messages,
+            &settings,
+            &params,
+            &event_tx,
+        ).await?;
+        
+        // Extract tool calls from response
+        let tool_calls: Vec<ToolCallPart> = response.parts.iter()
+            .filter_map(|part| {
+                if let ModelResponsePart::ToolCall(tc) = part {
+                    Some(tc.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        if tool_calls.is_empty() {
+            // No tool calls - we're done
+            tracing::debug!("No tool calls in response, finishing");
+            break;
+        }
+        
+        tracing::info!("Executing {} tool calls", tool_calls.len());
+        
+        // Add model response to messages
+        let mut response_req = ModelRequest::new();
+        response_req.parts.push(ModelRequestPart::ModelResponse(Box::new(response.clone())));
+        messages.push(response_req);
+        
+        // Execute tools and collect results
+        let mut tool_returns: Vec<ModelRequestPart> = Vec::new();
+        
+        for tc in tool_calls {
+            let tool_name = &tc.tool_name;
+            // Ensure we always have a tool_call_id (required by OpenAI-compatible APIs)
+            let tool_call_id = tc.tool_call_id.clone()
+                .unwrap_or_else(|| format!("call_{}", tool_name));
+            
+            // Emit tool execution event
+            let _ = event_tx.send(RunnerEvent::ToolExecution {
+                name: tool_name.clone(),
+                args: tc.args.to_json_string().unwrap_or_default(),
+            });
+            
+            // Get the tool from the map
+            let tool = match tools_map.get(tool_name) {
+                Some(t) => t,
+                None => {
+                    let error_msg = format!("Error: Unknown tool '{}'", tool_name);
+                    let _ = event_tx.send(RunnerEvent::ToolResult {
+                        name: tool_name.clone(),
+                        success: false,
+                        result: error_msg.clone(),
+                    });
+                    // Must use ToolReturnPart with tool_call_id for OpenAI compatibility
+                    let tool_return = ToolReturnPart::error(tool_name, error_msg)
+                        .with_tool_call_id(tool_call_id);
+                    tool_returns.push(ModelRequestPart::ToolReturn(tool_return));
+                    continue;
+                }
             };
-
-            run_main_stream_loop(
-                &event_tx,
-                agent,
-                $history,
-                max_tool_rounds,
-                &mut stats_window_chars,
-                &mut stats_window_start,
-                &emit_stream_stats,
-                $provider_label,
-                $token,
-            )
-            .await
-        }};
+            
+            // Execute the tool
+            let args_json = tc.args.to_json();
+            match toolset.call_tool(tool_name, args_json, &run_context, tool).await {
+                Ok(result) => {
+                    let result_str = result.content.to_string_content();
+                    let _ = event_tx.send(RunnerEvent::ToolResult {
+                        name: tool_name.clone(),
+                        success: true,
+                        result: if result_str.len() > 500 { 
+                            format!("{}...", &result_str[..500]) 
+                        } else { 
+                            result_str.clone() 
+                        },
+                    });
+                    
+                    let tool_return = ToolReturnPart::new(tool_name, result.content)
+                        .with_tool_call_id(tool_call_id);
+                    tool_returns.push(ModelRequestPart::ToolReturn(tool_return));
+                }
+                Err(e) => {
+                    let error_msg = format!("Error: {}", e);
+                    let _ = event_tx.send(RunnerEvent::ToolResult {
+                        name: tool_name.clone(),
+                        success: false,
+                        result: error_msg.clone(),
+                    });
+                    // Must use ToolReturnPart with tool_call_id for OpenAI compatibility
+                    let tool_return = ToolReturnPart::error(tool_name, error_msg)
+                        .with_tool_call_id(tool_call_id);
+                    tool_returns.push(ModelRequestPart::ToolReturn(tool_return));
+                }
+            }
+        }
+        
+        // Add tool returns to messages
+        let mut returns_req = ModelRequest::new();
+        returns_req.parts = tool_returns;
+        messages.push(returns_req);
+        
+        // Continue the loop for another round
     }
-
-    match resolved {
-        ResolvedProvider::Claude {
-            client,
-            model_id,
-            token,
-        } => {
-            let model = client.completion_model(&model_id);
-            let mut claude_history = full_history;
-            prepend_system_to_first_user_message(&profile.system_prompt, &mut claude_history);
-            build_and_run!(
-                model,
-                CLAUDE_CODE_INSTRUCTIONS,
-                claude_history,
-                None::<serde_json::Value>,
-                "Claude",
-                Some(&token)
-            )
-        }
-        ResolvedProvider::ChatGpt {
-            client,
-            model_id,
-            token,
-        } => {
-            let model = client.completion_model(&model_id);
-            build_and_run!(
-                model,
-                &system_prompt,
-                full_history,
-                Some(ChatGptOAuthClient::codex_params()),
-                "ChatGPT",
-                Some(&token)
-            )
-        }
-        ResolvedProvider::Gemini {
-            client,
-            model_id,
-            token,
-        } => {
-            let model = client.completion_model(&model_id);
-            build_and_run!(
-                model,
-                &system_prompt,
-                full_history,
-                None::<serde_json::Value>,
-                "Gemini",
-                Some(&token)
-            )
-        }
-        ResolvedProvider::ApiKey {
-            client,
-            model_id,
-            provider_name,
-        } => {
-            let model = client.completion_model(&model_id);
-            build_and_run!(
-                model,
-                &system_prompt,
-                full_history,
-                None::<serde_json::Value>,
-                &provider_name,
-                None::<&auth::AuthToken>
-            )
-        }
-    }
+    
+    Ok(())
 }
 
-/// Main streaming loop for the top-level agent.
-#[allow(clippy::too_many_arguments)]
-async fn run_main_stream_loop<M, F>(
+/// Run streaming and return the full response (for tool loop).
+async fn run_streaming_with_response(
+    resolved: &ResolvedProvider,
+    messages: &[ModelRequest],
+    settings: &ModelSettings,
+    params: &ModelRequestParameters,
     event_tx: &mpsc::UnboundedSender<RunnerEvent>,
-    agent: rig::agent::Agent<M>,
-    full_history: Vec<rig::message::Message>,
-    max_tool_rounds: u32,
+) -> Result<ModelResponse, String> {
+    use serdes_ai_core::messages::{ModelResponseStreamEvent, ModelResponsePartDelta, TextPart};
+    
+    let mut accumulated_text = String::new();
+    let mut accumulated_tool_calls: Vec<ToolCallPart> = Vec::new();
+    let mut accumulated_thinking: Vec<ThinkingPart> = Vec::new();
+    // Track in-progress parts by index
+    let mut tool_call_builders: HashMap<usize, ToolCallPart> = HashMap::new();
+    let mut thinking_builders: HashMap<usize, ThinkingPart> = HashMap::new();
+    let mut stats_window_start = Instant::now();
+    let mut stats_window_chars: usize = 0;
+    
+    // Helper to emit stats
+    let emit_stats = |chars: &mut usize, start: &mut Instant| -> Option<RunnerEvent> {
+        if *chars == 0 { return None; }
+        let elapsed = start.elapsed();
+        let window_ms = elapsed.as_millis() as u64;
+        if window_ms < STATS_WINDOW_MIN_MS { return None; }
+        let c = *chars;
+        *chars = 0;
+        *start = Instant::now();
+        Some(RunnerEvent::StreamStats { chars_in_window: c, window_ms })
+    };
+
+    match resolved {
+        ResolvedProvider::Claude { model, token, .. } => {
+            let mut stream = model.request_stream(messages, settings, params).await
+                .map_err(|e| {
+                    let msg = format!("Claude stream error: {}", e);
+                    if is_rate_limit_error(&msg) {
+                        auth::mark_cooldown(&token.account_id, &msg, DEFAULT_COOLDOWN_SECS);
+                    }
+                    msg
+                })?;
+            
+            while let Some(event_result) = stream.next().await {
+                match event_result {
+                    Ok(event) => {
+                        match event {
+                            ModelResponseStreamEvent::PartStart(start_event) => {
+                                // Handle part starts
+                                match start_event.part {
+                                    ModelResponsePart::ToolCall(tc) => {
+                                        tracing::info!("🔧 Tool call starting: {} (index: {})", tc.tool_name, start_event.index);
+                                        tool_call_builders.insert(start_event.index, tc);
+                                    }
+                                    ModelResponsePart::Thinking(tp) => {
+                                        thinking_builders.insert(start_event.index, tp);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            ModelResponseStreamEvent::PartDelta(delta_event) => {
+                                match &delta_event.delta {
+                                    ModelResponsePartDelta::Text(text_delta) => {
+                                        let text = &text_delta.content_delta;
+                                        if !text.is_empty() {
+                                            accumulated_text.push_str(text);
+                                            let _ = event_tx.send(RunnerEvent::StreamChunk(text.clone()));
+                                            stats_window_chars += text.len();
+                                            if let Some(stats) = emit_stats(&mut stats_window_chars, &mut stats_window_start) {
+                                                let _ = event_tx.send(stats);
+                                            }
+                                        }
+                                    }
+                                    ModelResponsePartDelta::Thinking(thinking_delta) => {
+                                        // Apply delta to accumulate both content and signature
+                                        if let Some(tp) = thinking_builders.get_mut(&delta_event.index) {
+                                            thinking_delta.apply(tp);
+                                        }
+                                        // Emit event for UI
+                                        if !thinking_delta.content_delta.is_empty() {
+                                            let _ = event_tx.send(RunnerEvent::Reasoning {
+                                                text: thinking_delta.content_delta.clone(),
+                                                signature: thinking_delta.signature_delta.clone(),
+                                            });
+                                        }
+                                    }
+                                    ModelResponsePartDelta::ToolCall(tc_delta) => {
+                                        // Apply delta to the tool call at this index
+                                        if let Some(tc) = tool_call_builders.get_mut(&delta_event.index) {
+                                            tc_delta.apply(tc);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            ModelResponseStreamEvent::PartEnd(end_event) => {
+                                tracing::debug!("PartEnd received for index: {}", end_event.index);
+                                // Finalize parts
+                                if let Some(tc) = tool_call_builders.remove(&end_event.index) {
+                                    tracing::info!("🔧 Tool call detected: {} with args: {}", tc.tool_name, tc.args.to_json_string().unwrap_or_default());
+                                    // Emit tool call event for UI display
+                                    let _ = event_tx.send(RunnerEvent::ToolCall {
+                                        name: tc.tool_name.clone(),
+                                        args: tc.args.to_json_string().unwrap_or_default(),
+                                    });
+                                    accumulated_tool_calls.push(tc);
+                                }
+                                if let Some(tp) = thinking_builders.remove(&end_event.index) {
+                                    accumulated_thinking.push(tp);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format!("Claude stream error: {}", e);
+                        if is_rate_limit_error(&msg) {
+                            auth::mark_cooldown(&token.account_id, &msg, DEFAULT_COOLDOWN_SECS);
+                        }
+                        return Err(msg);
+                    }
+                }
+            }
+        }
+        ResolvedProvider::ChatGpt { model, token, .. } => {
+            let mut stream = model.request_stream(messages, settings, params).await
+                .map_err(|e| {
+                    let msg = format!("ChatGPT stream error: {}", e);
+                    if is_rate_limit_error(&msg) {
+                        auth::mark_cooldown(&token.account_id, &msg, DEFAULT_COOLDOWN_SECS);
+                    }
+                    msg
+                })?;
+            
+            while let Some(event_result) = stream.next().await {
+                match event_result {
+                    Ok(event) => {
+                        match event {
+                            ModelResponseStreamEvent::PartStart(start_event) => {
+                                match start_event.part {
+                                    ModelResponsePart::ToolCall(tc) => {
+                                        tracing::info!("🔧 Tool call starting: {} (index: {})", tc.tool_name, start_event.index);
+                                        tool_call_builders.insert(start_event.index, tc);
+                                    }
+                                    ModelResponsePart::Thinking(tp) => {
+                                        thinking_builders.insert(start_event.index, tp);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            ModelResponseStreamEvent::PartDelta(delta_event) => {
+                                match &delta_event.delta {
+                                    ModelResponsePartDelta::Text(text_delta) => {
+                                        let text = &text_delta.content_delta;
+                                        if !text.is_empty() {
+                                            accumulated_text.push_str(text);
+                                            let _ = event_tx.send(RunnerEvent::StreamChunk(text.clone()));
+                                            stats_window_chars += text.len();
+                                            if let Some(stats) = emit_stats(&mut stats_window_chars, &mut stats_window_start) {
+                                                let _ = event_tx.send(stats);
+                                            }
+                                        }
+                                    }
+                                    ModelResponsePartDelta::Thinking(thinking_delta) => {
+                                        if let Some(tp) = thinking_builders.get_mut(&delta_event.index) {
+                                            thinking_delta.apply(tp);
+                                        }
+                                        if !thinking_delta.content_delta.is_empty() {
+                                            let _ = event_tx.send(RunnerEvent::Reasoning {
+                                                text: thinking_delta.content_delta.clone(),
+                                                signature: thinking_delta.signature_delta.clone(),
+                                            });
+                                        }
+                                    }
+                                    ModelResponsePartDelta::ToolCall(tc_delta) => {
+                                        if let Some(tc) = tool_call_builders.get_mut(&delta_event.index) {
+                                            tc_delta.apply(tc);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            ModelResponseStreamEvent::PartEnd(end_event) => {
+                                tracing::debug!("PartEnd received for index: {}", end_event.index);
+                                if let Some(tc) = tool_call_builders.remove(&end_event.index) {
+                                    tracing::info!("🔧 Tool call detected: {} with args: {}", tc.tool_name, tc.args.to_json_string().unwrap_or_default());
+                                    // Emit tool call event for UI display
+                                    let _ = event_tx.send(RunnerEvent::ToolCall {
+                                        name: tc.tool_name.clone(),
+                                        args: tc.args.to_json_string().unwrap_or_default(),
+                                    });
+                                    accumulated_tool_calls.push(tc);
+                                }
+                                if let Some(tp) = thinking_builders.remove(&end_event.index) {
+                                    accumulated_thinking.push(tp);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format!("ChatGPT stream error: {}", e);
+                        if is_rate_limit_error(&msg) {
+                            auth::mark_cooldown(&token.account_id, &msg, DEFAULT_COOLDOWN_SECS);
+                        }
+                        return Err(msg);
+                    }
+                }
+            }
+        }
+        ResolvedProvider::OpenAICompatible { model, api_key_token, provider_id, .. } => {
+            let mut stream = model.request_stream(messages, settings, params).await
+                .map_err(|e| {
+                    let msg = format!("{} stream error: {}", provider_id, e);
+                    if is_rate_limit_error(&msg) {
+                        auth::mark_api_key_cooldown(&api_key_token.account_id, &msg, DEFAULT_COOLDOWN_SECS);
+                    }
+                    msg
+                })?;
+            
+            while let Some(event_result) = stream.next().await {
+                match event_result {
+                    Ok(event) => {
+                        match event {
+                            ModelResponseStreamEvent::PartStart(start_event) => {
+                                match start_event.part {
+                                    ModelResponsePart::ToolCall(tc) => {
+                                        tracing::info!("🔧 Tool call starting: {} (index: {})", tc.tool_name, start_event.index);
+                                        tool_call_builders.insert(start_event.index, tc);
+                                    }
+                                    ModelResponsePart::Thinking(tp) => {
+                                        thinking_builders.insert(start_event.index, tp);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            ModelResponseStreamEvent::PartDelta(delta_event) => {
+                                match &delta_event.delta {
+                                    ModelResponsePartDelta::Text(text_delta) => {
+                                        let text = &text_delta.content_delta;
+                                        if !text.is_empty() {
+                                            accumulated_text.push_str(text);
+                                            let _ = event_tx.send(RunnerEvent::StreamChunk(text.clone()));
+                                            stats_window_chars += text.len();
+                                            if let Some(stats) = emit_stats(&mut stats_window_chars, &mut stats_window_start) {
+                                                let _ = event_tx.send(stats);
+                                            }
+                                        }
+                                    }
+                                    ModelResponsePartDelta::Thinking(thinking_delta) => {
+                                        if let Some(tp) = thinking_builders.get_mut(&delta_event.index) {
+                                            thinking_delta.apply(tp);
+                                        }
+                                        if !thinking_delta.content_delta.is_empty() {
+                                            let _ = event_tx.send(RunnerEvent::Reasoning {
+                                                text: thinking_delta.content_delta.clone(),
+                                                signature: thinking_delta.signature_delta.clone(),
+                                            });
+                                        }
+                                    }
+                                    ModelResponsePartDelta::ToolCall(tc_delta) => {
+                                        if let Some(tc) = tool_call_builders.get_mut(&delta_event.index) {
+                                            tc_delta.apply(tc);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            ModelResponseStreamEvent::PartEnd(end_event) => {
+                                tracing::debug!("PartEnd received for index: {}", end_event.index);
+                                if let Some(tc) = tool_call_builders.remove(&end_event.index) {
+                                    tracing::info!("🔧 Tool call detected: {} with args: {}", tc.tool_name, tc.args.to_json_string().unwrap_or_default());
+                                    // Emit tool call event for UI display
+                                    let _ = event_tx.send(RunnerEvent::ToolCall {
+                                        name: tc.tool_name.clone(),
+                                        args: tc.args.to_json_string().unwrap_or_default(),
+                                    });
+                                    accumulated_tool_calls.push(tc);
+                                }
+                                if let Some(tp) = thinking_builders.remove(&end_event.index) {
+                                    accumulated_thinking.push(tp);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format!("{} stream error: {}", provider_id, e);
+                        if is_rate_limit_error(&msg) {
+                            auth::mark_api_key_cooldown(&api_key_token.account_id, &msg, DEFAULT_COOLDOWN_SECS);
+                        }
+                        return Err(msg);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Finalize any remaining parts (in case PartEnd wasn't received)
+    for (_, tc) in tool_call_builders {
+        accumulated_tool_calls.push(tc);
+    }
+    for (_, tp) in thinking_builders {
+        accumulated_thinking.push(tp);
+    }
+    
+    // Build the final response
+    let mut parts: Vec<ModelResponsePart> = Vec::new();
+    
+    // Add thinking parts FIRST (important for message ordering per Claude docs)
+    for tp in accumulated_thinking {
+        parts.push(ModelResponsePart::Thinking(tp));
+    }
+    
+    if !accumulated_text.is_empty() {
+        parts.push(ModelResponsePart::Text(TextPart::new(accumulated_text)));
+    }
+    
+    for tc in accumulated_tool_calls {
+        parts.push(ModelResponsePart::ToolCall(tc));
+    }
+    
+    Ok(ModelResponse {
+        parts,
+        model_name: Some(resolved.model_id().to_string()),
+        timestamp: chrono::Utc::now(),
+        finish_reason: None,
+        usage: None,
+        vendor_id: None,
+        vendor_details: None,
+        kind: "response".to_string(),
+    })
+}
+
+/// Streaming loop for Claude model.
+#[allow(clippy::too_many_arguments)]
+async fn run_claude_stream<F>(
+    model: serdes_ai_models::claude_code_oauth::ClaudeCodeOAuthModel,
+    messages: &[ModelRequest],
+    settings: &ModelSettings,
+    params: &ModelRequestParameters,
+    event_tx: &mpsc::UnboundedSender<RunnerEvent>,
     stats_window_chars: &mut usize,
     stats_window_start: &mut Instant,
     emit_stream_stats: &F,
-    provider_label: &str,
     token: Option<&auth::AuthToken>,
 ) -> Result<(), String>
 where
-    M: rig::completion::CompletionModel + 'static,
-    M::StreamingResponse: GetTokenUsage,
     F: Fn(&mut usize, &mut Instant) -> Option<RunnerEvent>,
 {
-    use rig::agent::MultiTurnStreamItem;
-    use rig::streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt};
+    use serdes_ai_core::messages::{ModelResponseStreamEvent, ModelResponsePartDelta};
 
-    let mut history = full_history;
-    let max_turns = max_tool_rounds.max(1) as usize;
-
-    let (history_for_context, prompt_text) = extract_last_user_message(history.clone());
-    let mut stream = agent
-        .stream_prompt(&prompt_text)
-        .with_history(history_for_context)
-        .multi_turn(max_turns)
-        .await;
-
-    let mut collected_pass = String::new();
-    let mut collected_reasoning = String::new();
-    let mut collected_signature: Option<String> = None;
-
-    while let Some(chunk_result) = stream.next().await {
-        match chunk_result {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                text_chunk,
-            ))) => {
-                if !text_chunk.text.is_empty() {
-                    let chunk_len = text_chunk.text.len();
-                    collected_pass.push_str(&text_chunk.text);
-                    let _ = event_tx.send(RunnerEvent::StreamChunk(text_chunk.text));
-                    *stats_window_chars += chunk_len;
-                    if let Some(stats) = emit_stream_stats(stats_window_chars, stats_window_start) {
-                        let _ = event_tx.send(stats);
-                    }
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Reasoning(
-                reasoning,
-            ))) => {
-                let text = reasoning.reasoning.join("");
-                if !text.is_empty() {
-                    collected_reasoning.push_str(&text);
-                    if collected_signature.is_none() {
-                        collected_signature = reasoning.signature.clone();
-                    }
-                    let _ = event_tx.send(RunnerEvent::Reasoning {
-                        text,
-                        signature: reasoning.signature.clone(),
-                    });
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::ToolCall(
-                tool_call,
-            ))) => {
-                collected_pass.clear();
-                collected_reasoning.clear();
-                collected_signature = None;
-                let _ = event_tx.send(RunnerEvent::ToolCall {
-                    name: tool_call.function.name,
-                    args: tool_call.function.arguments.to_string(),
-                });
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Final(
-                response,
-            ))) => {
-                if let Some(usage) = response.token_usage() {
-                    let _ = event_tx.send(RunnerEvent::Usage {
-                        input_tokens: usage.input_tokens,
-                        output_tokens: usage.output_tokens,
-                    });
-                }
-            }
-            Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult(_))) => {
-                collected_pass.clear();
-                collected_reasoning.clear();
-                collected_signature = None;
-            }
-            Ok(MultiTurnStreamItem::FinalResponse(_)) => {}
-            Ok(MultiTurnStreamItem::PreRequestContextEstimate(estimate)) => {
-                let _ = event_tx.send(RunnerEvent::ContextEstimate {
-                    system_prompt_tokens: estimate.system_prompt_tokens,
-                    tool_definitions_tokens: estimate.tool_definitions_tokens,
-                    messages_tokens: estimate.messages_tokens,
-                    total_tokens: estimate.total_tokens,
-                    context_window: estimate.context_window,
-                    usage_percent: estimate.usage_percent,
-                });
-            }
-            Ok(_) => {}
-            Err(e) => {
-                let error_msg = format!("{} stream error: {}", provider_label, e);
-                if is_rate_limit_error(&error_msg)
-                    && let Some(t) = token
-                {
+    let mut stream = match model.request_stream(messages, settings, params).await {
+        Ok(s) => s,
+        Err(e) => {
+            let error_msg = format!("Claude stream error: {}", e);
+            if is_rate_limit_error(&error_msg) {
+                if let Some(t) = token {
                     auth::mark_cooldown(&t.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                }
+            }
+            return Err(error_msg);
+        }
+    };
+
+    while let Some(event_result) = stream.next().await {
+        match event_result {
+            Ok(event) => {
+                // Handle delta events which contain the streaming content
+                if let ModelResponseStreamEvent::PartDelta(delta_event) = event {
+                    match &delta_event.delta {
+                        ModelResponsePartDelta::Text(text_delta) => {
+                            let text = &text_delta.content_delta;
+                            if !text.is_empty() {
+                                let chunk_len = text.len();
+                                let _ = event_tx.send(RunnerEvent::StreamChunk(text.clone()));
+                                *stats_window_chars += chunk_len;
+                                if let Some(stats) = emit_stream_stats(stats_window_chars, stats_window_start) {
+                                    let _ = event_tx.send(stats);
+                                }
+                            }
+                        }
+                        ModelResponsePartDelta::Thinking(thinking_delta) => {
+                            let thinking = &thinking_delta.content_delta;
+                            if !thinking.is_empty() {
+                                let _ = event_tx.send(RunnerEvent::Reasoning {
+                                    text: thinking.clone(),
+                                    signature: None,
+                                });
+                            }
+                        }
+                        _ => {} // Ignore tool call deltas for now
+                    }
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("Claude stream error: {}", e);
+                if is_rate_limit_error(&error_msg) {
+                    if let Some(t) = token {
+                        auth::mark_cooldown(&t.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                    }
                 }
                 return Err(error_msg);
             }
         }
     }
 
-    if !collected_pass.is_empty() || !collected_reasoning.is_empty() {
-        let reasoning_opt = if collected_reasoning.is_empty() {
-            None
-        } else {
-            Some(collected_reasoning.as_str())
-        };
-        history.push(build_assistant_message_with_reasoning(
-            &collected_pass,
-            reasoning_opt,
-            collected_signature.as_deref(),
-        ));
+    Ok(())
+}
+
+/// Streaming loop for ChatGPT model.
+#[allow(clippy::too_many_arguments)]
+async fn run_chatgpt_stream<F>(
+    model: serdes_ai_models::chatgpt_oauth::ChatGptOAuthModel,
+    messages: &[ModelRequest],
+    settings: &ModelSettings,
+    params: &ModelRequestParameters,
+    event_tx: &mpsc::UnboundedSender<RunnerEvent>,
+    stats_window_chars: &mut usize,
+    stats_window_start: &mut Instant,
+    emit_stream_stats: &F,
+    token: Option<&auth::AuthToken>,
+) -> Result<(), String>
+where
+    F: Fn(&mut usize, &mut Instant) -> Option<RunnerEvent>,
+{
+    use serdes_ai_core::messages::{ModelResponseStreamEvent, ModelResponsePartDelta};
+
+    let mut stream = match model.request_stream(messages, settings, params).await {
+        Ok(s) => s,
+        Err(e) => {
+            let error_msg = format!("ChatGPT stream error: {}", e);
+            if is_rate_limit_error(&error_msg) {
+                if let Some(t) = token {
+                    auth::mark_cooldown(&t.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                }
+            }
+            return Err(error_msg);
+        }
+    };
+
+    while let Some(event_result) = stream.next().await {
+        match event_result {
+            Ok(event) => {
+                if let ModelResponseStreamEvent::PartDelta(delta_event) = event {
+                    match &delta_event.delta {
+                        ModelResponsePartDelta::Text(text_delta) => {
+                            let text = &text_delta.content_delta;
+                            if !text.is_empty() {
+                                let chunk_len = text.len();
+                                let _ = event_tx.send(RunnerEvent::StreamChunk(text.clone()));
+                                *stats_window_chars += chunk_len;
+                                if let Some(stats) = emit_stream_stats(stats_window_chars, stats_window_start) {
+                                    let _ = event_tx.send(stats);
+                                }
+                            }
+                        }
+                        ModelResponsePartDelta::Thinking(thinking_delta) => {
+                            let thinking = &thinking_delta.content_delta;
+                            if !thinking.is_empty() {
+                                let _ = event_tx.send(RunnerEvent::Reasoning {
+                                    text: thinking.clone(),
+                                    signature: None,
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("ChatGPT stream error: {}", e);
+                if is_rate_limit_error(&error_msg) {
+                    if let Some(t) = token {
+                        auth::mark_cooldown(&t.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                    }
+                }
+                return Err(error_msg);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Streaming loop for OpenAI-compatible API key providers.
+#[allow(clippy::too_many_arguments)]
+async fn run_openai_compatible_stream<F>(
+    model: serdes_ai_models::openai::OpenAIChatModel,
+    messages: &[ModelRequest],
+    settings: &ModelSettings,
+    params: &ModelRequestParameters,
+    event_tx: &mpsc::UnboundedSender<RunnerEvent>,
+    stats_window_chars: &mut usize,
+    stats_window_start: &mut Instant,
+    emit_stream_stats: &F,
+    api_key_token: &auth::ApiKeyToken,
+    provider_id: &str,
+) -> Result<(), String>
+where
+    F: Fn(&mut usize, &mut Instant) -> Option<RunnerEvent>,
+{
+    use serdes_ai_core::messages::{ModelResponseStreamEvent, ModelResponsePartDelta};
+
+    let mut stream = match model.request_stream(messages, settings, params).await {
+        Ok(s) => s,
+        Err(e) => {
+            let error_msg = format!("{} stream error: {}", provider_id, e);
+            if is_rate_limit_error(&error_msg) {
+                auth::mark_api_key_cooldown(&api_key_token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+            }
+            return Err(error_msg);
+        }
+    };
+
+    while let Some(event_result) = stream.next().await {
+        match event_result {
+            Ok(event) => {
+                if let ModelResponseStreamEvent::PartDelta(delta_event) = event {
+                    match &delta_event.delta {
+                        ModelResponsePartDelta::Text(text_delta) => {
+                            let text = &text_delta.content_delta;
+                            if !text.is_empty() {
+                                let chunk_len = text.len();
+                                let _ = event_tx.send(RunnerEvent::StreamChunk(text.clone()));
+                                *stats_window_chars += chunk_len;
+                                if let Some(stats) = emit_stream_stats(stats_window_chars, stats_window_start) {
+                                    let _ = event_tx.send(stats);
+                                }
+                            }
+                        }
+                        ModelResponsePartDelta::Thinking(thinking_delta) => {
+                            let thinking = &thinking_delta.content_delta;
+                            if !thinking.is_empty() {
+                                let _ = event_tx.send(RunnerEvent::Reasoning {
+                                    text: thinking.clone(),
+                                    signature: None,
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("{} stream error: {}", provider_id, e);
+                if is_rate_limit_error(&error_msg) {
+                    auth::mark_api_key_cooldown(&api_key_token.account_id, &error_msg, DEFAULT_COOLDOWN_SECS);
+                }
+                return Err(error_msg);
+            }
+        }
     }
 
     Ok(())
 }
 
 #[cfg(test)]
-#[allow(clippy::manual_async_fn)]
 mod tests {
     use super::*;
-    use futures::stream;
-    use rig::completion::{
-        CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage,
-    };
-    use rig::message::AssistantContent;
-    use rig::one_or_many::OneOrMany;
-    use rig::streaming::{RawStreamingChoice, StreamingCompletionResponse};
-    use serde::{Deserialize, Serialize};
 
-    #[derive(Clone, Debug, Serialize, Deserialize)]
-    struct MockModel;
-
-    impl CompletionModel for MockModel {
-        type Response = ();
-        type StreamingResponse = ();
-        type Client = ();
-
-        fn make(_client: &Self::Client, _model: impl Into<String>) -> Self {
-            Self
-        }
-
-        fn completion(
-            &self,
-            _request: CompletionRequest,
-        ) -> impl std::future::Future<
-            Output = Result<CompletionResponse<Self::Response>, CompletionError>,
-        > + Send {
-            async move {
-                Ok(CompletionResponse {
-                    choice: OneOrMany::one(AssistantContent::text("mock response")),
-                    usage: Usage::new(),
-                    raw_response: (),
-                })
-            }
-        }
-
-        fn stream(
-            &self,
-            _request: CompletionRequest,
-        ) -> impl std::future::Future<
-            Output = Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError>,
-        > + Send {
-            async move {
-                let events = vec![
-                    Ok(RawStreamingChoice::Message("mock stream".to_string())),
-                    Ok(RawStreamingChoice::FinalResponse(())),
-                ];
-                let stream = stream::iter(events);
-                Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn mock_stream_smoke_test() {
-        let tool_context = Arc::new(ToolContext::default());
-        let (
-            execute_shell,
-            list_processes,
-            read_process_output,
-            kill_process,
-            read_file,
-            list_files,
-            edit_file,
-            delete_file,
-            grep,
-            write_file,
-            list_agents,
-            todo_read,
-            todo_write,
-            todo_list,
-            share_reasoning,
-            invoke_agent_tool,
-        ) = crate::tools::create_tools(tool_context.clone());
-
-        let history = build_chat_history(Vec::new());
-        let user_msg = build_user_message("hello", Vec::new());
-        let mut full_history = history;
-        full_history.push(user_msg);
-
-        let agent = AgentBuilder::new(MockModel)
-            .preamble("test system")
-            .tool(execute_shell)
-            .tool(list_processes)
-            .tool(read_process_output)
-            .tool(kill_process)
-            .tool(read_file)
-            .tool(list_files)
-            .tool(edit_file)
-            .tool(delete_file)
-            .tool(grep)
-            .tool(write_file)
-            .tool(list_agents)
-            .tool(todo_read)
-            .tool(todo_write)
-            .tool(todo_list)
-            .tool(share_reasoning)
-            .tool(invoke_agent_tool)
-            .temperature(0.1)
-            .max_tokens(64)
-            .build();
-
-        use rig::agent::MultiTurnStreamItem;
-        use rig::streaming::StreamedAssistantContent;
-        use rig::streaming::StreamingPrompt;
-
-        let (history_for_context, prompt_text) = extract_last_user_message(full_history);
-        let mut stream = agent
-            .stream_prompt(&prompt_text)
-            .with_history(history_for_context)
-            .multi_turn(1)
-            .await;
-
-        let mut collected = String::new();
-        while let Some(chunk_result) = stream.next().await {
-            if let Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(
-                text_chunk,
-            ))) = chunk_result
-            {
-                collected.push_str(&text_chunk.text);
-            }
-        }
-
-        assert!(collected.contains("mock stream"));
-    }
-
-    #[tokio::test]
-    async fn invoked_agent_todo_guard_errors_after_max_passes() {
-        let todo_store = Arc::new(TodoStore::new());
-        let _ = todo_store.reset_node(1).await;
-
-        let parent_context = ToolContext {
-            todo_store: Some(todo_store),
-            ..Default::default()
-        };
-
-        let tool_context = Arc::new(parent_context.clone());
-        let (
-            execute_shell,
-            list_processes,
-            read_process_output,
-            kill_process,
-            read_file,
-            list_files,
-            edit_file,
-            delete_file,
-            grep,
-            write_file,
-            list_agents,
-            todo_read,
-            todo_write,
-            todo_list,
-            share_reasoning,
-            invoke_agent_tool,
-        ) = crate::tools::create_tools(tool_context);
-
-        let agent = AgentBuilder::new(MockModel)
-            .preamble("test system")
-            .tool(execute_shell)
-            .tool(list_processes)
-            .tool(read_process_output)
-            .tool(kill_process)
-            .tool(read_file)
-            .tool(list_files)
-            .tool(edit_file)
-            .tool(delete_file)
-            .tool(grep)
-            .tool(write_file)
-            .tool(list_agents)
-            .tool(todo_read)
-            .tool(todo_write)
-            .tool(todo_list)
-            .tool(share_reasoning)
-            .tool(invoke_agent_tool)
-            .temperature(0.1)
-            .max_tokens(64)
-            .build();
-
-        let history = vec![build_user_message("hello", Vec::new())];
-        let result = stream_agent_loop(1, &parent_context, agent, history, 1, "Mock").await;
-
-        let output = result.unwrap();
-        assert!(output.contains("mock stream") || output.is_empty());
+    #[test]
+    fn test_rate_limit_detection() {
+        assert!(is_rate_limit_error("Error 429: Too many requests"));
+        assert!(is_rate_limit_error("Rate limit exceeded"));
+        assert!(is_rate_limit_error("quota exceeded"));
+        assert!(!is_rate_limit_error("Internal server error"));
     }
 }

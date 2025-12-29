@@ -1,719 +1,660 @@
-//! Chat view component
+//! Chat View - Main chat interface
 //!
-//! Renders the main chat interface including header, messages, and input area.
+//! Renders the chat header, message list, and input area.
 
-use iced::widget::{
-    Column, Space, button, column, container, markdown, row, scrollable, text, text_editor,
-    text_input, tooltip,
+use gpui::{
+    div, prelude::FluentBuilder as _, px, relative, AnyElement, Context, ElementId,
+    InteractiveElement as _, IntoElement, ParentElement as _, ScrollWheelEvent,
+    StatefulInteractiveElement as _, Styled as _, Window,
 };
-use iced::{Element, Length, widget};
+use gpui_component::{
+    button::{Button, ButtonVariants as _},
+    h_flex,
+    IconName,
+    input::Input,
+    scroll::{Scrollbar, ScrollbarAxis},
+    tab::{Tab, TabBar},
+    text::markdown,
+    v_flex, ActiveTheme, Disableable as _, Sizable as _,
+};
 
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-
-use ticca_core::agents::{AgentRegistry, AgentType};
+use ticca_core::agents::AgentType;
 use ticca_core::session::MessageRole;
 
-use crate::chat_message::{ChatMessage, ContentBlock, MessageId, SubAgentMessage};
-use crate::material_icons::{icon, icons};
-use crate::messages::{ImageAttachment, Message, chat, settings};
-use crate::theme::{AppTheme, styles};
-use crate::widgets::spinner;
+use crate::actions::*;
+use crate::app::TiccaApp;
+use crate::chat_message::ChatMessage;
 
-/// ID for the chat messages scrollable
-pub const CHAT_SCROLLABLE_ID: &str = "chat_messages";
+// =============================================================================
+// Chat View
+// =============================================================================
 
-/// Create horizontal space that fills available width
-fn horizontal_space() -> Space {
-    Space::new().width(Length::Fill)
+/// Render the complete chat view
+pub fn render_chat_view(
+    app: &TiccaApp,
+    window: &mut Window,
+    cx: &mut Context<TiccaApp>,
+) -> AnyElement {
+    h_flex()
+        .size_full()
+        .overflow_hidden() // Prevent layout breakage from long content
+        .bg(cx.theme().background)
+        // Main chat area
+        .child(
+            v_flex()
+                .flex_1()
+                .h_full()
+                .min_w_0() // Allow flex item to shrink below content size
+                .overflow_hidden()
+                .child(render_header(app, window, cx))
+                .child(render_dir_bar(app, cx))
+                .child(render_messages(app, cx))
+                .child(render_input_area(app, window, cx)),
+        )
+        // Right sidebar (when visible)
+        .when(app.chat.flow_panel_visible, |this| {
+            this.child(super::sidebar::render_sidebar(app, window, cx))
+        })
+        .into_any_element()
 }
 
-/// Create a styled tooltip with consistent appearance
-fn styled_tooltip<'a>(
-    content: impl Into<Element<'a, Message>>,
-    tip: &'a str,
-    position: tooltip::Position,
-) -> tooltip::Tooltip<'a, Message, iced::Theme, iced::Renderer> {
-    tooltip(content, text(tip).size(12), position)
-        .padding(8)
-        .gap(4)
-        .style(styles::tooltip_style)
-}
+// =============================================================================
+// Header
+// =============================================================================
 
-/// Format token count for display with thousands separator (e.g., 45000 -> "45 000")
-fn format_tokens(tokens: i64) -> String {
-    let s = tokens.to_string();
-    let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(' ');
-        }
-        result.push(c);
-    }
-    result.chars().rev().collect()
-}
+/// Render the chat header with agent tabs and action buttons
+fn render_header(
+    app: &TiccaApp,
+    _window: &mut Window,
+    cx: &mut Context<TiccaApp>,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let current_agent = app.chat.current_agent;
 
-/// Render the chat view
-#[allow(clippy::too_many_arguments)]
-pub fn view<'a>(
-    expert_mode_enabled: bool,
-    current_agent: AgentType,
-    working_directory: &Path,
-    messages: &'a [ChatMessage],
-    pending_attachments: &'a [ImageAttachment],
-    input_value: &str,
-    is_streaming: bool,
-    theme: AppTheme,
-    raw_view_messages: &'a HashSet<MessageId>,
-    raw_view_editors: &'a HashMap<MessageId, text_editor::Content>,
-    stream_chars: usize,
-    current_tps: f64,
-    stream_pulse: bool,
-    secs_since_bytes: u64,
-    spinner_frame: usize,
-    flow_panel_visible: bool,
-    tokens_used: i64,
-    context_limit: i64,
-    supports_vision: bool,
-) -> Element<'a, Message> {
-    let agent_selector: Element<Message> = if expert_mode_enabled {
-        let buttons: Vec<Element<Message>> = AgentType::all()
-            .iter()
-            .map(|&agent_type| {
-                let is_selected = current_agent == agent_type;
-                let metadata = AgentRegistry::get(agent_type);
-                let agent_icon = metadata.icon;
-                let label = metadata.label;
-                let description = metadata.description;
-                styled_tooltip(
-                    button(
-                        row![
-                            icon(agent_icon).size(14),
-                            text(format!(" {}", label)).size(14),
-                        ]
-                        .spacing(4),
-                    )
-                    .on_press(Message::Chat(chat::Msg::SwitchAgent(agent_type)))
-                    .style(move |theme, status| styles::tab_button(theme, status, is_selected))
-                    .padding([8, 12]),
-                    description,
-                    tooltip::Position::Bottom,
-                )
-                .into()
-            })
-            .collect();
-
-        iced::widget::Row::with_children(buttons).spacing(8).into()
-    } else {
-        Space::new().width(Length::Fixed(0.0)).into()
+    // Determine selected index
+    let selected_index = match current_agent {
+        AgentType::Coding => 0,
+        AgentType::Planning => 1,
+        _ => 0,
     };
 
-    // Token usage indicator
-    let usage_percentage = if context_limit > 0 {
-        (tokens_used as f64 / context_limit as f64).min(1.0)
-    } else {
-        0.0
-    };
-    let usage_text = format!(
-        "{} / {}",
-        format_tokens(tokens_used),
-        format_tokens(context_limit)
-    );
+    // Agent selection tabs
+    let agent_tabs = TabBar::new("agent-tabs")
+        .py_1()
+        .pill()
+        .selected_index(selected_index)
+        .on_click(cx.listener(|this, idx: &usize, _, cx| {
+            this.chat.current_agent = match idx {
+                0 => AgentType::Coding,
+                1 => AgentType::Planning,
+                _ => AgentType::Coding,
+            };
+            cx.notify();
+        }))
+        .child(
+            Tab::new()
+                .label("Coding")
+                .prefix(IconName::SquareTerminal),
+        )
+        .child(
+            Tab::new()
+                .label("Planning")
+                .prefix(IconName::BookOpen),
+        );
 
-    // Progress bar dimensions
-    let bar_width = 80.0;
-    let bar_height = 6.0;
-    let filled_width = (bar_width * usage_percentage) as f32;
+    // Token usage display (placeholder)
+    let token_display = div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child("0 tokens");
 
-    // Color based on usage percentage
-    let bar_color = if usage_percentage > 0.9 {
-        iced::Color::from_rgb(0.9, 0.2, 0.2) // Red when > 90%
-    } else if usage_percentage > 0.7 {
-        iced::Color::from_rgb(0.9, 0.7, 0.2) // Orange when > 70%
-    } else {
-        iced::Color::from_rgb(0.3, 0.7, 0.4) // Green otherwise
-    };
+    // Action buttons
+    let actions = h_flex()
+        .gap_1()
+        .child(
+            Button::new("new-session")
+                .icon(IconName::Plus)
+                .ghost()
+                .small()
+                .tooltip("New Session (Ctrl+N)")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    // Cancel any ongoing stream
+                    if let Some(handle) = &this.chat.stream_handle {
+                        handle.cancel();
+                    }
+                    this.chat.stream_handle = None;
+                    // Clear messages and input
+                    this.chat.messages.clear();
+                    this.chat.pending_attachments.clear();
+                    this.chat.is_streaming = false;
+                    // Reset auto-scroll for new session
+                    this.chat.auto_scroll_enabled = true;
+                    this.chat.input_state.update(cx, |state, cx| {
+                        state.set_value("", window, cx);
+                    });
+                    cx.notify();
+                })),
+        )
+        .child(
+            Button::new("theme-toggle")
+                .icon(IconName::Palette)
+                .ghost()
+                .small()
+                .tooltip("Change Theme")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.theme = this.theme.next();
+                    cx.dispatch_action(&SwitchTheme(this.theme.theme_name().to_string()));
+                    cx.notify();
+                })),
+        )
+        .child(
+            Button::new("settings")
+                .icon(IconName::Settings)
+                .ghost()
+                .small()
+                .tooltip("Settings (Ctrl+,)")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.current_view = View::Settings;
+                    // Refresh settings data
+                    this.settings.refresh_accounts();
+                    this.settings.refresh_mcp();
+                    this.settings.refresh_sessions();
+                    this.settings.refresh_provider_select(window, cx);
+                    // Refresh model data
+                    this.settings.load_default_model();
+                    this.settings.load_cached_models();
+                    this.settings.load_agent_pinned_models();
+                    this.settings.refresh_model_select(window, cx);
+                    cx.notify();
+                })),
+        )
+        .child(
+            Button::new("sidebar")
+                .icon(IconName::PanelRight)
+                .ghost()
+                .small()
+                .tooltip("Toggle Sidebar (Ctrl+B)")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.chat.flow_panel_visible = !this.chat.flow_panel_visible;
+                    cx.notify();
+                })),
+        );
 
-    let token_usage_display = container(
-        row![
-            text(usage_text).size(11),
-            // Progress bar using nested containers
-            container(
-                container(
-                    Space::new()
-                        .width(Length::Fixed(filled_width))
-                        .height(Length::Fixed(bar_height as f32))
-                )
-                .style(move |_theme: &iced::Theme| container::Style {
-                    background: Some(bar_color.into()),
-                    border: iced::Border {
-                        radius: 3.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-            )
-            .width(Length::Fixed(bar_width as f32))
-            .height(Length::Fixed(bar_height as f32))
-            .style(|theme: &iced::Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    border: iced::Border {
-                        radius: 3.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            }),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
-    )
-    .padding([4, 8]);
-
-    // Header with agent switcher and settings
-    let header = container(
-        row![
-            agent_selector,
-            // Spacer
-            horizontal_space(),
-            // Token usage indicator
-            token_usage_display,
-            // Actions
-            row![
-                styled_tooltip(
-                    button(icon(icons::DELETE).size(18))
-                        .on_press(Message::Chat(chat::Msg::NewSession))
-                        .style(styles::icon_button)
-                        .padding(8),
-                    "New session",
-                    tooltip::Position::Bottom,
-                ),
-                styled_tooltip(
-                    button(icon(icons::SETTINGS).size(18))
-                        .on_press(Message::Settings(settings::Msg::OpenSettings))
-                        .style(styles::icon_button)
-                        .padding(8),
-                    "Settings",
-                    tooltip::Position::Bottom,
-                ),
-                styled_tooltip(
-                    button(
-                        icon(if flow_panel_visible {
-                            icons::CLOSE
-                        } else {
-                            icons::MENU
+    // Header container - v_flex to stack main header + status row
+    v_flex()
+        .w_full()
+        .border_b_1()
+        .border_color(theme.border)
+        // Top row with tabs and buttons
+        .child(
+            h_flex()
+                .w_full()
+                .h(px(52.))
+                .px_4()
+                .items_center()
+                .justify_between()
+                .bg(theme.title_bar)
+                .child(agent_tabs)
+                .child(token_display)
+                .child(actions),
+        )
+        // Status row for streaming stats and context usage
+        .child(
+            h_flex()
+                .w_full()
+                .h(px(24.))
+                .px_4()
+                .items_center()
+                .justify_between()
+                .bg(theme.secondary)
+                .border_t_1()
+                .border_color(theme.border)
+                // Left side: streaming stats
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .items_center()
+                        // Streaming speed
+                        .when(app.chat.is_streaming, |this| {
+                            this.child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child("⚡"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.foreground)
+                                            .child(format!(
+                                                "{:.0} chars/s",
+                                                app.chat.streaming_chars_per_sec.unwrap_or(0.0)
+                                            )),
+                                    ),
+                            )
                         })
-                        .size(18)
-                    )
-                    .on_press(Message::Chat(chat::Msg::ToggleFlowPanel))
-                    .style(styles::icon_button)
-                    .padding(8),
-                    if flow_panel_visible {
-                        "Hide sidebar"
-                    } else {
-                        "Show sidebar"
-                    },
-                    tooltip::Position::Bottom,
-                ),
-            ]
-            .spacing(4),
-        ]
-        .spacing(10)
-        .align_y(iced::Alignment::Center),
-    )
-    .padding(10)
-    .style(styles::header_container);
-
-    // Working directory selector bar
-    let dir_display = working_directory.to_string_lossy();
-    let dir_bar = container(
-        row![
-            styled_tooltip(
-                button(
-                    row![
-                        icon(icons::FOLDER_OPEN).size(14),
-                        text(" Select Workdir").size(12)
-                    ]
-                    .spacing(2),
+                        // Total chars streamed
+                        .when(
+                            app.chat.is_streaming && app.chat.streaming_total_chars > 0,
+                            |this| {
+                                this.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(format!(
+                                            "({} chars)",
+                                            app.chat.streaming_total_chars
+                                        )),
+                                )
+                            },
+                        ),
                 )
-                .on_press(Message::Chat(chat::Msg::SelectWorkingDirectory))
-                .style(styles::secondary_button)
-                .padding([4, 8]),
-                "Change working directory",
-                tooltip::Position::Bottom,
-            ),
-            icon(icons::FOLDER).size(16),
-            text(format!(" {}", dir_display)).size(12),
-            horizontal_space(),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
-    )
-    .padding([6, 12])
-    .style(styles::dir_bar_container);
+                // Right side: context window usage
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .when_some(app.chat.context_usage_percent, |this, percent| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child("Context:"),
+                            )
+                            .child(
+                                // Progress bar container
+                                div()
+                                    .w(px(60.))
+                                    .h(px(4.))
+                                    .bg(theme.muted)
+                                    .rounded_sm()
+                                    .overflow_hidden()
+                                    .child(
+                                        // Progress bar fill
+                                        div()
+                                            .h_full()
+                                            .w(relative(percent as f32 / 100.0))
+                                            .bg(if percent > 80 {
+                                                theme.danger
+                                            } else if percent > 60 {
+                                                theme.link
+                                            } else {
+                                                theme.primary
+                                            })
+                                            .rounded_sm(),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if percent > 80 {
+                                        theme.danger
+                                    } else {
+                                        theme.muted_foreground
+                                    })
+                                    .child(format!("{}%", percent)),
+                            )
+                        }),
+                ),
+        )
+}
 
-    // Message list
-    let message_widgets: Vec<Element<Message>> = messages
+// =============================================================================
+// Directory Bar
+// =============================================================================
+
+/// Render the working directory bar
+fn render_dir_bar(app: &TiccaApp, cx: &mut Context<TiccaApp>) -> impl IntoElement {
+    let theme = cx.theme();
+    let dir_display = app
+        .chat
+        .working_directory
+        .to_string_lossy()
+        .to_string();
+
+    h_flex()
+        .w_full()
+        .h(px(36.))
+        .px_4()
+        .items_center()
+        .justify_between()
+        .border_b_1()
+        .border_color(theme.border)
+        .bg(theme.secondary)
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("📁"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.foreground)
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .max_w(px(600.))
+                        .child(dir_display),
+                ),
+        )
+        .child(
+            Button::new("select-dir")
+                .label("Select Directory")
+                .ghost()
+                .xsmall()
+                .on_click(cx.listener(|_, _, _, cx| {
+                    cx.dispatch_action(&SelectWorkingDirectory);
+                })),
+        )
+}
+
+// =============================================================================
+// Message List
+// =============================================================================
+
+/// Render the scrollable message list
+fn render_messages(app: &TiccaApp, cx: &mut Context<TiccaApp>) -> impl IntoElement {
+    let theme = cx.theme();
+
+    // Build message elements
+    let messages: Vec<AnyElement> = app
+        .chat
+        .messages
         .iter()
-        .map(|msg| render_message(msg, theme, raw_view_messages, raw_view_editors))
+        .enumerate()
+        .map(|(idx, msg)| render_message_bubble(idx, msg, cx))
         .collect();
 
-    let messages_view: Element<Message> = scrollable(
-        Column::with_children(message_widgets)
-            .spacing(12)
-            .padding(20),
-    )
-    .id(widget::Id::new(CHAT_SCROLLABLE_ID))
-    .on_scroll(|viewport| Message::Chat(chat::Msg::ChatScrolled(viewport)))
-    .height(Length::Fill)
-    .into();
-
-    // Build attachment previews if any
-    let attachment_preview = build_attachment_preview(pending_attachments);
-
-    // Check if we can send (has text or attachments)
-    let can_send =
-        !is_streaming && (!input_value.trim().is_empty() || !pending_attachments.is_empty());
-
-    // Streaming indicator - shows LLM output rate or waiting animation
-    let streaming_indicator: Option<Element<'_, Message>> = if is_streaming {
-        // Determine if we're "waiting" (no bytes for > 2 seconds)
-        let is_waiting = secs_since_bytes >= 2;
-
-        if is_waiting {
-            // Show GPU-rendered animated spinner with elapsed time
-            Some(
-                container(
-                    row![
-                        spinner(spinner_frame),
-                        text(format!("{}s", secs_since_bytes)).size(12),
-                    ]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center),
-                )
-                .padding([4, 8])
-                .style(styles::streaming_indicator_container)
-                .into(),
+    // Empty state if no messages
+    // NOTE: Return content directly - no wrapper div!
+    // Nested overflow contexts break scrolling.
+    if messages.is_empty() {
+        div()
+            .id("messages-container")
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.background)
+            .child(
+                v_flex()
+                    .gap_4()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_3xl()
+                            .child("🐶"),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(theme.muted_foreground)
+                            .child("Ready to help! What can I do for you?"),
+                    ),
             )
-        } else {
-            // Show chars/s rate when data is flowing
-            let pulse_icon = if stream_pulse {
-                icons::RADIO_BUTTON_CHECKED
-            } else {
-                icons::RADIO_BUTTON_UNCHECKED
-            };
-
-            // Show chars/s rate (current_tps is now chars per second, not tokens)
-            let display_text = if current_tps > 0.0 {
-                format!("{:.0} #/s", current_tps)
-            } else if stream_chars > 0 {
-                // Have chars but no rate yet
-                format!("~{} #", stream_chars)
-            } else {
-                "...".to_string()
-            };
-
-            Some(
-                container(
-                    row![icon(pulse_icon).size(12), text(display_text).size(12),]
-                        .spacing(6)
-                        .align_y(iced::Alignment::Center),
-                )
-                .padding([4, 8])
-                .style(styles::streaming_indicator_container)
-                .into(),
+            .into_any_element()
+    } else {
+        // Use custom scroll setup for programmatic control
+        // Structure matches gpui-component's Scrollable implementation
+        let scroll_handle = &app.chat.scroll_handle;
+        
+        // Outer container - matches the flex layout context
+        div()
+            .id("messages-container")
+            .flex_1()
+            .min_h_0() // Critical for flex scroll containers!
+            .size_full()
+            .bg(theme.background)
+            .relative()
+            .child(
+                // Scroll area - matches Scrollable's inner structure exactly
+                div()
+                    .id("scroll-area")
+                    .flex()
+                    .size_full()
+                    .track_scroll(scroll_handle)
+                    .flex_col()
+                    .overflow_y_scroll()
+                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                        // Check if user scrolled up (away from bottom)
+                        // In GPUI, scrolling down produces negative delta.y
+                        // When delta.y > 0, user is scrolling up (towards top)
+                        let delta_y = event.delta.pixel_delta(px(1.)).y;
+                        let zero = px(0.);
+                        
+                        if delta_y > zero {
+                            // User scrolled up - disable auto-scroll
+                            this.chat.auto_scroll_enabled = false;
+                        } else {
+                            // User scrolled down - check if at bottom
+                            let offset = this.chat.scroll_handle.offset();
+                            let max_offset = this.chat.scroll_handle.max_offset();
+                            
+                            // At bottom when offset.y is close to -max_offset.height
+                            // (within ~50px threshold)
+                            // offset.y is negative when scrolled down, so we negate it
+                            let scroll_pos = -offset.y;
+                            let threshold = px(50.);
+                            let at_bottom = scroll_pos + threshold >= max_offset.height;
+                            if at_bottom {
+                                this.chat.auto_scroll_enabled = true;
+                            }
+                        }
+                        cx.notify();
+                    }))
+                    .child(
+                        // Content wrapper with flex_1() - matches Scrollable
+                        v_flex()
+                            .flex_1()
+                            .p_4()
+                            .gap_4()
+                            .children(messages)
+                    ),
             )
-        }
+            // Scrollbar overlay - positioned absolutely
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .child(
+                        Scrollbar::new(scroll_handle)
+                            .id("messages-scrollbar")
+                            .axis(ScrollbarAxis::Vertical)
+                    )
+            )
+            .into_any_element()
+    }
+}
+
+/// Render a single message bubble
+fn render_message_bubble(
+    idx: usize,
+    msg: &ChatMessage,
+    cx: &Context<TiccaApp>,
+) -> AnyElement {
+    let theme = cx.theme();
+    let is_user = msg.role == MessageRole::User;
+    let is_system = msg.role == MessageRole::System;
+
+    // Role label
+    let role_label = if is_user {
+        "You"
+    } else if is_system {
+        "System"
+    } else {
+        msg.author_label.as_deref().unwrap_or("Assistant")
+    };
+
+    // Bubble styling based on role
+    let (bubble_bg, text_color) = if is_user {
+        (theme.accent, theme.accent_foreground)
+    } else if is_system {
+        (theme.muted, theme.muted_foreground)
+    } else {
+        (theme.secondary, theme.secondary_foreground)
+    };
+
+    // Streaming indicator
+    let streaming_indicator = if msg.is_streaming {
+        Some(
+            div()
+                .text_xs()
+                .text_color(theme.primary)
+                .child("● Streaming..."),
+        )
     } else {
         None
     };
 
-    // Input area
-    let image_button_tooltip = if supports_vision {
-        "Attach image"
+    // Message content - use markdown for rendering
+    let content_element = if msg.content.is_empty() && msg.is_streaming {
+        div()
+            .text_sm()
+            .text_color(text_color)
+            .child("Thinking...")
+            .into_any_element()
     } else {
-        "Current model doesn't support images"
+        markdown(&msg.content)
+            .selectable(true)
+            .into_any_element()
     };
-    let mut input_row = row![
-        // Add image button (works on Wayland via xdg-portal)
-        // Disabled when current model doesn't support vision
-        styled_tooltip(
-            button(icon(icons::ATTACH_FILE).size(20))
-                .on_press_maybe(if supports_vision {
-                    Some(Message::Chat(chat::Msg::SelectImageFile))
-                } else {
-                    None
-                })
-                .style(styles::icon_button)
-                .padding([8, 8]),
-            image_button_tooltip,
-            tooltip::Position::Top,
-        ),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center);
 
-    // Add streaming indicator if active
-    if let Some(indicator) = streaming_indicator {
-        input_row = input_row.push(indicator);
-    }
-
-    // Send/Stop button with tooltip
-    let send_button_tooltip = if is_streaming {
-        "Stop generation"
-    } else {
-        "Send message"
-    };
-    let send_button = styled_tooltip(
-        button(if is_streaming {
-            icon(icons::CANCEL).size(20)
-        } else {
-            icon(icons::ARROW_UPWARD).size(20)
-        })
-        .on_press_maybe(if is_streaming {
-            Some(Message::Chat(chat::Msg::StopStreaming))
-        } else if can_send {
-            Some(Message::Chat(chat::Msg::SendMessage))
-        } else {
-            None
-        })
-        .style(styles::send_button)
-        .padding([8, 8]),
-        send_button_tooltip,
-        tooltip::Position::Top,
-    );
-
-    // Add the text input and send button
-    input_row = input_row
-        .push(
-            text_input("Type a message...", input_value)
-                .on_input(|value| Message::Chat(chat::Msg::InputChanged(value)))
-                .on_submit(if is_streaming {
-                    Message::Chat(chat::Msg::StopStreaming)
-                } else {
-                    Message::Chat(chat::Msg::SendMessage)
-                })
-                .style(styles::text_input_style)
-                .padding(12)
-                .size(14)
-                .width(Length::Fill),
+    // Build the message container
+    v_flex()
+        .id(ElementId::NamedInteger("msg".into(), idx as u64))
+        .mb_4()
+        .when(is_user, |this| this.items_end())
+        .child(
+            // Role label row
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme.muted_foreground)
+                        .child(role_label.to_string()),
+                )
+                .children(streaming_indicator),
         )
-        .push(send_button);
-
-    let input_content: Element<'_, Message> = if let Some(preview) = attachment_preview {
-        column![preview, input_row].spacing(0).into()
-    } else {
-        input_row.into()
-    };
-    let input = container(input_content)
-        .padding(12)
-        .style(styles::input_area_container);
-
-    let chat_column: Element<'_, Message> =
-        container(column![header, dir_bar, messages_view, input,])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    chat_column
+        .child(
+            // Message bubble
+            div()
+                .mt_1()
+                .p_3()
+                .rounded_lg()
+                .bg(bubble_bg)
+                .text_color(text_color) // Ensure text color is inherited by all children (including markdown)
+                .overflow_hidden() // Clip overflow content (long code blocks, URLs)
+                .min_w_0() // Allow shrinking below content size
+                .when(is_user, |this| this.max_w(px(600.)))
+                .when(!is_user, |this| this.w_full().max_w_full())
+                .child(content_element),
+        )
+        .into_any_element()
 }
 
-/// Build the attachment preview bar
-fn build_attachment_preview(
-    pending_attachments: &[ImageAttachment],
-) -> Option<Element<'_, Message>> {
-    if pending_attachments.is_empty() {
-        return None;
-    }
+// =============================================================================
+// Input Area
+// =============================================================================
 
-    let previews: Vec<Element<Message>> = pending_attachments
-        .iter()
-        .enumerate()
-        .map(|(idx, attachment)| {
-            // Create thumbnail from PNG data
-            let handle = iced::widget::image::Handle::from_bytes((*attachment.data).clone());
-            let thumbnail = iced::widget::image(handle)
-                .width(Length::Fixed(60.0))
-                .height(Length::Fixed(60.0));
+/// Render the message input area
+fn render_input_area(
+    app: &TiccaApp,
+    _window: &mut Window,
+    cx: &mut Context<TiccaApp>,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let is_streaming = app.chat.is_streaming;
+    let has_input = !app.chat.input_state.read(cx).value().is_empty();
 
-            let size_kb = attachment.data.len() / 1024;
-
-            container(
-                column![
-                    // Thumbnail with remove button overlay
-                    iced::widget::stack![
-                        container(thumbnail).style(styles::image_thumbnail_container),
-                        container(
-                            button(icon(icons::CLOSE).size(12))
-                                .on_press(Message::Chat(chat::Msg::RemoveAttachment(idx)))
-                                .style(styles::remove_attachment_button)
-                                .padding(2)
-                        )
-                        .align_x(iced::alignment::Horizontal::Right)
-                        .width(Length::Fill),
-                    ]
-                    .width(Length::Fixed(60.0))
-                    .height(Length::Fixed(60.0)),
-                    // Filename and size
-                    text(format!("{}KB", size_kb)).size(10),
-                ]
-                .spacing(2)
-                .align_x(iced::Alignment::Center),
-            )
-            .padding(4)
-            .into()
-        })
-        .collect();
-
-    Some(
-        container(
-            row![
-                icon(icons::ATTACH_FILE).size(14),
-                iced::widget::Row::with_children(previews).spacing(8),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
+    // Attachment count badge
+    let attachment_badge = if !app.chat.pending_attachments.is_empty() {
+        Some(
+            div()
+                .absolute()
+                .top_neg_1()
+                .right_neg_1()
+                .w(px(16.))
+                .h(px(16.))
+                .rounded_full()
+                .bg(theme.primary)
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_xs()
+                .text_color(theme.primary_foreground)
+                .child(app.chat.pending_attachments.len().to_string()),
         )
-        .padding([8, 12])
-        .width(Length::Fill)
-        .style(styles::attachment_bar_container)
-        .into(),
-    )
-}
-
-/// Render a sub-agent as a collapsible section
-fn render_sub_agent<'a>(
-    msg_id: MessageId,
-    sub_agent: &'a SubAgentMessage,
-    theme: AppTheme,
-) -> Element<'a, Message> {
-    let is_dark = theme.is_dark();
-    let metadata = AgentRegistry::get(sub_agent.agent_type);
-    let header_icon = if sub_agent.collapsed {
-        icons::CHEVRON_RIGHT
     } else {
-        icons::EXPAND_MORE
+        None
     };
 
-    let status_icon = if sub_agent.is_streaming {
-        icons::PENDING
-    } else {
-        icons::CHECK_CIRCLE
-    };
-
-    let header_text = format!("{} (node {})", metadata.label, sub_agent.node_id);
-
-    // Collapsible header button
-    let header = button(
-        row![
-            icon(header_icon).size(16),
-            icon(status_icon).size(14),
-            text(header_text).size(12),
-        ]
-        .spacing(6)
-        .align_y(iced::Alignment::Center),
-    )
-    .on_press(Message::Chat(chat::Msg::ToggleSubAgentCollapsed {
-        msg_id,
-        node_id: sub_agent.node_id,
-    }))
-    .style(styles::collapsible_header_button)
-    .padding([6, 10])
-    .width(Length::Fill);
-
-    if sub_agent.collapsed {
-        // Just show the header when collapsed
-        container(header)
-            .width(Length::Fill)
-            .style(move |theme| styles::sub_agent_container(theme, is_dark))
-            .into()
-    } else {
-        // Show header + content when expanded
-        let content: Element<Message> = if sub_agent.is_streaming && sub_agent.content.is_empty() {
-            row![icon(icons::PENDING).size(14), text(" Working...").size(12),]
-                .spacing(4)
-                .into()
-        } else {
-            markdown::view(
-                &sub_agent.parsed_items,
-                markdown::Settings::with_text_size(13, theme.to_iced_theme()),
-            )
-            .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri)))
-        };
-
-        let mut sub_column = column![header].spacing(8);
-
-        // Add reasoning if present
-        if let Some(ref reasoning) = sub_agent.reasoning {
-            let reasoning_section = container(
-                column![
-                    row![icon(icons::PSYCHOLOGY).size(12), text(" Thinking").size(11),].spacing(4),
-                    container(text(reasoning).size(11)).padding([4, 8])
-                ]
-                .spacing(4),
-            )
-            .padding(6)
-            .width(Length::Fill)
-            .style(move |theme| styles::reasoning_container(theme, is_dark));
-
-            sub_column = sub_column.push(reasoning_section);
-        }
-
-        sub_column = sub_column.push(container(content).padding([0, 10]));
-
-        container(sub_column)
-            .padding(8)
-            .width(Length::Fill)
-            .style(move |theme| styles::sub_agent_container(theme, is_dark))
-            .into()
-    }
-}
-
-/// Render a single message
-fn render_message<'a>(
-    msg: &'a ChatMessage,
-    theme: AppTheme,
-    raw_view_messages: &'a HashSet<MessageId>,
-    raw_view_editors: &'a HashMap<MessageId, text_editor::Content>,
-) -> Element<'a, Message> {
-    let msg_id = msg.id;
-    let is_user = msg.role == MessageRole::User;
-    let is_system = msg.role == MessageRole::System;
-    let is_dark = theme.is_dark();
-    let is_raw_view = raw_view_messages.contains(&msg_id);
-
-    let default_label = match msg.role {
-        MessageRole::User => "You",
-        MessageRole::Assistant => "Assistant",
-        MessageRole::System => "System",
-        MessageRole::Tool => "Tool",
-    };
-    let label = msg.author_label.as_deref().unwrap_or(default_label);
-
-    let content: Element<Message> = if is_raw_view {
-        // Raw view: show selectable plain text
-        if let Some(editor_content) = raw_view_editors.get(&msg_id) {
-            text_editor(editor_content)
-                .on_action(move |action| {
-                    Message::Chat(chat::Msg::RawViewEditorAction(msg_id, action))
-                })
-                .style(move |theme, _status| styles::raw_text_editor(theme, is_dark))
-                .into()
-        } else {
-            // Fallback if editor not yet created
-            text(&msg.content).size(14).into()
-        }
-    } else {
-        let mut blocks: Vec<Element<Message>> = Vec::new();
-
-        for block in &msg.content_blocks {
-            match block {
-                ContentBlock::Text {
-                    content,
-                    parsed_items,
-                } => {
-                    if content.is_empty() {
-                        if msg.is_streaming && msg.content_blocks.len() == 1 {
-                            blocks.push(
-                                row![icon(icons::PENDING).size(16), text(" Thinking...").size(14),]
-                                    .spacing(6)
-                                    .into(),
-                            );
-                        }
-                    } else {
-                        blocks.push(
-                            markdown::view(
-                                parsed_items,
-                                markdown::Settings::with_text_size(14, theme.to_iced_theme()),
-                            )
-                            .map(|uri| Message::Chat(chat::Msg::LinkClicked(uri))),
-                        );
-                    }
-                }
-                ContentBlock::SubAgent(sub_agent) => {
-                    blocks.push(render_sub_agent(msg_id, sub_agent, theme));
-                }
-            }
-        }
-
-        if blocks.is_empty() {
-            row![icon(icons::PENDING).size(16), text(" Thinking...").size(14),]
-                .spacing(6)
-                .into()
-        } else {
-            Column::with_children(blocks).spacing(8).into()
-        }
-    };
-
-    // Toggle icon: CODE for raw view, DESCRIPTION for markdown view
-    let toggle_icon = if is_raw_view {
-        icons::DESCRIPTION
-    } else {
-        icons::CODE
-    };
-    let toggle_tooltip = if is_raw_view {
-        "Show formatted"
-    } else {
-        "Show raw markdown"
-    };
-
-    // Header row with label, toggle button, and copy button
-    let header = row![
-        text(label).size(12),
-        horizontal_space(),
-        // Raw/Markdown toggle button
-        styled_tooltip(
-            button(icon(toggle_icon).size(16))
-                .on_press(Message::Chat(chat::Msg::ToggleRawView(msg_id)))
-                .style(styles::icon_button)
-                .padding([4, 6]),
-            toggle_tooltip,
-            tooltip::Position::Bottom,
-        ),
-        // Copy button
-        styled_tooltip(
-            button(icon(icons::CONTENT_COPY).size(16))
-                .on_press(Message::Chat(chat::Msg::CopyMessage(msg_id)))
-                .style(styles::icon_button)
-                .padding([4, 6]),
-            "Copy message",
-            tooltip::Position::Bottom,
-        ),
-    ]
-    .spacing(4)
-    .align_y(iced::Alignment::Center);
-
-    // Build the message column
-    let mut msg_column = column![header].spacing(6);
-
-    // Add reasoning section if present
-    if let Some(ref reasoning) = msg.reasoning {
-        let reasoning_content = container(
-            column![
-                row![icon(icons::PSYCHOLOGY).size(14), text(" Thinking").size(12),].spacing(4),
-                container(text(reasoning).size(12)).padding([4, 8])
-            ]
-            .spacing(4),
+    // Input container
+    h_flex()
+        .w_full()
+        .p_3()
+        .gap_2()
+        .items_end()
+        .border_t_1()
+        .border_color(theme.border)
+        .bg(theme.background)
+        .child(
+            // Attach button
+            div()
+                .relative()
+                .child(
+                    Button::new("attach")
+                        .icon(IconName::File)
+                        .ghost()
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            cx.dispatch_action(&AttachImage);
+                        })),
+                )
+                .children(attachment_badge),
         )
-        .padding(8)
-        .width(Length::Fill)
-        .style(move |theme| styles::reasoning_container(theme, is_dark));
-
-        msg_column = msg_column.push(reasoning_content);
-    }
-
-    msg_column = msg_column.push(content);
-
-    container(msg_column)
-        .padding(12)
-        .width(Length::FillPortion(4))
-        .style(move |theme| {
-            if is_system {
-                styles::system_message_bubble(theme)
+        .child(
+            // Text input using gpui-component's Input
+            Input::new(&app.chat.input_state)
+                .cleanable(true)
+                .flex_1(),
+        )
+        .child(
+            // Send/Stop button
+            if is_streaming {
+                Button::new("stop")
+                    .icon(IconName::CircleX)
+                    .danger()
+                    .rounded_full()
+                    .tooltip("Stop generation")
+                    .on_click(|_, _, cx| {
+                        cx.dispatch_action(&StopStreaming);
+                    })
+                    .into_any_element()
             } else {
-                styles::message_bubble(theme, is_user)
-            }
-        })
-        .into()
+                Button::new("send")
+                    .icon(IconName::ArrowUp)
+                    .primary()
+                    .rounded_full()
+                    .disabled(!has_input)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.handle_send_message(window, cx);
+                    }))
+                    .into_any_element()
+            },
+        )
 }

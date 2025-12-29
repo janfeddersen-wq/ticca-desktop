@@ -1,56 +1,72 @@
-//! Message building utilities for rig integration.
+//! Message building utilities for serdesAI integration.
 
 use super::types::ChatHistoryMessage;
 use crate::session::MessageRole;
+use base64::Engine;
+use serdes_ai_core::{
+    ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart,
+    messages::{ImageContent, ImageMediaType, ThinkingPart, TextPart, UserContent, UserContentPart},
+};
 
-/// Build chat history from stored messages.
+/// Build chat history from stored messages into serdesAI ModelRequest format.
 ///
-/// For assistant messages with reasoning, creates multi-content messages
-/// to support interleaved thinking (Claude) and thought blocks (Gemini).
-pub fn build_chat_history(chat_history: Vec<ChatHistoryMessage>) -> Vec<rig::message::Message> {
-    use rig::message::Message as RigMessage;
-
+/// For assistant messages with reasoning, creates multi-part responses
+/// to support interleaved thinking (Claude) and thought blocks.
+pub fn build_chat_history(chat_history: Vec<ChatHistoryMessage>) -> Vec<ModelRequest> {
     chat_history
         .into_iter()
         .filter_map(|msg| match msg.role {
-            MessageRole::User => Some(RigMessage::user(&msg.content)),
-            MessageRole::Assistant => Some(build_assistant_message_with_reasoning(
-                &msg.content,
-                msg.reasoning.as_deref(),
-                msg.reasoning_signature.as_deref(),
-            )),
+            MessageRole::User => {
+                let mut req = ModelRequest::new();
+                req.add_user_prompt(UserContent::text(&msg.content));
+                Some(req)
+            }
+            MessageRole::Assistant => {
+                Some(build_assistant_request_with_reasoning(
+                    &msg.content,
+                    msg.reasoning.as_deref(),
+                ))
+            }
             _ => None,
         })
         .collect()
 }
 
-/// Build an assistant message with optional reasoning content.
+/// Build an assistant message request with optional reasoning content.
 ///
-/// For interleaved thinking support, reasoning is included as a separate
-/// content block before the text content. The signature is preserved for
-/// Claude's thinking verification.
-pub fn build_assistant_message_with_reasoning(
+/// For interleaved thinking support, reasoning is included as a ThinkingPart
+/// before the text content.
+pub fn build_assistant_request_with_reasoning(
     text: &str,
     reasoning: Option<&str>,
-    signature: Option<&str>,
-) -> rig::message::Message {
-    use rig::message::{AssistantContent, Message as RigMessage, Reasoning};
-    use rig::one_or_many::OneOrMany;
+) -> ModelRequest {
+    let mut parts = Vec::new();
 
-    match reasoning {
-        Some(reasoning) if !reasoning.is_empty() => {
-            let mut contents = Vec::new();
-            let reasoning_content =
-                Reasoning::new(reasoning).with_signature(signature.map(String::from));
-            contents.push(AssistantContent::Reasoning(reasoning_content));
-            if !text.is_empty() {
-                contents.push(AssistantContent::text(text));
-            }
-            OneOrMany::many(contents)
-                .map(|content| RigMessage::Assistant { id: None, content })
-                .unwrap_or_else(|_| RigMessage::assistant(text))
+    // Add reasoning/thinking if present
+    if let Some(reasoning_text) = reasoning {
+        if !reasoning_text.is_empty() {
+            parts.push(ModelResponsePart::Thinking(ThinkingPart::new(reasoning_text)));
         }
-        _ => RigMessage::assistant(text),
+    }
+
+    // Add text content if present
+    if !text.is_empty() {
+        parts.push(ModelResponsePart::Text(TextPart::new(text)));
+    }
+
+    // Wrap in a ModelResponse and then into a ModelRequest
+    let response = ModelResponse::with_parts(parts);
+    ModelRequest::with_parts(vec![ModelRequestPart::ModelResponse(Box::new(response))])
+}
+
+/// Parse media type string to ImageMediaType.
+fn parse_image_media_type(media_type: &str) -> ImageMediaType {
+    match media_type.to_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => ImageMediaType::Jpeg,
+        "image/png" => ImageMediaType::Png,
+        "image/gif" => ImageMediaType::Gif,
+        "image/webp" => ImageMediaType::Webp,
+        _ => ImageMediaType::Png, // Default to PNG
     }
 }
 
@@ -58,86 +74,87 @@ pub fn build_assistant_message_with_reasoning(
 pub fn build_user_message(
     user_message: &str,
     image_data: Vec<(String, String)>,
-) -> rig::message::Message {
-    use rig::message::Message as RigMessage;
-    use rig::message::{ImageMediaType, UserContent};
-    use rig::one_or_many::OneOrMany;
+) -> ModelRequest {
+    let mut req = ModelRequest::new();
 
     if image_data.is_empty() {
-        RigMessage::user(user_message)
+        req.add_user_prompt(UserContent::text(user_message));
     } else {
-        let mut content_parts: Vec<UserContent> = Vec::new();
+        // Build multi-part content with images
+        let mut parts: Vec<UserContentPart> = Vec::new();
 
         for (media_type, base64_data) in image_data {
-            let media = match media_type.as_str() {
-                "image/png" => ImageMediaType::PNG,
-                "image/jpeg" => ImageMediaType::JPEG,
-                "image/gif" => ImageMediaType::GIF,
-                "image/webp" => ImageMediaType::WEBP,
-                _ => ImageMediaType::PNG,
-            };
-            content_parts.push(UserContent::image_base64(base64_data, Some(media), None));
+            // Decode base64 to binary
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&base64_data) {
+                let image_type = parse_image_media_type(&media_type);
+                parts.push(UserContentPart::Image { 
+                    image: ImageContent::binary(bytes, image_type) 
+                });
+            } else {
+                tracing::warn!("Failed to decode base64 image data");
+            }
         }
 
         if !user_message.is_empty() {
-            content_parts.push(UserContent::text(user_message));
+            parts.push(UserContentPart::text(user_message));
         }
 
-        match OneOrMany::many(content_parts) {
-            Ok(content) => RigMessage::User { content },
-            Err(_) => RigMessage::user(user_message),
-        }
+        req.add_user_prompt(UserContent::parts(parts));
     }
+
+    req
 }
 
 /// Extract the last user message text from history, returning the remaining history.
 ///
-/// This is needed because `stream_prompt("")` with an empty string causes validation
-/// errors on strict OpenAI-compatible providers (e.g., Synthetic, Z.ai).
-/// Instead, we pass the actual user message to `stream_prompt()`.
+/// This is needed because some APIs require the actual user message to be
+/// passed separately from the history.
 pub fn extract_last_user_message(
-    mut history: Vec<rig::message::Message>,
-) -> (Vec<rig::message::Message>, String) {
-    if let Some(pos) = history
-        .iter()
-        .rposition(|msg| matches!(msg, rig::message::Message::User { .. }))
-    {
-        let last_user = history.remove(pos);
-        let text = match last_user {
-            rig::message::Message::User { content } => content
-                .iter()
-                .filter_map(|part| match part {
-                    rig::message::UserContent::Text(text_content) => {
-                        Some(text_content.text.clone())
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => String::new(),
-        };
+    mut history: Vec<ModelRequest>,
+) -> (Vec<ModelRequest>, String) {
+    // Find the last request that contains a user prompt
+    if let Some(pos) = history.iter().rposition(|req| {
+        req.parts.iter().any(|p| matches!(p, ModelRequestPart::UserPrompt(_)))
+    }) {
+        let last_req = history.remove(pos);
+        
+        // Extract text from user prompts
+        let text: String = last_req.parts
+            .iter()
+            .filter_map(|p| {
+                if let ModelRequestPart::UserPrompt(user) = p {
+                    user.content.as_text().map(String::from)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        
         (history, text)
     } else {
         (history, String::new())
     }
 }
 
-/// Prepend system prompt to the first user message (for providers that don't support system prompts).
+/// Prepend system prompt to the first user message.
+/// Used for providers that don't support separate system prompts.
 pub fn prepend_system_to_first_user_message(
     system_prompt: &str,
-    history: &mut [rig::message::Message],
+    history: &mut [ModelRequest],
 ) {
     if system_prompt.is_empty() {
         return;
     }
 
-    for msg in history.iter_mut() {
-        if let rig::message::Message::User { content } = msg {
-            let first_content = content.first_mut();
-            if let rig::message::UserContent::Text(text_content) = first_content {
-                text_content.text = format!("{}\n\n{}", system_prompt, text_content.text);
+    for req in history.iter_mut() {
+        for part in req.parts.iter_mut() {
+            if let ModelRequestPart::UserPrompt(user) = part {
+                if let Some(text) = user.content.as_text() {
+                    user.content = UserContent::text(format!("{}\n\n{}", system_prompt, text));
+                    return;
+                }
             }
-            break;
         }
     }
 }

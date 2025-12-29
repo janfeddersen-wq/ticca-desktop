@@ -1,48 +1,44 @@
 //! Provider resolution and client creation.
 //!
-//! Consolidates provider-specific logic that was previously duplicated
-//! in multiple places.
+//! Resolves model names to serdesAI model instances.
 
 use crate::config::models::providers;
-use crate::llm::auth::{self, AuthToken};
-use crate::llm::providers::{
-    ChatGptOAuthClient, GeminiCodeAssistRigClient, OpenAICompatibleApiClient,
-};
-use crate::llm::{ClaudeOAuthClient, ProviderId, ProviderRegistry};
+use crate::llm::auth::{self, ApiKeyToken, AuthToken};
+use crate::llm::ProviderRegistry;
+use crate::llm::ProviderId;
 use crate::registry::RegistryService;
+use serdes_ai_models::claude_code_oauth::ClaudeCodeOAuthModel;
+use serdes_ai_models::chatgpt_oauth::ChatGptOAuthModel;
+use serdes_ai_models::openai::OpenAIChatModel;
 
-/// Resolved provider with its client and metadata.
+/// Resolved provider with its model and metadata.
 pub enum ResolvedProvider {
     Claude {
-        client: ClaudeOAuthClient,
+        model: ClaudeCodeOAuthModel,
         model_id: String,
         token: AuthToken,
     },
     ChatGpt {
-        client: ChatGptOAuthClient,
+        model: ChatGptOAuthModel,
         model_id: String,
         token: AuthToken,
     },
-    Gemini {
-        client: GeminiCodeAssistRigClient,
+    /// OpenAI-compatible API key providers (Groq, Cerebras, OpenRouter, etc.)
+    OpenAICompatible {
+        model: OpenAIChatModel,
         model_id: String,
-        token: AuthToken,
-    },
-    ApiKey {
-        client: OpenAICompatibleApiClient,
-        model_id: String,
-        provider_name: String,
+        provider_id: String,
+        api_key_token: ApiKeyToken,
     },
 }
 
 impl ResolvedProvider {
-    /// Get the account ID for cooldown marking (OAuth providers only).
+    /// Get the account ID for cooldown marking.
     pub fn account_id(&self) -> Option<&str> {
         match self {
             Self::Claude { token, .. } => Some(&token.account_id),
             Self::ChatGpt { token, .. } => Some(&token.account_id),
-            Self::Gemini { token, .. } => Some(&token.account_id),
-            Self::ApiKey { .. } => None,
+            Self::OpenAICompatible { api_key_token, .. } => Some(&api_key_token.account_id),
         }
     }
 
@@ -51,13 +47,26 @@ impl ResolvedProvider {
         match self {
             Self::Claude { .. } => "Claude",
             Self::ChatGpt { .. } => "ChatGPT",
-            Self::Gemini { .. } => "Gemini",
-            Self::ApiKey { provider_name, .. } => provider_name,
+            Self::OpenAICompatible { provider_id, .. } => provider_id.as_str(),
         }
+    }
+
+    /// Get the model ID.
+    pub fn model_id(&self) -> &str {
+        match self {
+            Self::Claude { model_id, .. } => model_id,
+            Self::ChatGpt { model_id, .. } => model_id,
+            Self::OpenAICompatible { model_id, .. } => model_id,
+        }
+    }
+    
+    /// Check if this is an API key provider (for cooldown marking).
+    pub fn is_api_key_provider(&self) -> bool {
+        matches!(self, Self::OpenAICompatible { .. })
     }
 }
 
-/// Resolve and create a provider client for the given model name.
+/// Resolve and create a provider for the given model name.
 pub fn resolve_provider(model_name: &str) -> Result<ResolvedProvider, String> {
     let model_id = ProviderRegistry::extract_model_id(model_name);
 
@@ -67,11 +76,10 @@ pub fn resolve_provider(model_name: &str) -> Result<ResolvedProvider, String> {
                 "Claude authentication required. Please authenticate in Settings.".to_string()
             })?;
 
-            let client = ClaudeOAuthClient::new(token.access_token.clone())
-                .map_err(|e| format!("Failed to create Claude client: {}", e))?;
+            let model = ClaudeCodeOAuthModel::new(model_id, &token.access_token);
 
             Ok(ResolvedProvider::Claude {
-                client,
+                model,
                 model_id: model_id.to_string(),
                 token,
             })
@@ -80,56 +88,65 @@ pub fn resolve_provider(model_name: &str) -> Result<ResolvedProvider, String> {
             let token = auth::select_token(providers::CHATGPT).ok_or_else(|| {
                 "ChatGPT authentication required. Please authenticate in Settings.".to_string()
             })?;
-            let id_token = token.id_token.clone().ok_or_else(|| {
-                "ChatGPT id_token not found. Please re-authenticate in Settings.".to_string()
-            })?;
-
-            let client = ChatGptOAuthClient::from_tokens(&token.access_token, &id_token)
-                .map_err(|e| format!("Failed to create ChatGPT client: {}", e))?;
+            
+            let model = ChatGptOAuthModel::new(model_id, &token.access_token);
 
             Ok(ResolvedProvider::ChatGpt {
-                client,
+                model,
                 model_id: model_id.to_string(),
                 token,
             })
         }
         ProviderId::Gemini => {
-            let token = auth::select_token(providers::GEMINI).ok_or_else(|| {
-                "Gemini authentication required. Please authenticate in Settings.".to_string()
-            })?;
-
-            let client = GeminiCodeAssistRigClient::new(token.access_token.clone());
-
-            Ok(ResolvedProvider::Gemini {
-                client,
-                model_id: model_id.to_string(),
-                token,
-            })
+            Err("Gemini OAuth is deprecated and no longer available.".to_string())
         }
         ProviderId::ApiKey(provider_id) => {
-            let provider_def = RegistryService::find_provider(&provider_id)
-                .ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
-
-            if !provider_def.is_openai_compatible {
-                return Err(format!(
-                    "{} API key provider requires special handling not yet implemented",
-                    provider_def.name
-                ));
-            }
-
+            // Get API key for this provider
             let api_key_token = auth::select_api_key(&provider_id).ok_or_else(|| {
                 format!(
-                    "{} API key required. Please add an API key in Settings.",
-                    provider_def.name
+                    "{} API key required. Add one in Settings → Accounts.",
+                    provider_id
                 )
             })?;
-
-            let client = OpenAICompatibleApiClient::new(&provider_id, &api_key_token.api_key)?;
-
-            Ok(ResolvedProvider::ApiKey {
-                client,
+            
+            // Get provider definition from registry
+            let provider_def = RegistryService::find_provider(&provider_id).ok_or_else(|| {
+                format!("Unknown provider: {}", provider_id)
+            })?;
+            
+            // Verify this provider supports API key auth
+            if !provider_def.supports_api_key() {
+                return Err(format!(
+                    "Provider '{}' does not support API key authentication",
+                    provider_id
+                ));
+            }
+            
+            // For now, all API key providers use OpenAI-compatible format
+            // TODO: Add Anthropic API support when needed
+            if !provider_def.is_openai_compatible {
+                return Err(format!(
+                    "Provider '{}' uses a custom API format not yet supported",
+                    provider_id
+                ));
+            }
+            
+            // Create OpenAI-compatible model with custom base URL
+            let model = OpenAIChatModel::new(model_id, &api_key_token.api_key)
+                .with_base_url(&provider_def.api_base_url);
+            
+            tracing::info!(
+                "Resolved API key provider: {} with model {} (base_url: {})",
+                provider_id,
+                model_id,
+                provider_def.api_base_url
+            );
+            
+            Ok(ResolvedProvider::OpenAICompatible {
+                model,
                 model_id: model_id.to_string(),
-                provider_name: provider_def.name.clone(),
+                provider_id,
+                api_key_token,
             })
         }
     }

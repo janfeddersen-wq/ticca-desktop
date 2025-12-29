@@ -6,8 +6,7 @@
 //! - `ProviderRegistry`: Static utilities for provider info and model resolution
 
 use crate::config::models::providers;
-use crate::llm::providers::chatgpt::is_gpt_model;
-use crate::llm::providers::gemini::is_gemini_model;
+use crate::llm::providers::is_chatgpt_model;
 use crate::registry::RegistryService;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -138,10 +137,8 @@ impl ModelId {
                     ProviderId::ApiKey(self.provider.clone())
                 } else {
                     // Fallback: try to infer from model name patterns
-                    if is_gpt_model(&self.model) {
+                    if is_chatgpt_model(&self.model) {
                         ProviderId::ChatGpt
-                    } else if is_gemini_model(&self.model) {
-                        ProviderId::Gemini
                     } else {
                         // Default to Claude for unknown
                         ProviderId::Claude
@@ -266,10 +263,8 @@ impl ProviderRegistry {
         }
 
         // Fall back to model name pattern matching
-        if is_gpt_model(model_name) {
+        if is_chatgpt_model(model_name) {
             ProviderId::ChatGpt
-        } else if is_gemini_model(model_name) {
-            ProviderId::Gemini
         } else {
             ProviderId::Claude
         }
@@ -507,16 +502,16 @@ mod tests {
     }
 
     #[test]
-    fn resolves_gemini_models() {
-        // Canonical format
+    fn resolves_gemini_as_legacy_provider() {
+        // Canonical format - still recognized as Gemini provider
         assert_eq!(
             ProviderRegistry::resolve_provider("gemini:gemini-2.0-flash"),
             ProviderId::Gemini
         );
-        // Plain model name
+        // Plain model name now defaults to Claude since Gemini OAuth is deprecated
         assert_eq!(
             ProviderRegistry::resolve_provider("gemini-2.0-flash"),
-            ProviderId::Gemini
+            ProviderId::Claude
         );
     }
 

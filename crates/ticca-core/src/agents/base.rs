@@ -2,7 +2,7 @@
 
 use crate::llm::ProviderId;
 use crate::tools::ToolRegistry;
-use material_icons::Icon;
+// Icon names as strings - GUI layer maps these to actual icons
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -38,8 +38,9 @@ pub struct AgentMetadata {
     pub label: &'static str,
     /// Description of agent capabilities
     pub description: &'static str,
-    /// Material icon for UI
-    pub icon: Icon,
+    /// Icon name for UI (e.g., "code", "assignment", "build", "folder-open")
+    /// The GUI layer maps these to actual icons (GPUI Lucide icons)
+    pub icon: &'static str,
     /// RGB color for flow panel nodes (r, g, b in 0.0-1.0)
     pub color: (f32, f32, f32),
     /// Provider preference order for model selection
@@ -68,7 +69,7 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
             display_name: "Coding Agent",
             label: "Coding",
             description: "Writes, modifies, and executes code to complete development tasks.",
-            icon: Icon::Code,
+            icon: "code",
             color: (0.18, 0.55, 0.90), // Blue
             provider_order: PROVIDER_ORDER_CODING,
             tool_policy: ToolPolicyType::FullAccess,
@@ -82,7 +83,7 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
         display_name: "Planning Agent",
         label: "Planning",
         description: "Breaks down complex tasks into actionable steps and creates execution roadmaps.",
-        icon: Icon::Assignment,
+        icon: "clipboard-list",
         color: (0.24, 0.70, 0.42), // Green
         provider_order: PROVIDER_ORDER_PLANNING,
         tool_policy: ToolPolicyType::ReadOnly,
@@ -95,7 +96,7 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
         display_name: "Skills Agent",
         label: "Skills",
         description: "Executes Python-based skills for specialized tasks like document generation and web automation.",
-        icon: Icon::Build,
+        icon: "hammer",
         color: (0.75, 0.45, 0.85), // Purple
         provider_order: PROVIDER_ORDER_CODING,
         tool_policy: ToolPolicyType::FullAccess,
@@ -108,7 +109,7 @@ static AGENT_REGISTRY: LazyLock<HashMap<AgentType, AgentMetadata>> = LazyLock::n
         display_name: "Explore Agent",
         label: "Explore",
         description: "Fast, read-only codebase exploration specialist for finding files and searching code.",
-        icon: Icon::FolderOpen,
+        icon: "folder-open",
         color: (0.20, 0.70, 0.70), // Cyan/teal
         provider_order: PROVIDER_ORDER_CODING,
         tool_policy: ToolPolicyType::ReadOnly,

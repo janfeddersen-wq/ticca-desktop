@@ -27,5 +27,5 @@ pub use profile::{
     ToolUsagePolicy,
 };
 pub use prompt_blocks::PromptBlocks;
-pub use runner::{ChatHistoryMessage, RunnerEvent, run_rig_agent_stream};
+pub use runner::{ChatHistoryMessage, RunnerEvent, run_agent_stream};
 pub use skills::SkillsAgent;

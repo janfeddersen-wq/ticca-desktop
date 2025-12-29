@@ -13,14 +13,14 @@ path = "src/main.rs"
 ticca-core.workspace = true
 ticca-oauth.workspace = true
 
-# LLM Framework
-rig.workspace = true
 
-iced.workspace = true
-iced_fonts.workspace = true
+gpui.workspace = true
+gpui-component = { workspace = true, features = ["tree-sitter-languages"] }
+gpui-component-assets.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 pulldown-cmark.workspace = true
@@ -40,9 +40,6 @@ unicode-segmentation = "1.12"
 # wayland-data-control enables native Wayland clipboard via wlr-data-control protocol
 arboard = { version = "3", features = ["image", "wayland-data-control"] }
 
-# Material Icons font and codepoints
-material-icons.workspace = true
-
 # Image processing
 image.workspace = true
 
@@ -61,8 +58,21 @@ open.workspace = true
 # HTTP types for custom headers
 http = "1"
 
-# Embedded terminals (System Executions)
-iced_term = { git = "https://github.com/janfeddersen-wq/iced_term.git", rev = "ea244f23afa20b368f44b573b9c893e12a6c74d3" }
+# Platform-specific data directories
+directories.workspace = true
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# TUI/CLI framework
+ratatui = "0.29"
+crossterm = "0.28"
+ctrlc = "3.4"
+
+# Streaming markdown rendering
+streamdown-parser = { path = "/home/jan/sources/streamdown-rs/crates/streamdown-parser" }
+streamdown-render = { path = "/home/jan/sources/streamdown-rs/crates/streamdown-render" }
+streamdown-config = { path = "/home/jan/sources/streamdown-rs/crates/streamdown-config" }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

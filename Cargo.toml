@@ -12,8 +12,8 @@ edition = "2024"
 authors = ["Jan Feddersen"]
 license = "MIT"
 repository = "https://github.com/jan/ticca-desktop"
-description = "A sleek, Iced-based desktop application for AI-assisted coding"
-keywords = ["ai", "coding", "assistant", "iced", "desktop"]
+description = "A sleek, GPUI-based desktop application for AI-assisted coding"
+keywords = ["ai", "coding", "assistant", "gpui", "desktop"]
 categories = ["development-tools", "gui"]
 readme = "README.md"
 
@@ -24,6 +24,7 @@ tokio = { version = "1.43", features = ["full"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+schemars = "1"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -32,19 +33,23 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking", "stream"] }
 bytes = "1.7"
 
-# GUI
-iced = { version = "0.14", features = ["tokio", "advanced", "svg", "image", "markdown", "highlighter", "canvas"] }
-iced_fonts = { version = "0.1", features = ["bootstrap"] }
-
-# Material Icons
-material-icons = "0.2"
+# GUI - GPUI from Zed
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { path = "/home/jan/sources/gpui-component/crates/ui" }
+gpui-component-assets = { path = "/home/jan/sources/gpui-component/crates/assets" }
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
-# LLM Framework - upstream rig-core
-# We use custom OAuth providers in ticca-core/src/llm/providers/ instead of forked features
-rig = { version = "0.27", package = "rig-core", features = ["derive", "rmcp"] }
+# LLM Framework - serdesAI (local development paths)
+serdes-ai = { path = "/home/jan/sources/serdesAI/serdes-ai" }
+serdes-ai-core = { path = "/home/jan/sources/serdesAI/serdes-ai-core" }
+serdes-ai-agent = { path = "/home/jan/sources/serdesAI/serdes-ai-agent" }
+serdes-ai-models = { path = "/home/jan/sources/serdesAI/serdes-ai-models", features = ["claude-code-oauth", "chatgpt-oauth", "anthropic", "openai"] }
+serdes-ai-tools = { path = "/home/jan/sources/serdesAI/serdes-ai-tools" }
+serdes-ai-toolsets = { path = "/home/jan/sources/serdesAI/serdes-ai-toolsets" }
+serdes-ai-streaming = { path = "/home/jan/sources/serdesAI/serdes-ai-streaming" }
+serdes-ai-mcp = { path = "/home/jan/sources/serdesAI/serdes-ai-mcp" }
 
 # MCP (Model Context Protocol)
 rmcp = { version = "0.12", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
@@ -83,8 +88,6 @@ semver = "1.0"
 ticca-core = { path = "crates/ticca-core" }
 ticca-oauth = { path = "crates/ticca-oauth" }
 
-[patch.crates-io]
-rig-core = { git = "https://github.com/janfeddersen-wq/rig.git", branch = "main" }
 
 [profile.release]
 lto = true

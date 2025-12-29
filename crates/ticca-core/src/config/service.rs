@@ -32,6 +32,16 @@ impl ConfigService {
         let db = ConfigDatabase::open()?;
         db.set_setting(key, value)
     }
+    
+    pub fn get_setting(key: &str) -> Result<Option<String>> {
+        let db = ConfigDatabase::open()?;
+        db.get_setting(key).map(|opt| opt.map(|s| s.value))
+    }
+    
+    pub fn delete_setting(key: &str) -> Result<bool> {
+        let db = ConfigDatabase::open()?;
+        db.delete_setting(key)
+    }
 
     pub fn set_agent_pinned_model(agent_type: &str, model_name: Option<&str>) -> Result<()> {
         let db = ConfigDatabase::open()?;

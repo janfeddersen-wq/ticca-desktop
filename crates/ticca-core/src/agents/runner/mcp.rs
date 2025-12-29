@@ -1,8 +1,13 @@
 //! MCP (Model Context Protocol) server connection handling.
+//!
+//! Uses serdes-ai-mcp for MCP integration.
 
 use super::types::MCP_CONNECT_TIMEOUT;
 use crate::agents::AgentType;
 use crate::config::{ConfigDatabase, McpServer, McpTransport};
+use serdes_ai_mcp::{McpClient, McpToolset};
+use serdes_ai_toolsets::DynamicToolset;
+use std::sync::Arc;
 
 /// List active MCP servers for an agent type.
 pub fn list_active_mcp_servers(agent: AgentType) -> Vec<McpServer> {
@@ -24,26 +29,10 @@ pub fn list_active_mcp_servers(agent: AgentType) -> Vec<McpServer> {
         .collect()
 }
 
-/// Create RMCP client info for MCP connections.
-fn rmcp_client_info() -> rmcp::model::ClientInfo {
-    use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
-    ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "ticca-desktop".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Default::default()
-        },
-    }
-}
-
-/// Connect to an MCP server and retrieve its tools.
-pub async fn connect_mcp_server(
+/// Connect to an MCP server and retrieve its toolset.
+pub async fn connect_mcp_server<Deps: Send + Sync + 'static>(
     server: &McpServer,
-) -> anyhow::Result<(Vec<rmcp::model::Tool>, rmcp::service::ServerSink)> {
-    use rmcp::ServiceExt;
-
+) -> anyhow::Result<McpToolset<Deps>> {
     match server.transport {
         McpTransport::StreamableHttp => {
             let url = server
@@ -51,11 +40,9 @@ pub async fn connect_mcp_server(
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("Missing endpoint_url for HTTP MCP server"))?;
 
-            let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(url);
-            let client = rmcp_client_info().serve(transport).await?;
-
-            let tools = client.list_tools(Default::default()).await?.tools;
-            Ok((tools, client.peer().to_owned()))
+            let client = McpClient::http(url);
+            client.initialize().await?;
+            Ok(McpToolset::new(client).with_id(&server.name))
         }
         McpTransport::Stdio => {
             let command = server
@@ -63,43 +50,32 @@ pub async fn connect_mcp_server(
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("Missing command for stdio MCP server"))?;
 
-            let mut cmd = tokio::process::Command::new(command);
-            cmd.args(&server.args);
-            cmd.envs(server.env.clone());
-
-            let transport = rmcp::transport::TokioChildProcess::new(cmd)
-                .map_err(|e| anyhow::anyhow!("Failed to spawn MCP server '{}': {}", command, e))?;
-
-            let client = rmcp_client_info().serve(transport).await?;
-            let tools = client.list_tools(Default::default()).await?.tools;
-            Ok((tools, client.peer().to_owned()))
+            let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
+            let toolset = McpToolset::stdio(command, &args).await?;
+            Ok(toolset.with_id(&server.name))
         }
     }
 }
 
-/// Attach MCP tools to an agent builder.
-pub async fn attach_mcp_tools_to_builder<M>(
-    mut builder: rig::agent::AgentBuilderSimple<M>,
+/// Load MCP toolsets for an agent type.
+/// 
+/// Returns a vector of McpToolsets that can be added to an agent.
+pub async fn load_mcp_toolsets<Deps: Send + Sync + 'static>(
     agent: AgentType,
-) -> rig::agent::AgentBuilderSimple<M>
-where
-    M: rig::completion::CompletionModel + 'static,
-{
+) -> Vec<McpToolset<Deps>> {
     let servers = list_active_mcp_servers(agent);
     if servers.is_empty() {
-        return builder;
+        return Vec::new();
     }
+
+    let mut toolsets = Vec::new();
 
     for server in servers {
         let res = tokio::time::timeout(MCP_CONNECT_TIMEOUT, connect_mcp_server(&server)).await;
         match res {
-            Ok(Ok((tools, sink))) => {
-                if tools.is_empty() {
-                    tracing::info!("MCP server '{}' has no tools", server.name);
-                    continue;
-                }
-                tracing::info!("Loaded {} MCP tools from '{}'", tools.len(), server.name);
-                builder = builder.rmcp_tools(tools, sink);
+            Ok(Ok(toolset)) => {
+                tracing::info!("Loaded MCP toolset from '{}'", server.name);
+                toolsets.push(toolset);
             }
             Ok(Err(e)) => {
                 tracing::warn!("Failed to connect to MCP server '{}': {}", server.name, e);
@@ -114,5 +90,5 @@ where
         }
     }
 
-    builder
+    toolsets
 }

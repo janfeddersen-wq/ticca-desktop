@@ -1,9 +1,11 @@
-//! UI Views
+//! GPUI Views for Ticca Desktop
+//!
+//! These are the main view components rendered by the app.
 
-pub mod agent_flow;
 pub mod chat;
-pub mod components;
-pub mod config;
-pub mod right_sidebar;
-pub mod system_executions;
-pub mod todo_list;
+pub mod settings;
+pub mod sidebar;
+
+pub use chat::render_chat_view;
+pub use settings::render_settings_view;
+// sidebar is used internally by chat view

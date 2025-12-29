@@ -1,6 +1,8 @@
 //! Chat message types for display
+//!
+//! These types represent messages in the chat UI, supporting streaming,
+//! sub-agent invocations, and markdown content.
 
-use iced::widget::markdown;
 use ticca_core::agents::AgentType;
 use ticca_core::session::MessageRole;
 use uuid::Uuid;
@@ -49,8 +51,6 @@ pub struct SubAgentMessage {
     pub collapsed: bool,
     /// Track if last content added was a tool call (for formatting)
     pub last_was_tool_call: bool,
-    /// Parsed markdown items for the content
-    pub parsed_items: Vec<markdown::Item>,
 }
 
 impl SubAgentMessage {
@@ -63,13 +63,7 @@ impl SubAgentMessage {
             is_streaming: true,
             collapsed: false,
             last_was_tool_call: false,
-            parsed_items: Vec::new(),
         }
-    }
-
-    /// Update parsed items when content changes
-    pub fn update_parsed_items(&mut self) {
-        self.parsed_items = markdown::parse(&self.content).collect();
     }
 }
 
@@ -77,10 +71,7 @@ impl SubAgentMessage {
 #[derive(Debug, Clone)]
 pub enum ContentBlock {
     /// Main agent text content
-    Text {
-        content: String,
-        parsed_items: Vec<markdown::Item>,
-    },
+    Text { content: String },
     /// Sub-agent invocation (rendered as collapsible)
     SubAgent(SubAgentMessage),
 }
@@ -89,27 +80,11 @@ impl ContentBlock {
     pub fn new_text() -> Self {
         Self::Text {
             content: String::new(),
-            parsed_items: Vec::new(),
         }
     }
 
     pub fn text(content: String) -> Self {
-        let parsed_items = markdown::parse(&content).collect();
-        Self::Text {
-            content,
-            parsed_items,
-        }
-    }
-
-    /// Update parsed items for text blocks
-    pub fn update_parsed_items(&mut self) {
-        if let Self::Text {
-            content,
-            parsed_items,
-        } = self
-        {
-            *parsed_items = markdown::parse(content).collect();
-        }
+        Self::Text { content }
     }
 }
 
@@ -216,13 +191,6 @@ impl ChatMessage {
         self
     }
 
-    /// Update parsed items when content changes
-    pub fn update_parsed_items(&mut self) {
-        for block in &mut self.content_blocks {
-            block.update_parsed_items();
-        }
-    }
-
     /// Get the current (last) text block, creating one if needed
     pub fn current_text_block_mut(&mut self) -> &mut String {
         if !matches!(self.content_blocks.last(), Some(ContentBlock::Text { .. })) {
@@ -243,10 +211,10 @@ impl ChatMessage {
     /// Find a sub-agent by node_id
     pub fn sub_agent_mut(&mut self, node_id: usize) -> Option<&mut SubAgentMessage> {
         self.content_blocks.iter_mut().find_map(|block| {
-            if let ContentBlock::SubAgent(sub) = block
-                && sub.node_id == node_id
-            {
-                return Some(sub);
+            if let ContentBlock::SubAgent(sub) = block {
+                if sub.node_id == node_id {
+                    return Some(sub);
+                }
             }
             None
         })

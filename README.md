@@ -202,7 +202,7 @@ Ticca supports OAuth PKCE flows for major AI providers:
 |----------|--------|-------|
 | **Claude** | claude-sonnet-4, claude-opus-4, claude-3.5-sonnet | Full feature support |
 | **ChatGPT** | gpt-4o, gpt-4-turbo, gpt-3.5-turbo | Uses Codex backend |
-| **Gemini** | gemini-2.0-flash, gemini-1.5-pro | Cloud Code Assist API |
+| **Gemini** | gemini-2.0-flash, gemini-1.5-pro | *(Deprecated)* |
 
 ### API Key Authentication
 
@@ -419,7 +419,7 @@ cargo test -- --nocapture
 ### Adding a New Tool
 
 1. Create the tool in `crates/ticca-core/src/tools/`
-2. Implement the `rig::tool::Tool` trait
+2. Implement the `serdes_ai_tools::Tool` trait
 3. Register in `ToolRegistry::default()` in `mod.rs`
 4. Add to appropriate agent tool sets
 
@@ -502,7 +502,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [Iced](https://iced.rs) — Cross-platform GUI framework
-- [Rig](https://github.com/0xPlaygrounds/rig) — LLM orchestration library
+- [serdesAI](https://github.com/michaelpfaffenberger/serdesAI) — LLM agent framework
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — Fast regex search
 - Theme inspirations: Catppuccin, Dracula, Nord, Tokyo Night, One Dark, Gruvbox
 

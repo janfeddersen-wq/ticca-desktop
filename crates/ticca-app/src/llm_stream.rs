@@ -1,137 +1,145 @@
-//! LLM streaming adapter (UI <-> core runner).
+//! GPUI-compatible LLM streaming adapter
 //!
-//! The streaming engine lives in `ticca-core`; this module converts between
-//! app-specific types (`ChatMessage`, `Message`) and core runner events.
+//! This module handles streaming LLM responses in a way that works with GPUI's
+//! async model. For now, we use a simple synchronous approach that works within
+//! the GPUI render cycle.
 
-use crate::chat_message::ChatMessage;
-use crate::messages::{Message, chat};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
-use ticca_core::agents::{AgentType, ChatHistoryMessage, RunnerEvent};
-use ticca_core::tools::{TodoListState, ToolApprovalDecision};
+/// Handle for controlling a streaming operation
+#[derive(Clone)]
+pub struct StreamHandle {
+    /// Flag to signal cancellation
+    cancelled: Arc<AtomicBool>,
+}
 
-use futures::StreamExt;
-use std::path::PathBuf;
-use tokio::sync::mpsc;
-
-impl From<RunnerEvent> for Message {
-    fn from(value: RunnerEvent) -> Self {
-        match value {
-            RunnerEvent::StreamChunk(chunk) => Message::Chat(chat::Msg::StreamChunk(chunk)),
-            RunnerEvent::Reasoning { text, signature } => {
-                Message::Chat(chat::Msg::Reasoning { text, signature })
-            }
-            RunnerEvent::StreamStats {
-                chars_in_window,
-                window_ms,
-            } => Message::Chat(chat::Msg::StreamStats {
-                chars_in_window,
-                window_ms,
-            }),
-            RunnerEvent::ToolCall { name, args } => {
-                Message::Chat(chat::Msg::ToolCall { name, args })
-            }
-            RunnerEvent::AgentCall(event) => Message::Chat(chat::Msg::AgentCall(event)),
-            RunnerEvent::SubagentStream(event) => Message::Chat(chat::Msg::SubagentStream(event)),
-            RunnerEvent::TodoEvent(event) => Message::Chat(chat::Msg::TodoEvent(event)),
-            RunnerEvent::ToolApprovalRequested { id, name, args } => {
-                Message::Chat(chat::Msg::ToolApprovalRequested { id, name, args })
-            }
-            RunnerEvent::Usage {
-                input_tokens,
-                output_tokens,
-            } => Message::Chat(chat::Msg::Usage {
-                input_tokens,
-                output_tokens,
-            }),
-            RunnerEvent::ContextEstimate {
-                system_prompt_tokens,
-                tool_definitions_tokens,
-                messages_tokens,
-                total_tokens,
-                context_window,
-                usage_percent,
-            } => Message::Chat(chat::Msg::ContextEstimate {
-                system_prompt_tokens,
-                tool_definitions_tokens,
-                messages_tokens,
-                total_tokens,
-                context_window,
-                usage_percent,
-            }),
-            RunnerEvent::ContextCompressed {
-                original_messages,
-                compressed_messages,
-                original_tokens,
-                compressed_tokens,
-                strategy,
-            } => Message::Chat(chat::Msg::ContextCompressed {
-                original_messages,
-                compressed_messages,
-                original_tokens,
-                compressed_tokens,
-                strategy,
-            }),
-            RunnerEvent::ContextUsageWarning {
-                current_tokens,
-                threshold_tokens,
-                context_window,
-                usage_percent,
-            } => Message::Chat(chat::Msg::ContextUsageWarning {
-                current_tokens,
-                threshold_tokens,
-                context_window,
-                usage_percent,
-            }),
-            RunnerEvent::StreamComplete => Message::Chat(chat::Msg::StreamComplete),
-            RunnerEvent::StreamStopped => Message::Chat(chat::Msg::StreamStopped),
-            RunnerEvent::StreamError(error) => Message::Chat(chat::Msg::StreamError(error)),
+impl StreamHandle {
+    /// Create a new stream handle
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Cancel the streaming operation
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// Check if cancelled
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
     }
 }
 
-/// Run the core Rig agent runner and emit UI messages.
-#[allow(clippy::too_many_arguments)]
-pub fn run_rig_agent_stream(
-    system_prompt: String,
-    user_message: String,
-    model_name: Option<String>,
-    working_directory: PathBuf,
-    max_tool_rounds: u32,
-    chat_history: Vec<ChatMessage>,
-    initial_todo_state: Option<TodoListState>,
-    image_data: Vec<(String, String)>,
-    yolo_mode_enabled: bool,
-    current_agent: AgentType,
-    approval_decision_rx: mpsc::UnboundedReceiver<ToolApprovalDecision>,
-    cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    system_exec_store: std::sync::Arc<ticca_core::tools::SystemExecStore>,
-    system_exec_tx: mpsc::UnboundedSender<ticca_core::tools::SystemExecRequest>,
-) -> impl futures::Stream<Item = Message> {
-    let history: Vec<ChatHistoryMessage> = chat_history
-        .into_iter()
-        .map(|msg| ChatHistoryMessage {
-            role: msg.role,
-            content: msg.content,
-            reasoning: msg.reasoning,
-            reasoning_signature: msg.reasoning_signature,
-        })
-        .collect();
+impl Default for StreamHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    ticca_core::agents::run_rig_agent_stream(
-        system_prompt,
-        user_message,
-        model_name,
-        working_directory,
-        max_tool_rounds,
-        history,
-        initial_todo_state,
-        image_data,
-        yolo_mode_enabled,
-        current_agent,
-        approval_decision_rx,
-        cancel_rx,
-        system_exec_store,
-        system_exec_tx,
-    )
-    .map(Message::from)
+/// Generate a demo response based on the prompt
+pub fn generate_demo_response(prompt: &str) -> String {
+    let prompt_lower = prompt.to_lowercase();
+
+    if prompt_lower.contains("rust") || prompt_lower.contains("code") {
+        r#"# Rust Code Example 🦀
+
+Here's a simple Rust example:
+
+```rust
+use std::collections::HashMap;
+
+fn main() {
+    let mut scores = HashMap::new();
+    
+    scores.insert("Blue", 10);
+    scores.insert("Yellow", 50);
+    
+    for (team, score) in &scores {
+        println!("{}: {}", team, score);
+    }
+}
+```
+
+## Key Points
+
+- **HashMaps** store key-value pairs
+- Use `insert()` to add entries
+- Iterate with `for` loops
+
+Want me to explain any part in more detail?"#
+            .to_string()
+    } else if prompt_lower.contains("help") {
+        r#"# How Can I Help? 🤝
+
+I'm your **AI coding assistant**. I can help you with:
+
+## Code Tasks
+- ✍️ Writing new code
+- 🔍 Reviewing existing code
+- 🐛 Debugging issues
+- 📝 Documentation
+
+## Languages I Know
+- Rust 🦀
+- Python 🐍
+- TypeScript/JavaScript
+- Go, C++, and more!
+
+## How to Use Me
+
+1. **Ask a question** - I'll do my best to answer
+2. **Share code** - I can review and improve it
+3. **Describe a problem** - I'll help solve it
+
+What would you like to work on?"#
+            .to_string()
+    } else if prompt_lower.contains("hello") || prompt_lower.contains("hi") {
+        r#"# Hello! 👋
+
+Great to meet you! I'm **Ticca**, your AI coding assistant.
+
+I'm running on the new **GPUI** interface - much faster and smoother!
+
+How can I help you today? Feel free to:
+- Ask coding questions
+- Share code for review
+- Request help with a project
+
+```
+🐶 Woof! Ready to code!
+```"#
+            .to_string()
+    } else {
+        format!(
+            r#"# Understanding Your Request
+
+You asked: *"{}"*
+
+Let me think about this...
+
+## My Analysis
+
+I'm processing your request. Here's what I can do:
+
+1. **Analyze** the problem
+2. **Research** best practices
+3. **Generate** a solution
+4. **Explain** the approach
+
+## Next Steps
+
+Could you provide more details about:
+- What you're trying to accomplish?
+- Any specific requirements?
+- Error messages (if debugging)?
+
+I'm here to help! 🚀"#,
+            prompt
+        )
+    }
 }

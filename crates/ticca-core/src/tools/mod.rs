@@ -22,7 +22,7 @@ pub mod file_ops;
 pub mod grep;
 pub mod policy;
 pub mod registry;
-pub mod rig_tools;
+pub mod serdes_tools;
 pub mod spec;
 pub mod system_exec;
 pub mod todo;
@@ -38,14 +38,15 @@ pub use file_mods::{delete_file_impl, edit_file_impl};
 pub use file_ops::{list_files_impl, read_file_impl};
 pub use grep::grep_impl;
 
-// Re-export rig-compatible tools
+// Re-export serdesAI-compatible tools
 pub use approval::{ToolApprovalDecision, ToolApprovalGate, ToolApprovalRequest};
 pub use policy::ToolPolicy;
-pub use rig_tools::{
+pub use serdes_tools::{
     AgentCallEvent, AgentInvokeRequest, AgentInvoker, AgentStreamEvent, DeleteFileTool,
     EditFileTool, ExecuteShellTool, GrepTool, InvokeAgentTool, KillProcessTool, ListAgentsTool,
-    ListFilesTool, ListProcessesTool, ReadFileTool, ReadProcessOutputTool, ToolContext,
-    WriteFileTool, create_tools,
+    ListFilesTool, ListProcessesTool, ReadFileTool, ReadProcessOutputTool, ShareReasoningTool,
+    TiccaDeps, TodoListTool, TodoReadTool, TodoWriteTool, ToolContext, WriteFileTool,
+    create_tools, create_tools_vec, SerdesTools,
 };
 pub use system_exec::{
     ProcessKind, ProcessSnapshot, SystemExecRequest, SystemExecResponse, SystemExecStore,

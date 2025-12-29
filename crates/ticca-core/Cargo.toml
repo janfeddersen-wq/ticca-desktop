@@ -8,7 +8,15 @@ license.workspace = true
 [dependencies]
 ticca-oauth.workspace = true
 
-rig.workspace = true
+serdes-ai.workspace = true
+serdes-ai-core.workspace = true
+serdes-ai-agent.workspace = true
+serdes-ai-models.workspace = true
+serdes-ai-tools.workspace = true
+serdes-ai-toolsets.workspace = true
+serdes-ai-streaming.workspace = true
+serdes-ai-mcp.workspace = true
+async-trait = "0.1"
 rmcp.workspace = true
 tokio.workspace = true
 serde.workspace = true
@@ -53,9 +61,6 @@ regex = "1.10"
 
 # string similarity for fuzzy matching
 strsim = "0.11"
-
-# icons
-material-icons.workspace = true
 
 [build-dependencies]
 serde_json = "1.0"

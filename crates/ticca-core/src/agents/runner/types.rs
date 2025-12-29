@@ -33,6 +33,9 @@ pub struct ChatHistoryMessage {
 }
 
 /// Events emitted by the agent runner during streaming.
+/// 
+/// This enum is the interface between ticca-core and ticca-app.
+/// The app listens for these events to update the UI.
 #[derive(Debug, Clone)]
 pub enum RunnerEvent {
     /// Text chunk from the LLM response
@@ -47,8 +50,12 @@ pub enum RunnerEvent {
         chars_in_window: usize,
         window_ms: u64,
     },
-    /// Tool call notification
+    /// Tool call notification (when LLM requests a tool)
     ToolCall { name: String, args: String },
+    /// Tool is being executed
+    ToolExecution { name: String, args: String },
+    /// Tool execution result
+    ToolResult { name: String, success: bool, result: String },
     /// Agent-to-agent call
     AgentCall(AgentCallEvent),
     /// Subagent stream forwarding

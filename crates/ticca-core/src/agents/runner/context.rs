@@ -1,9 +1,16 @@
-//! Context estimation and compression logic.
+//! Context estimation logic.
+//!
+//! Note: Full compression support will be added when serdesAI compression is implemented.
 
 use super::types::RunnerEvent;
-use crate::compression::{compress_messages, create_context_estimate};
 use crate::config::{CompressionSettings, ConfigDatabase};
+use serdes_ai_core::ModelRequest;
 use tokio::sync::mpsc;
+
+/// Estimate tokens from text (rough approximation: ~3.4 chars per token)
+pub fn estimate_tokens(text: &str) -> usize {
+    (text.len() as f32 / 3.4).ceil() as usize
+}
 
 /// Context estimation result with all relevant metrics.
 pub struct ContextEstimation {
@@ -17,17 +24,40 @@ pub struct ContextEstimation {
     pub needs_compression: bool,
 }
 
+/// Get context window for a model.
+fn context_window_for_model(model_name: &str) -> u64 {
+    if model_name.contains("claude") {
+        200_000 // Claude models have 200k context
+    } else if model_name.contains("gpt-4") || model_name.contains("chatgpt") {
+        128_000 // GPT-4 models have 128k context
+    } else {
+        100_000 // Default fallback
+    }
+}
+
 /// Estimate context usage and check if compression is needed.
 pub fn estimate_context(
     system_prompt: &str,
-    messages: &[rig::message::Message],
+    messages: &[ModelRequest],
     model_name: &str,
 ) -> ContextEstimation {
     // Estimate tool definitions tokens from specs
     let estimated_tool_tokens = crate::tools::spec::estimate_all_tools_tokens();
 
-    // Create comprehensive context estimate
-    let context_estimate = create_context_estimate(system_prompt, &[], messages, model_name, None);
+    // Estimate system prompt tokens
+    let system_prompt_tokens = estimate_tokens(system_prompt);
+
+    // Estimate message tokens
+    let messages_tokens: usize = messages
+        .iter()
+        .map(|req| {
+            serde_json::to_string(req)
+                .map(|s| estimate_tokens(&s))
+                .unwrap_or(100) // Fallback estimate
+        })
+        .sum();
+
+    let context_window = context_window_for_model(model_name);
 
     // Load compression settings
     let compression_settings = ConfigDatabase::open()
@@ -35,36 +65,38 @@ pub fn estimate_context(
         .map(|db| CompressionSettings::load_from(&db))
         .unwrap_or_default();
 
-    let total_with_tools = context_estimate.total_tokens + estimated_tool_tokens;
-    let threshold_tokens =
-        context_estimate.threshold_tokens(compression_settings.threshold_percent);
-    // Check if compression is needed using total WITH tools (not the estimate without tools)
-    let compression_needed =
-        compression_settings.enabled && total_with_tools as u64 > threshold_tokens;
+    let total_tokens = system_prompt_tokens + estimated_tool_tokens + messages_tokens;
+    let threshold_percent = compression_settings.threshold_percent as f64 / 100.0;
+    let threshold_tokens = (context_window as f64 * threshold_percent) as u64;
+    
+    let compression_needed = compression_settings.enabled && total_tokens as u64 > threshold_tokens;
 
     ContextEstimation {
-        system_prompt_tokens: context_estimate.system_prompt_tokens,
+        system_prompt_tokens,
         tool_definitions_tokens: estimated_tool_tokens,
-        messages_tokens: context_estimate.messages_tokens,
-        total_tokens: total_with_tools,
-        context_window: context_estimate.context_window,
-        usage_percent: ((total_with_tools as f64 / context_estimate.context_window as f64) * 100.0)
-            as u32,
+        messages_tokens,
+        total_tokens,
+        context_window,
+        usage_percent: ((total_tokens as f64 / context_window as f64) * 100.0) as u32,
         threshold_tokens,
         needs_compression: compression_needed,
     }
 }
 
 /// Apply compression to messages if needed and emit events.
+/// 
+/// Note: Currently a placeholder - full compression will be implemented
+/// when serdesAI compression utilities are available.
 pub fn apply_compression_if_needed(
-    messages: Vec<rig::message::Message>,
+    messages: Vec<ModelRequest>,
     estimation: &ContextEstimation,
     event_tx: &mpsc::UnboundedSender<RunnerEvent>,
-) -> Vec<rig::message::Message> {
+) -> Vec<ModelRequest> {
     if !estimation.needs_compression {
         return messages;
     }
 
+    // For now, just truncate by removing oldest messages if over threshold
     let compression_settings = ConfigDatabase::open()
         .ok()
         .map(|db| CompressionSettings::load_from(&db))
@@ -73,22 +105,36 @@ pub fn apply_compression_if_needed(
     let original_count = messages.len();
     let original_tokens = estimation.messages_tokens;
 
-    let compressed = compress_messages(
-        messages,
-        &compression_settings,
-        estimation.threshold_tokens as usize,
-    );
+    // Simple truncation: keep last N messages that fit
+    let target_tokens = estimation.threshold_tokens as usize / 2; // Aim for 50% of threshold
+    let mut compressed = Vec::new();
+    let mut running_tokens = 0usize;
+
+    // Keep messages from the end
+    for msg in messages.into_iter().rev() {
+        let msg_tokens = serde_json::to_string(&msg)
+            .map(|s| estimate_tokens(&s))
+            .unwrap_or(100);
+        
+        if running_tokens + msg_tokens > target_tokens && !compressed.is_empty() {
+            break;
+        }
+        running_tokens += msg_tokens;
+        compressed.push(msg);
+    }
+    
+    compressed.reverse(); // Restore chronological order
 
     let compressed_count = compressed.len();
-    let compressed_tokens = rig::compression::estimate_messages_tokens(&compressed);
+    let compressed_tokens = running_tokens;
 
     tracing::info!(
-        "Context compressed: {} -> {} messages, {} -> {} tokens (strategy: {:?})",
+        "Context compressed: {} -> {} messages, {} -> {} tokens (strategy: {})",
         original_count,
         compressed_count,
         original_tokens,
         compressed_tokens,
-        compression_settings.strategy
+        compression_settings.strategy.as_str()
     );
 
     let _ = event_tx.send(RunnerEvent::ContextCompressed {
@@ -105,62 +151,13 @@ pub fn apply_compression_if_needed(
 /// Log detailed context breakdown for debugging.
 pub fn log_context_breakdown(
     system_prompt: &str,
-    messages: &[rig::message::Message],
+    messages: &[ModelRequest],
     estimation: &ContextEstimation,
 ) {
-    use rig::compression::estimate_message_tokens;
-
-    let mut total_reasoning_tokens = 0usize;
-    let mut total_reasoning_chars = 0usize;
-    let mut total_text_tokens = 0usize;
-    let mut total_text_chars = 0usize;
-    let mut messages_with_reasoning = 0usize;
-
-    for (i, msg) in messages.iter().enumerate() {
-        let _msg_tokens = estimate_message_tokens(msg);
-        if let rig::message::Message::Assistant { content, .. } = msg {
-            for c in content.iter() {
-                if let rig::message::AssistantContent::Reasoning(r) = c {
-                    let chars: usize = r.reasoning.iter().map(|s| s.len()).sum();
-                    let reasoning_tokens = (chars as f32 / 3.4).ceil() as usize;
-                    total_reasoning_tokens += reasoning_tokens;
-                    total_reasoning_chars += chars;
-                    messages_with_reasoning += 1;
-                    tracing::debug!(
-                        "Message {} has {} reasoning chars ({} tokens)",
-                        i,
-                        chars,
-                        reasoning_tokens
-                    );
-                }
-                if let rig::message::AssistantContent::Text(t) = c {
-                    total_text_chars += t.text.len();
-                    total_text_tokens += (t.text.len() as f32 / 3.4).ceil() as usize;
-                }
-            }
-        }
-        if let rig::message::Message::User { content } = msg {
-            for c in content.iter() {
-                if let rig::message::UserContent::Text(t) = c {
-                    total_text_chars += t.text.len();
-                    total_text_tokens += (t.text.len() as f32 / 3.4).ceil() as usize;
-                }
-            }
-        }
-    }
-
     tracing::info!(
-        "Context estimate: system_prompt={} chars, {} messages ({} with reasoning)",
+        "Context estimate: system_prompt={} chars, {} messages",
         system_prompt.len(),
-        messages.len(),
-        messages_with_reasoning
-    );
-    tracing::info!(
-        "Content breakdown: text={} chars ({} tokens), reasoning={} chars ({} tokens)",
-        total_text_chars,
-        total_text_tokens,
-        total_reasoning_chars,
-        total_reasoning_tokens
+        messages.len()
     );
     tracing::info!(
         "Estimated totals: system={}, tools={} ({} tool specs), messages={}, grand_total={}",
@@ -169,5 +166,11 @@ pub fn log_context_breakdown(
         crate::tools::spec::all_specs().len(),
         estimation.messages_tokens,
         estimation.total_tokens
+    );
+    tracing::info!(
+        "Context window: {}, usage: {}%, threshold: {}",
+        estimation.context_window,
+        estimation.usage_percent,
+        estimation.threshold_tokens
     );
 }
